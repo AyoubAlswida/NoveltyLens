@@ -63,7 +63,7 @@ export default function App() {
     setReportData(null);
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/api/analyze", {
+      const response = await fetch("http://127.0.0.1:8001/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ description: desc, claims: claims }),
@@ -114,7 +114,7 @@ export default function App() {
 
     } catch (err) {
       console.error("❌ Link Error:", err);
-      alert("Failed to read server data. Please make sure server.py is running on port 8000.");
+      alert("Failed to read server data. Please make sure server.py is running on port 8001.");
       setScreen("submit");
     }
   }
