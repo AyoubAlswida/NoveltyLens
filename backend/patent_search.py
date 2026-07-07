@@ -4,7 +4,7 @@ import re
 
 def search_patents(query: str, size: int = 3):
     
-    print(f"📡 Querying live patent registries for: '{query}'...")
+    print(f"Querying live patent registries for: '{query}'...")
     
     # Format query string for a clean web request URL structure
     search_url = f"https://patents.google.com/?q={query.replace(' ', '+')}&sort=new"
@@ -37,7 +37,7 @@ def search_patents(query: str, size: int = 3):
             return results
 
     except Exception as e:
-        print(f"⚠️ Live lookup throttled ({e}). Using live dynamic generator to keep app fluid.")
+        print(f"Live lookup throttled ({e}). Using live dynamic generator to keep app fluid.")
     
     # Clean programmatic backup generator so your real system never freezes or duplicates if networks block you
     clean_query = re.sub(r'[^a-zA-Z0-9 ]', '', query)
