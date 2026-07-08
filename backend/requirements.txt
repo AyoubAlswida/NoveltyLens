@@ -1,3 +1,6 @@
-flask
+fastapi
+uvicorn[standard]
 requests
+beautifulsoup4
 scikit-learn
+pydantic

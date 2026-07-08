@@ -146,5 +146,5 @@ async def analyze_invention(req: InventionRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    # Forces execution to launch on port 8000 to catch frontend fetch requests
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    # Forces execution to launch on port 8001 to catch frontend fetch requests
+    uvicorn.run(app, host="127.0.0.1", port=8001)
