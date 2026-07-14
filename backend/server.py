@@ -1,209 +1,132 @@
-import os
-import json
-import math
-from dotenv import load_dotenv
-load_dotenv()
+"""FastAPI transport layer for the patent novelty-search pipeline."""
 
+import json
+import logging
+import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Iterator, Optional
+
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import Optional
-from llm import understand_invention, rationale_for_match, recommendations_for
-from patent_search import search_patents, PatentSearchError
-from compare import compare_invention_to_patents
-app = FastAPI()
 
-# Cap how many top-ranked matches we score/display + send for detailed AI
-# analysis, so searching many queries stays fast and the LLM prompt stays bounded.
+load_dotenv()
+
+from compare import compare_invention_to_patents
+from llm import rationale_for_match, recommendations_for, understand_invention
+from models import ComparisonResult
+from search.search import PatentSearchError, search_patents
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 MAX_RESULTS = 15
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
 
 class InventionRequest(BaseModel):
     description: str
     claims: Optional[str] = None
 
-def _safe_search(query):
-    """Wrapper for the thread pool: never raises, reports whether it reached a source."""
-    try:
-        return search_patents(query, size=4), True
-    except PatentSearchError:
-        return [], False
 
-
-def _format_and_rank(math_results, concepts):
-    """Turn scored patents into the frontend row shape (pct, risk), sorted."""
-    formatted = []
-    for idx, item in enumerate(math_results):
-        p = item["patent"]
-        raw_score = float(item["similarity_score"])
-        if raw_score == 0.0:
-            num_hash = sum(int(d) for d in p["number"] if d.isdigit()) % 6
-            score_pct = 7 + num_hash + (idx * 2)
+def _format_and_rank(results: list[ComparisonResult], concepts: list[str]) -> list[dict[str, object]]:
+    """Adapt typed comparison results to the unchanged frontend response shape."""
+    formatted: list[dict[str, object]] = []
+    for index, result in enumerate(results):
+        patent = result.patent
+        if result.similarity_score == 0.0:
+            number_hash = sum(int(char) for char in patent.id if char.isdigit()) % 6
+            score = 7 + number_hash + (index * 2)
         else:
-            score_pct = int(25 + (math.log10(raw_score + 0.1) * 75))
-        if any(c.lower() in p["title"].lower() or c.lower() in p["abstract"].lower() for c in concepts[:2]):
-            score_pct += 20
-        score_pct = max(6, min(96, score_pct))
-
-        risk = "Medium"
-        if score_pct >= 75: risk = "High"
-        elif score_pct <= 25: risk = "Low"
-
+            score = int(25 + (math.log10(result.similarity_score + 0.1) * 75))
+        if any(concept.lower() in patent.title.lower() or concept.lower() in patent.abstract.lower() for concept in concepts[:2]):
+            score += 20
+        score = max(6, min(96, score))
+        risk = "High" if score >= 75 else "Low" if score <= 25 else "Medium"
         formatted.append({
-            "num": f"{p.get('country', 'US')} {p['number']}",
-            "title": p["title"],
-            "pct": score_pct,
+            "num": patent.id,
+            "title": patent.title,
+            "pct": score,
             "risk": risk,
             "rationale": "",
-            "source": p.get("source", "live"),
-            "_abstract": p.get("abstract", ""),
+            "source": patent.source or "live",
+            "_patent": patent,
         })
-    formatted.sort(key=lambda x: x["pct"], reverse=True)
-    return formatted
+    return sorted(formatted, key=lambda item: int(item["pct"]), reverse=True)
 
 
-def _run_pipeline(description, claims):
-    """Runs the full analysis as a generator of progress/result/error events so
-    the frontend can render real-time progress. Each yielded dict has a 'type'
-    of 'progress' | 'result' | 'error'."""
-    print("\n[POST] Received Analysis Request via Frontend Core...")
-
-    # 1. Understand the invention (degrade gracefully if the LLM is unreachable)
+def _run_pipeline(description: str, claims: Optional[str]) -> Iterator[dict[str, object]]:
+    """Run the typed pipeline and emit the existing SSE event contract."""
     yield {"type": "progress", "phase": "understand", "message": "Extracting technical concepts & keywords…"}
-    concepts, keywords, queries = [], [], []
     try:
         analysis = understand_invention(description)
-        queries = analysis.get("queries", []) or []
-        concepts = analysis.get("concepts", []) or []
-        keywords = analysis.get("keywords", []) or []
-    except Exception as e:
-        print(f"understand_invention failed, degrading to description query: {e}")
-    if not queries:
-        queries = [description[:60]]
-    full_text = f"{description} {claims or ''} {' '.join(concepts)} {' '.join(keywords)}"
-    print(f"Search strings: {queries}")
+    except Exception:
+        logger.exception("Invention understanding failed; using description as search query")
+        from models import InventionAnalysis
+        analysis = InventionAnalysis(queries=[description[:60]])
+    queries = analysis.queries or [description[:60]]
+    full_text = f"{description} {claims or ''} {' '.join(analysis.concepts)} {' '.join(analysis.keywords)}"
+    yield {"type": "progress", "phase": "queries", "message": f"Generated {len(queries)} AI search queries", "count": len(queries)}
 
-    yield {"type": "progress", "phase": "queries",
-           "message": f"Generated {len(queries)} AI search queries", "count": len(queries)}
+    yield {"type": "progress", "phase": "search", "message": "Searching patent databases…", "current": 0, "total": len(queries), "found": 0}
+    try:
+        patents = search_patents(queries, results_per_query=4)
+    except PatentSearchError:
+        logger.exception("All patent providers failed")
+        yield {"type": "error", "detail": "Patent search failed: the patent databases could not be reached. Please check the backend network and try again."}
+        return
+    yield {"type": "progress", "phase": "search", "message": f"Searching patent databases… {len(queries)}/{len(queries)} · {len(patents)} found", "current": len(queries), "total": len(queries), "found": len(patents)}
 
-    # 2. Search every query across every source, in parallel, streaming progress
-    total = len(queries)
-    yield {"type": "progress", "phase": "search",
-           "message": f"Searching patent databases… 0/{total}", "current": 0, "total": total, "found": 0}
-    seen_keys, all_patents, any_ok, done = set(), [], False, 0
-    # Keep search concurrency low: EPO OPS and Google Patents throttle bursts
-    # aggressively (EPO can robot-block the account for days).
-    with ThreadPoolExecutor(max_workers=2) as ex:
-        futures = {ex.submit(_safe_search, q): q for q in queries}
-        for fut in as_completed(futures):
-            done += 1
-            results, ok = fut.result()
-            any_ok = any_ok or ok
-            for p in results:
-                digits = "".join(ch for ch in p.get("number", "") if ch.isdigit())
-                key = (p.get("country", "") + digits).upper()
-                if key and key not in seen_keys:
-                    seen_keys.add(key)
-                    all_patents.append(p)
-            yield {"type": "progress", "phase": "search",
-                   "message": f"Searching patent databases… {done}/{total} · {len(all_patents)} found",
-                   "current": done, "total": total, "found": len(all_patents)}
-    print(f"Total unique live patents: {len(all_patents)} (from {total} queries)")
-
-    if not all_patents:
-        if not any_ok:
-            yield {"type": "error",
-                   "detail": "Patent search failed: the patent databases (EPO OPS and Google Patents) "
-                             "could not be reached. Please check the backend network and try again."}
-            return
-        yield {"type": "result", "data": {
-            "title": description[:45] + "...", "date": "Today", "concepts": concepts,
-            "patents": [], "top_score": 0, "verdict": "Strong", "query_count": total,
-            "recommendations": ["No reference targets found. Focus claims on wide utility targets."]}}
+    if not patents:
+        yield {"type": "result", "data": {"title": description[:45] + "...", "date": "Today", "concepts": analysis.concepts, "patents": [], "top_score": 0, "verdict": "Strong", "query_count": len(queries), "recommendations": ["No reference targets found. Focus claims on wide utility targets."]}}
         return
 
-    # 3. Score similarity and keep the top matches
-    yield {"type": "progress", "phase": "compare",
-           "message": f"Scoring {len(all_patents)} candidates for similarity…"}
-    math_results = compare_invention_to_patents(full_text, all_patents)[:MAX_RESULTS]
-    formatted = _format_and_rank(math_results, concepts)
-    top_score = formatted[0]["pct"] if formatted else 0
-    verdict = "Weak" if top_score >= 75 else ("Moderate" if top_score >= 25 else "Strong")
+    yield {"type": "progress", "phase": "compare", "message": f"Scoring {len(patents)} candidates for similarity…"}
+    formatted = _format_and_rank(compare_invention_to_patents(full_text, patents)[:MAX_RESULTS], analysis.concepts)
+    top_score = int(formatted[0]["pct"]) if formatted else 0
+    verdict = "Weak" if top_score >= 75 else "Moderate" if top_score >= 25 else "Strong"
 
-    # 4. Detailed AI analysis: per-match rationales + recommendations IN PARALLEL,
-    #    streaming progress as each finishes (this is the formerly-slow step).
-    total_a = len(formatted)
-    yield {"type": "progress", "phase": "analyze",
-           "message": f"Writing detailed analysis… 0/{total_a}", "current": 0, "total": total_a}
-    match_inputs = [{"num": fp["num"], "title": fp["title"], "abstract": fp["_abstract"]} for fp in formatted]
-    recommendations, done_a = [], 0
-    with ThreadPoolExecutor(max_workers=5) as ex:
-        rec_future = ex.submit(recommendations_for, description, match_inputs)
-        rat_futures = {ex.submit(rationale_for_match, description, match_inputs[i]): i
-                       for i in range(total_a)}
-        for fut in as_completed(rat_futures):
-            i = rat_futures[fut]
-            formatted[i]["rationale"] = fut.result()
-            done_a += 1
-            yield {"type": "progress", "phase": "analyze",
-                   "message": f"Writing detailed analysis… {done_a}/{total_a}",
-                   "current": done_a, "total": total_a}
-        try:
-            recommendations = rec_future.result()
-        except Exception as e:
-            print(f"recommendations future failed: {e}")
+    top_patents = [item["_patent"] for item in formatted]
+    yield {"type": "progress", "phase": "analyze", "message": f"Writing detailed analysis… 0/{len(top_patents)}", "current": 0, "total": len(top_patents)}
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        recommendation_future = executor.submit(recommendations_for, description, top_patents)
+        rationale_futures = {executor.submit(rationale_for_match, description, patent): index for index, patent in enumerate(top_patents)}
+        for completed, future in enumerate(as_completed(rationale_futures), start=1):
+            index = rationale_futures[future]
+            formatted[index]["rationale"] = future.result()
+            yield {"type": "progress", "phase": "analyze", "message": f"Writing detailed analysis… {completed}/{len(top_patents)}", "current": completed, "total": len(top_patents)}
+        recommendations = recommendation_future.result()
 
-    for fp in formatted:
-        fp.pop("_abstract", None)
-    if not recommendations:
-        recommendations = ["Narrow independent claims to your specific structural configuration.",
-                           "Add dependent claims covering automation absent from the prior art.",
-                           "Emphasize novel materials or integration methods in the specification."]
-
-    print(f"🎯 Analysis complete. Score: {top_score}%, Verdict: {verdict}")
-    yield {"type": "result", "data": {
-        "title": description[:45] + "...", "date": "Today", "concepts": concepts,
-        "patents": formatted, "top_score": top_score, "verdict": verdict,
-        "query_count": total, "recommendations": recommendations}}
+    for item in formatted:
+        item.pop("_patent", None)
+    yield {"type": "result", "data": {"title": description[:45] + "...", "date": "Today", "concepts": analysis.concepts, "patents": formatted, "top_score": top_score, "verdict": verdict, "query_count": len(queries), "recommendations": recommendations}}
 
 
 @app.post("/api/analyze/stream")
-async def analyze_stream(req: InventionRequest):
-    """Server-Sent Events stream of real-time analysis progress + final result."""
-    def sse():
+async def analyze_stream(request: InventionRequest) -> StreamingResponse:
+    def sse() -> Iterator[str]:
         try:
-            for event in _run_pipeline(req.description, req.claims):
+            for event in _run_pipeline(request.description, request.claims):
                 yield f"data: {json.dumps(event)}\n\n"
-        except Exception as e:
-            print(f"Streaming pipeline error: {e}")
-            yield f"data: {json.dumps({'type': 'error', 'detail': str(e)})}\n\n"
-    return StreamingResponse(sse(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+        except Exception as error:
+            logger.exception("Streaming pipeline error")
+            yield f"data: {json.dumps({'type': 'error', 'detail': str(error)})}\n\n"
+    return StreamingResponse(sse(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/analyze")
-async def analyze_invention(req: InventionRequest):
-    """Non-streaming variant: runs the same pipeline and returns the final result."""
-    result = None
-    for event in _run_pipeline(req.description, req.claims):
+async def analyze_invention(request: InventionRequest) -> dict[str, object]:
+    for event in _run_pipeline(request.description, request.claims):
         if event["type"] == "result":
-            result = event["data"]
-        elif event["type"] == "error":
+            return event["data"]  # type: ignore[return-value]
+        if event["type"] == "error":
             raise HTTPException(status_code=502, detail=event["detail"])
-    if result is None:
-        raise HTTPException(status_code=500, detail="Analysis produced no result.")
-    return result
+    raise HTTPException(status_code=500, detail="Analysis produced no result.")
+
 
 if __name__ == "__main__":
     import uvicorn
-    # Forces execution to launch on port 8001 to catch frontend fetch requests
     uvicorn.run(app, host="127.0.0.1", port=8001)
