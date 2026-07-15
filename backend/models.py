@@ -40,3 +40,12 @@ class ComparisonResult:
 
     patent: PatentRecord
     similarity_score: float
+
+
+@dataclass(slots=True)
+class MatchAnalysis:
+    """Per-patent rationales (aligned 1:1 with the input patents) plus the
+    shared uniqueness recommendations, from a single batched LLM call."""
+
+    rationales: list[str] = field(default_factory=list)
+    recommendations: list[str] = field(default_factory=list)

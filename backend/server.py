@@ -3,7 +3,6 @@
 import json
 import logging
 import math
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Iterator, Optional
 
 from dotenv import load_dotenv
@@ -15,7 +14,7 @@ from pydantic import BaseModel
 load_dotenv()
 
 from compare import compare_invention_to_patents
-from llm import rationale_for_match, recommendations_for, understand_invention
+from llm import analyze_all_matches, understand_invention
 from models import ComparisonResult
 from search.search import PatentSearchError, search_patents
 
@@ -90,15 +89,12 @@ def _run_pipeline(description: str, claims: Optional[str]) -> Iterator[dict[str,
     verdict = "Weak" if top_score >= 75 else "Moderate" if top_score >= 25 else "Strong"
 
     top_patents = [item["_patent"] for item in formatted]
-    yield {"type": "progress", "phase": "analyze", "message": f"Writing detailed analysis… 0/{len(top_patents)}", "current": 0, "total": len(top_patents)}
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        recommendation_future = executor.submit(recommendations_for, description, top_patents)
-        rationale_futures = {executor.submit(rationale_for_match, description, patent): index for index, patent in enumerate(top_patents)}
-        for completed, future in enumerate(as_completed(rationale_futures), start=1):
-            index = rationale_futures[future]
-            formatted[index]["rationale"] = future.result()
-            yield {"type": "progress", "phase": "analyze", "message": f"Writing detailed analysis… {completed}/{len(top_patents)}", "current": completed, "total": len(top_patents)}
-        recommendations = recommendation_future.result()
+    yield {"type": "progress", "phase": "analyze", "message": f"Writing detailed analysis for {len(top_patents)} matches…", "current": 0, "total": len(top_patents)}
+    analysis_result = analyze_all_matches(description, top_patents)
+    for item, rationale in zip(formatted, analysis_result.rationales):
+        item["rationale"] = rationale
+    recommendations = analysis_result.recommendations
+    yield {"type": "progress", "phase": "analyze", "message": f"Writing detailed analysis… {len(top_patents)}/{len(top_patents)}", "current": len(top_patents), "total": len(top_patents)}
 
     for item in formatted:
         item.pop("_patent", None)
