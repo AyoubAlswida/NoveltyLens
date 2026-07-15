@@ -1,6 +1,7 @@
 import requests
 import xml.etree.ElementTree as ET
 
+from config import settings
 from models import PatentRecord
 
 AUTH_URL = "https://ops.epo.org/3.2/auth/accesstoken"
@@ -16,7 +17,7 @@ def get_access_token() -> str:
     response = requests.post(
         AUTH_URL,
         data={"grant_type": "client_credentials"},
-        auth=(os.getenv("EPO_KEY"), os.getenv("EPO_SECRET")),
+        auth=(settings.epo_key, settings.epo_secret),
         timeout=30,
     )
 
