@@ -11,7 +11,6 @@ from config import settings
 from models import InventionAnalysis, MatchAnalysis, PatentRecord
 
 logger = logging.getLogger(__name__)
-_STOPWORDS = {"a", "an", "the", "and", "or", "if", "with", "by", "for", "is", "that", "this", "using", "system", "device", "method", "process", "of", "to", "in", "on", "as", "are", "be", "from", "at", "it", "its", "into"}
 
 
 def _llm_chat(prompt: str, max_tokens: int = 400, temperature: float = 0.3, timeout: int = 30, retries: int = 2) -> str:
@@ -41,11 +40,10 @@ Analyze the invention below.
 Tasks:
 1. Extract the main technical concepts.
 2. Extract important engineering keywords.
-3. Generate synonyms for the keywords.
-4. Generate exactly 6 distinct, high-quality patent search queries. Each query must target a DIFFERENT technical angle, keyword combination, or application area of the invention to maximize prior-art recall without over-querying. Keep each query short (3-7 words) and search-engine friendly.
+3. Generate exactly 6 distinct, high-quality patent search queries. Each query must target a DIFFERENT technical angle, keyword combination, or application area of the invention to maximize prior-art recall without over-querying. Keep each query short (3-7 words) and search-engine friendly.
 
 Return ONLY valid JSON in this exact schema:
-{{"concepts": ["string"], "keywords": ["string"], "synonyms": {{"keyword": ["synonym1", "synonym2"]}}, "queries": ["string"]}}
+{{"concepts": ["string"], "keywords": ["string"], "queries": ["string"]}}
 Do not change the schema. Do not add explanations. Return JSON only.
 
 Invention:
@@ -56,29 +54,7 @@ Invention:
         queries=[str(value) for value in data.get("queries", []) if str(value).strip()],
         keywords=[str(value) for value in data.get("keywords", []) if str(value).strip()],
         concepts=[str(value) for value in data.get("concepts", []) if str(value).strip()],
-        synonyms={str(key): [str(value) for value in values] for key, values in data.get("synonyms", {}).items() if isinstance(values, list)},
     )
-
-
-def _keywords(text: str) -> set[str]:
-    return set(re.findall(r"\w+", text.lower()))
-
-
-def _fallback_rationale(invention: str, patent: PatentRecord) -> str:
-    shared = list((_keywords(invention) & _keywords(f"{patent.title} {patent.abstract}")) - _STOPWORDS)[:4]
-    if shared:
-        return (f"This reference ({patent.title}) overlaps with your invention through shared technical terminology around {', '.join(shared)}. "
-                "The disclosed implementation and claim scope may nevertheless differ, so emphasize the structural configuration and control logic that distinguish your approach.")
-    return (f"This reference ({patent.title}) was surfaced in a related technical domain but has limited direct textual overlap. "
-            "Confirm that the independent claims avoid the broad concepts it covers.")
-
-
-def _fallback_recommendations(_: str, __: list[PatentRecord]) -> list[str]:
-    return [
-        "Narrow independent claims to the specific structural configuration that distinguishes the invention.",
-        "Add dependent claims covering control logic and sensor-triggered behaviors absent from the closest references.",
-        "Emphasize novel materials, geometries, or integration methods in the specification.",
-    ]
 
 
 def analyze_all_matches(invention: str, patents: list[PatentRecord]) -> MatchAnalysis:
@@ -119,32 +95,28 @@ Include one rationale object for every patent from index 1 through {count}, in o
         if not match:
             raise ValueError("no JSON object found in LLM response")
         parsed = json.loads(match.group(0))
-
-        rationales = [""] * count
-        raw_rationales = parsed.get("rationales", [])
-        for item in raw_rationales:
-            if isinstance(item, dict):
-                index = int(item.get("index", 0)) - 1
-                if 0 <= index < count:
-                    rationales[index] = str(item.get("text", "")).strip()
-        if not any(rationales):
-            # Tolerate a plain array of strings instead of indexed objects.
-            for index, item in enumerate(raw_rationales[:count]):
-                if isinstance(item, str):
-                    rationales[index] = item.strip()
-
-        recommendations = [str(item).strip() for item in parsed.get("recommendations", []) if str(item).strip()]
-
-        for index in range(count):
-            if not rationales[index]:
-                rationales[index] = _fallback_rationale(invention, patents[index])
-        if not recommendations:
-            recommendations = _fallback_recommendations(invention, patents)
-
-        return MatchAnalysis(rationales=rationales, recommendations=recommendations)
     except Exception:
-        logger.exception("Batched multi-match analysis failed; using local fallback")
-        return MatchAnalysis(
-            rationales=[_fallback_rationale(invention, patent) for patent in patents],
-            recommendations=_fallback_recommendations(invention, patents),
-        )
+        logger.exception("Batched multi-match analysis failed")
+        raise
+    rationales = [""] * count
+    raw_rationales = parsed.get("rationales", [])
+    for item in raw_rationales:
+        if isinstance(item, dict):
+            index = int(item.get("index", 0)) - 1
+            if 0 <= index < count:
+                rationales[index] = str(item.get("text", "")).strip()
+    if not any(rationales):
+        # Tolerate a plain array of strings instead of indexed objects.
+        for index, item in enumerate(raw_rationales[:count]):
+            if isinstance(item, str):
+                rationales[index] = item.strip()
+
+    missing = [index + 1 for index, text in enumerate(rationales) if not text]
+    if missing:
+        raise ValueError(f"LLM omitted rationale(s) for patent index/indices: {missing}")
+
+    recommendations = [str(item).strip() for item in parsed.get("recommendations", []) if str(item).strip()]
+    if not recommendations:
+        raise ValueError("LLM returned no uniqueness recommendations")
+
+    return MatchAnalysis(rationales=rationales, recommendations=recommendations)

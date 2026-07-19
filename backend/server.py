@@ -2,7 +2,6 @@
 
 import json
 import logging
-import math
 from typing import Iterator, Optional
 
 from dotenv import load_dotenv
@@ -34,16 +33,9 @@ class InventionRequest(BaseModel):
 def _format_and_rank(results: list[ComparisonResult], concepts: list[str]) -> list[dict[str, object]]:
     """Adapt typed comparison results to the unchanged frontend response shape."""
     formatted: list[dict[str, object]] = []
-    for index, result in enumerate(results):
+    for result in results:
         patent = result.patent
-        if result.similarity_score == 0.0:
-            number_hash = sum(int(char) for char in patent.id if char.isdigit()) % 6
-            score = 7 + number_hash + (index * 2)
-        else:
-            score = int(25 + (math.log10(result.similarity_score + 0.1) * 75))
-        if any(concept.lower() in patent.title.lower() or concept.lower() in patent.abstract.lower() for concept in concepts[:2]):
-            score += 20
-        score = max(6, min(96, score))
+        score = max(0, min(100, int(result.similarity_score * 100)))
         risk = "High" if score >= 75 else "Low" if score <= 25 else "Medium"
         formatted.append({
             "num": patent.id,
@@ -60,13 +52,10 @@ def _format_and_rank(results: list[ComparisonResult], concepts: list[str]) -> li
 def _run_pipeline(description: str, claims: Optional[str]) -> Iterator[dict[str, object]]:
     """Run the typed pipeline and emit the existing SSE event contract."""
     yield {"type": "progress", "phase": "understand", "message": "Extracting technical concepts & keywords…"}
-    try:
-        analysis = understand_invention(description)
-    except Exception:
-        logger.exception("Invention understanding failed; using description as search query")
-        from models import InventionAnalysis
-        analysis = InventionAnalysis(queries=[description[:60]])
-    queries = analysis.queries or [description[:60]]
+    analysis = understand_invention(description)
+    if not analysis.queries:
+        raise ValueError("Invention understanding returned no search queries")
+    queries = analysis.queries
     full_text = f"{description} {claims or ''} {' '.join(analysis.concepts)} {' '.join(analysis.keywords)}"
     yield {"type": "progress", "phase": "queries", "message": f"Generated {len(queries)} AI search queries", "count": len(queries)}
 
@@ -115,11 +104,17 @@ async def analyze_stream(request: InventionRequest) -> StreamingResponse:
 
 @app.post("/api/analyze")
 async def analyze_invention(request: InventionRequest) -> dict[str, object]:
-    for event in _run_pipeline(request.description, request.claims):
-        if event["type"] == "result":
-            return event["data"]  # type: ignore[return-value]
-        if event["type"] == "error":
-            raise HTTPException(status_code=502, detail=event["detail"])
+    try:
+        for event in _run_pipeline(request.description, request.claims):
+            if event["type"] == "result":
+                return event["data"]  # type: ignore[return-value]
+            if event["type"] == "error":
+                raise HTTPException(status_code=502, detail=event["detail"])
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.exception("Analysis pipeline error")
+        raise HTTPException(status_code=502, detail=str(error)) from error
     raise HTTPException(status_code=500, detail="Analysis produced no result.")
 
 

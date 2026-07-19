@@ -18,20 +18,12 @@ class PatentRecord:
 
 
 @dataclass(slots=True)
-class SearchQuery:
-    """A search expression produced during invention understanding."""
-
-    text: str
-
-
-@dataclass(slots=True)
 class InventionAnalysis:
     """Structured output of the LLM invention-understanding step."""
 
     queries: list[str] = field(default_factory=list)
     keywords: list[str] = field(default_factory=list)
     concepts: list[str] = field(default_factory=list)
-    synonyms: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
