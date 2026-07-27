@@ -9,6 +9,8 @@ import requests
 
 from config import settings
 from models import InventionAnalysis, PatentRecord
+from tracing import trace
+
 
 logger = logging.getLogger(__name__)
 _STOPWORDS = {"a", "an", "the", "and", "or", "if", "with", "by", "for", "is", "that", "this", "using", "system", "device", "method", "process", "of", "to", "in", "on", "as", "are", "be", "from", "at", "it", "its", "into"}
@@ -19,14 +21,18 @@ def _llm_chat(prompt: str, max_tokens: int = 400, temperature: float = 0.3, time
     if not settings.hf_token:
         raise RuntimeError("HF_TOKEN is not configured")
     payload = {"model": settings.llm_model, "messages": [{"role": "user", "content": prompt}], "temperature": temperature, "max_tokens": max_tokens}
+    trace("llm.request", model=settings.llm_model, prompt_chars=len(prompt), max_tokens=max_tokens, temperature=temperature)
     last_error: Exception | None = None
     for attempt in range(retries + 1):
         try:
             response = requests.post(settings.llm_api_url, headers={"Authorization": f"Bearer {settings.hf_token}"}, json=payload, timeout=timeout)
             response.raise_for_status()
-            return str(response.json()["choices"][0]["message"]["content"])
+            content = str(response.json()["choices"][0]["message"]["content"])
+            trace("llm.response", attempt=attempt, response_chars=len(content))
+            return content
         except Exception as error:
             last_error = error
+            trace("llm.attempt_failed", attempt=attempt, error=str(error))
             if attempt < retries:
                 time.sleep(1.5 * (attempt + 1))
     raise RuntimeError("LLM request failed") from last_error
@@ -34,15 +40,25 @@ def _llm_chat(prompt: str, max_tokens: int = 400, temperature: float = 0.3, time
 
 def understand_invention(invention: str) -> InventionAnalysis:
     """Convert the LLM's JSON response into a typed invention analysis."""
+    trace("understand_invention.start", invention_chars=len(invention))
     prompt = f'''You are PatentScout AI, an AI assistant that helps users search for prior art.
 
 Analyze the invention below.
 
 Tasks:
-1. Extract the main technical concepts.
-2. Extract important engineering keywords.
-3. Generate synonyms for the keywords.
-4. Generate exactly 6 distinct, high-quality patent search queries. Each query must target a DIFFERENT technical angle, keyword combination, or application area of the invention to maximize prior-art recall without over-querying. Keep each query short (3-7 words) and search-engine friendly.
+1. Extract the primary technical concepts that define the invention.
+2. Extract the essential engineering keywords that distinguish the invention from existing technology.
+3. Generate meaningful synonyms for those keywords.
+4. Generate exactly 5 high-quality patent search queries that maximize retrieval of patents describing the SAME invention.
+
+Search query guidelines:
+- Focus on the invention's primary functionality, purpose, and claimed mechanism.
+- Prioritize the core invention over enabling technologies.
+- Do NOT build queries around generic implementation details such as AI, cloud, encryption, Bluetooth, IoT, APIs, databases, or sensors unless they are the novel aspect of the invention.
+- Use terminology that is commonly found in patent titles, abstracts, and claims.
+- Generate queries from different perspectives (functional, structural, application, industry terminology, and common patent wording).
+- Keep each query between 3 and 8 words.
+- Avoid repeating nearly identical queries.
 
 Return ONLY valid JSON in this exact schema:
 {{"concepts": ["string"], "keywords": ["string"], "synonyms": {{"keyword": ["synonym1", "synonym2"]}}, "queries": ["string"]}}
@@ -52,12 +68,14 @@ Invention:
 {invention}'''
     raw = _llm_chat(prompt, max_tokens=1200, temperature=0.0, timeout=40)
     data = json.loads(raw.replace("```json", "").replace("```", "").strip())
-    return InventionAnalysis(
+    analysis = InventionAnalysis(
         queries=[str(value) for value in data.get("queries", []) if str(value).strip()],
         keywords=[str(value) for value in data.get("keywords", []) if str(value).strip()],
         concepts=[str(value) for value in data.get("concepts", []) if str(value).strip()],
         synonyms={str(key): [str(value) for value in values] for key, values in data.get("synonyms", {}).items() if isinstance(values, list)},
     )
+    trace("understand_invention.done", queries=analysis.queries, keywords=analysis.keywords, concepts=analysis.concepts)
+    return analysis
 
 
 def _keywords(text: str) -> set[str]:
@@ -73,12 +91,7 @@ def _fallback_rationale(invention: str, patent: PatentRecord) -> str:
             "Confirm that the independent claims avoid the broad concepts it covers.")
 
 
-def _fallback_recommendations(_: str, __: list[PatentRecord]) -> list[str]:
-    return [
-        "Narrow independent claims to the specific structural configuration that distinguishes the invention.",
-        "Add dependent claims covering control logic and sensor-triggered behaviors absent from the closest references.",
-        "Emphasize novel materials, geometries, or integration methods in the specification.",
-    ]
+
 
 
 def rationale_for_match(invention: str, patent: PatentRecord) -> str:
@@ -95,10 +108,12 @@ Abstract: {patent.abstract[:400]}'''
     try:
         text = _llm_chat(prompt, max_tokens=280, temperature=0.3, timeout=30).strip().strip('"')
         if text and not text.lstrip().startswith("{"):
+            trace("rationale_for_match.llm_ok", patent_id=patent.id)
             return text
         raise ValueError("unusable rationale text")
     except Exception:
         logger.exception("Rationale generation failed for %s", patent.id)
+        trace("rationale_for_match.fallback", patent_id=patent.id)
         return _fallback_rationale(invention, patent)
 
 
@@ -116,8 +131,10 @@ Closest prior-art titles: {titles}'''
         match = re.search(r"\[.*\]", raw, re.DOTALL)
         recommendations = json.loads(match.group(0)) if match else []
         if isinstance(recommendations, list) and recommendations:
+            trace("recommendations_for.llm_ok", count=len(recommendations))
             return [str(item).strip() for item in recommendations if str(item).strip()]
         raise ValueError("no recommendation JSON array found")
     except Exception:
         logger.exception("Recommendation generation failed")
-        return _fallback_recommendations(invention, patents)
+        trace("recommendations_for.failed")
+        return []

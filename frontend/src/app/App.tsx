@@ -1,21 +1,21 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 
 type Screen = "submit" | "running" | "report" | "history";
 
 const EXAMPLE_DESC =
   "A portable, refillable drinking-water bottle that automatically sterilizes its contents with an integrated UV-C emitter and filters particulates through a replaceable graphene-oxide membrane. A flow-rate sensor in the cap detects use and triggers a self-cleaning sterilization cycle without manual activation.";
 
-// Ordered phases the backend streams progress for. `id` must match the
-// server's event `phase` field.
-const PHASES = [
-  { id: "understand", label: "Extracting technical concepts" },
-  { id: "queries", label: "Generating AI search queries" },
-  { id: "search", label: "Searching patent databases" },
-  { id: "compare", label: "Scoring similarity" },
-  { id: "analyze", label: "Writing detailed analysis" },
+const STEPS = [
+  "Extracting technical keywords…",
+  "Expanding into 5 search queries…",
+  "Searching Google Patents…",
+  "Searching USPTO full-text…",
+  "Comparing patent similarities…",
+  "Generating similarity scores…",
+  "Building recommendations…",
 ];
 
-type Progress = { phaseIdx: number; message: string };
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8001";
 
 interface DynamicPatent {
   num: string;
@@ -23,6 +23,7 @@ interface DynamicPatent {
   pct: number;
   risk: "High" | "Medium" | "Low";
   rationale: string;
+  source: string;
 }
 
 interface AnalysisReport {
@@ -32,7 +33,27 @@ interface AnalysisReport {
   patents: DynamicPatent[];
   top_score: number;
   verdict: "Strong" | "Moderate" | "Weak";
-  query_count?: number;
+  recommendations: string[];
+  query_count: number;
+}
+
+interface BackendPatent {
+  num: string;
+  title: string;
+  pct: number;
+  risk: "High" | "Medium" | "Low";
+  rationale: string;
+  source: string;
+}
+
+interface BackendAnalysisResponse {
+  title: string;
+  date: string;
+  concepts: string[];
+  patents: BackendPatent[];
+  top_score: number;
+  verdict: "Strong" | "Moderate" | "Weak";
+  query_count: number;
   recommendations: string[];
 }
 
@@ -48,207 +69,88 @@ function verdictColor(v: "Strong" | "Moderate" | "Weak") {
   return "#FF7A59";
 }
 
-function buildReport(backendData: any, desc: string): AnalysisReport {
-  const mappedPatents: DynamicPatent[] = (backendData.patents || []).map((p: any) => {
-    const finalPct = p.pct <= 1 ? Math.floor(p.pct * 100) : Math.floor(p.pct);
-    let structuralRisk: "High" | "Medium" | "Low" = "Medium";
-    if (finalPct >= 75) structuralRisk = "High";
-    else if (finalPct <= 25) structuralRisk = "Low";
-    return {
-      num: p.num || p.number || "US Unknown",
-      title: p.title || "Patent Prior Art Record",
-      pct: finalPct,
-      risk: structuralRisk,
-      rationale: p.rationale || "Shares common vocabulary or systemic overlap with your primary description.",
-    };
-  });
-
-  const topScore = mappedPatents.length > 0 ? mappedPatents[0].pct : 0;
-  let finalVerdict: "Strong" | "Moderate" | "Weak" = "Strong";
-  if (topScore >= 75) finalVerdict = "Weak";
-  else if (topScore >= 25) finalVerdict = "Moderate";
-
-  return {
-    title: desc.length > 50 ? desc.slice(0, 47) + "..." : desc,
-    date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
-    concepts: backendData.concepts || ["Extracted Concept Cluster"],
-    patents: mappedPatents,
-    top_score: topScore,
-    verdict: finalVerdict,
-    query_count: backendData.query_count,
-    recommendations: backendData.recommendations || [],
-  };
-}
-
-function escapeHtml(value: string) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function downloadReportJson(data: AnalysisReport) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const safeName = (data.title || "patent-report").replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "report";
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${safeName}.json`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
-}
-
-function exportReportPdf(data: AnalysisReport) {
-  const win = window.open("", "_blank");
-  if (!win) {
-    alert("Please allow pop-ups for this site to export the PDF.");
-    return;
-  }
-
-  const rows = data.patents
-    .map(
-      (p) => `
-        <tr>
-          <td class="mono">${escapeHtml(p.num)}</td>
-          <td>${escapeHtml(p.title)}<div class="rationale">${escapeHtml(p.rationale)}</div></td>
-          <td class="center">${p.pct}%</td>
-          <td class="center risk-${p.risk.toLowerCase()}">${escapeHtml(p.risk)}</td>
-        </tr>`
-    )
-    .join("");
-
-  const recs = data.recommendations.map((r) => `<li>${escapeHtml(r)}</li>`).join("");
-  const concepts = data.concepts.map((c) => `<span class="chip">${escapeHtml(c)}</span>`).join("");
-
-  win.document.write(`<!doctype html>
-<html>
-<head>
-<meta charset="utf-8" />
-<title>${escapeHtml(data.title)}</title>
-<style>
-  * { box-sizing: border-box; }
-  body { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color: #12211a; margin: 40px; }
-  h1 { font-size: 20px; margin: 0 0 4px; }
-  .meta { color: #5c7266; font-size: 12px; margin-bottom: 24px; }
-  .summary { display: flex; gap: 32px; margin-bottom: 24px; }
-  .summary .big { font-size: 40px; font-weight: 700; }
-  .label { text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px; color: #5c7266; }
-  .chip { display: inline-block; background: #eaf7f0; color: #1a7a4c; border-radius: 20px; padding: 3px 10px; font-size: 11px; margin: 0 6px 6px 0; }
-  table { width: 100%; border-collapse: collapse; margin: 8px 0 24px; font-size: 12px; }
-  th { text-align: left; border-bottom: 2px solid #d5e3db; padding: 8px 6px; color: #5c7266; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
-  td { border-bottom: 1px solid #eef3f0; padding: 8px 6px; vertical-align: top; }
-  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
-  .center { text-align: center; }
-  .rationale { color: #6b8177; font-size: 11px; margin-top: 3px; }
-  .risk-high { color: #c0392b; font-weight: 700; }
-  .risk-medium { color: #b8860b; font-weight: 700; }
-  .risk-low { color: #1a7a4c; font-weight: 700; }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: #5c7266; margin: 24px 0 8px; }
-  ol { padding-left: 18px; } li { margin-bottom: 8px; font-size: 12px; }
-  .foot { margin-top: 32px; color: #93a69c; font-size: 10px; border-top: 1px solid #eef3f0; padding-top: 12px; }
-</style>
-</head>
-<body>
-  <h1>${escapeHtml(data.title)}</h1>
-  <div class="meta">PatentScout AI &middot; Submitted ${escapeHtml(data.date)} &middot; ${data.patents.length} patents scanned</div>
-  <div class="summary">
-    <div><div class="label">Top similarity</div><div class="big">${data.top_score}%</div></div>
-    <div><div class="label">Novelty verdict</div><div class="big">${escapeHtml(data.verdict)}</div></div>
-  </div>
-  <div class="label">Key concepts</div>
-  <div style="margin:8px 0 8px">${concepts || "<span class='rationale'>None extracted</span>"}</div>
-  <h2>Prior-art matches</h2>
-  <table>
-    <thead><tr><th>Number</th><th>Title</th><th class="center">Match</th><th class="center">Risk</th></tr></thead>
-    <tbody>${rows || "<tr><td colspan='4' class='rationale'>No matches found.</td></tr>"}</tbody>
-  </table>
-  <h2>Recommendations</h2>
-  <ol>${recs || "<li class='rationale'>None.</li>"}</ol>
-  <div class="foot">Decision-support only &middot; not legal advice. Generated by PatentScout AI.</div>
-  <script>window.onload = function () { window.print(); };</script>
-</body>
-</html>`);
-  win.document.close();
-}
-
 export default function App() {
   const [screen, setScreen] = useState<Screen>("submit");
-  const [progress, setProgress] = useState<Progress>({ phaseIdx: -1, message: "" });
+  const [stepIdx, setStepIdx] = useState(-1);
   const [desc, setDesc] = useState(EXAMPLE_DESC);
   const [claims, setClaims] = useState("");
-
+  
   const [reportData, setReportData] = useState<AnalysisReport | null>(null);
   const [history, setHistory] = useState<AnalysisReport[]>([]);
 
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   async function startRunning() {
-    console.log("🚀 Starting real-time analysis stream…");
+    console.log("🚀 Starting analysis request loop...");
     setScreen("running");
+    setStepIdx(0);
     setReportData(null);
-    setProgress({ phaseIdx: 0, message: "Starting analysis…" });
 
     try {
-      const response = await fetch("http://127.0.0.1:8001/api/analyze/stream", {
+      const response = await fetch(`${API_BASE_URL}/api/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ description: desc, claims: claims }),
       });
 
-      if (!response.ok || !response.body) {
-        let detail = "The patent search process failed. Please try again.";
-        try {
-          const errBody = await response.json();
-          if (errBody?.detail) detail = errBody.detail;
-        } catch { /* non-JSON error body */ }
-        throw new Error(detail);
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.detail || "Backend query failed");
       }
+      const backendData: BackendAnalysisResponse = await response.json();
+      console.log("📦 Raw data received from backend:", backendData);
 
-      // Read the Server-Sent Events stream and drive the live progress UI.
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let finalReport: AnalysisReport | null = null;
+      // Keep backend rankings, risk labels, verdict, and recommendations intact.
+      const mappedPatents: DynamicPatent[] = (backendData.patents ?? []).map((patent) => ({
+        num: patent.num || "Unknown publication",
+        title: patent.title || "Untitled patent record",
+        pct: Math.round(patent.pct),
+        risk: patent.risk,
+        rationale: patent.rationale || "No detailed rationale was returned for this record.",
+        source: patent.source || "Patent database",
+      }));
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const chunks = buffer.split("\n\n");
-        buffer = chunks.pop() || "";  // keep the last, possibly-partial chunk
-        for (const chunk of chunks) {
-          const line = chunk.trim();
-          if (!line.startsWith("data:")) continue;
-          const ev = JSON.parse(line.slice(5).trim());
-          if (ev.type === "progress") {
-            const idx = PHASES.findIndex((p) => p.id === ev.phase);
-            setProgress({ phaseIdx: idx < 0 ? 0 : idx, message: ev.message });
-          } else if (ev.type === "result") {
-            finalReport = buildReport(ev.data, desc);
-          } else if (ev.type === "error") {
-            throw new Error(ev.detail);
-          }
-        }
-      }
+      const finalReport: AnalysisReport = {
+        title: backendData.title || (desc.length > 50 ? desc.slice(0, 47) + "..." : desc),
+        date: backendData.date || new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+        concepts: backendData.concepts ?? [],
+        patents: mappedPatents,
+        top_score: Math.round(backendData.top_score ?? 0),
+        verdict: backendData.verdict ?? "Strong",
+        recommendations: backendData.recommendations ?? [],
+        query_count: backendData.query_count ?? 0,
+      };
 
-      if (!finalReport) throw new Error("The analysis ended without a result.");
       setReportData(finalReport);
-      setHistory((prev) => [finalReport!, ...prev]);
-      setScreen("report");
+      setHistory((prev) => [finalReport, ...prev]);
+
     } catch (err) {
-      console.error("❌ Analysis error:", err);
-      const msg = err instanceof Error ? err.message : "The analysis failed. Please try again.";
-      // Distinguish a real backend failure message from the server being down entirely.
-      alert(
-        msg.includes("Failed to fetch")
-          ? "Could not reach the server. Please make sure server.py is running on port 8001."
-          : msg
-      );
+      console.error("❌ Link Error:", err);
+      alert(err instanceof Error ? err.message : "Failed to read server data. Please make sure server.py is running on port 8001.");
       setScreen("submit");
     }
   }
+
+  useEffect(() => {
+    if (screen !== "running") return;
+    intervalRef.current = setInterval(() => {
+      setStepIdx((prev) => {
+        if (prev >= STEPS.length - 1) {
+          clearInterval(intervalRef.current!);
+          return prev;
+        }
+        return prev + 1;
+      });
+    }, 450);
+    return () => clearInterval(intervalRef.current!);
+  }, [screen]);
+
+  useEffect(() => {
+    if (screen === "running" && stepIdx === STEPS.length - 1 && reportData) {
+      const timeout = setTimeout(() => setScreen("report"), 200);
+      return () => clearTimeout(timeout);
+    }
+  }, [stepIdx, reportData, screen]);
 
   const isNewSearchSection = screen === "submit" || screen === "running" || screen === "report";
 
@@ -342,7 +244,7 @@ export default function App() {
         {screen === "submit" && (
           <SubmitScreen desc={desc} setDesc={setDesc} claims={claims} setClaims={setClaims} concepts={reportData?.concepts || ["Water treatment", "Consumer hardware"]} onRun={startRunning} />
         )}
-        {screen === "running" && <RunningScreen progress={progress} />}
+        {screen === "running" && <RunningScreen stepIdx={stepIdx} />}
         {screen === "report" && (
           <ReportScreen onBack={() => setScreen("submit")} data={reportData} />
         )}
@@ -441,32 +343,28 @@ function SubmitScreen({ desc, setDesc, claims, setClaims, concepts, onRun }: { d
   );
 }
 
-function RunningScreen({ progress }: { progress: Progress }) {
+function RunningScreen({ stepIdx }: { stepIdx: number }) {
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 48 }}>
       <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#35E08A", letterSpacing: "0.14em", marginBottom: 16, display: "flex", alignItems: "center", gap: 6 }}>
         <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: "#35E08A", boxShadow: "0 0 6px #35E08A", animation: "pulse 1.2s ease-in-out infinite" }} />
         WORKING
       </div>
-      <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} } @keyframes spin { to { transform: rotate(360deg) } }`}</style>
+      <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }`}</style>
       <h2 style={{ color: "#E7EFEA", marginBottom: 10, fontFamily: "'Space Grotesk',sans-serif" }}>Analyzing your invention</h2>
-      <p style={{ color: "#9AABA2", fontSize: 14, marginBottom: 36 }}>Live progress across global patent databases.</p>
+      <p style={{ color: "#9AABA2", fontSize: 14, marginBottom: 36 }}>Searching global patent databases and scoring similarity.</p>
 
       <div style={{ width: "100%", maxWidth: 520, background: "#131E19", border: "1px solid #223029", borderRadius: 12, padding: "20px 24px" }}>
-        {PHASES.map((phase, i) => {
-          const done = i < progress.phaseIdx;
-          const active = i === progress.phaseIdx;
-          // The active phase shows the live server message (with counts); others show their label.
-          const text = active ? progress.message || phase.label : phase.label;
+        {STEPS.map((step, i) => {
+          const done = i < stepIdx;
+          const active = i === stepIdx;
           return (
-            <div key={phase.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 0", borderBottom: i < PHASES.length - 1 ? "1px solid #1B2721" : "none" }}>
-              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, color: done ? "#35E08A" : active ? "#E7EFEA" : "#3A4E44", width: 16, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {done ? "✔" : active ? (
-                  <span style={{ display: "inline-block", width: 11, height: 11, border: "2px solid #35E08A", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />
-                ) : "·"}
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "7px 0", borderBottom: i < STEPS.length - 1 ? "1px solid #1B2721" : "none" }}>
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, color: done ? "#35E08A" : active ? "#E7EFEA" : "#3A4E44", width: 16, flexShrink: 0 }}>
+                {done ? "✔" : active ? "▸" : "·"}
               </span>
               <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: done ? "#35E08A" : active ? "#C9D6CF" : "#3A4E44" }}>
-                {text}
+                {step}
               </span>
             </div>
           );
@@ -494,13 +392,13 @@ function ReportScreen({ onBack, data }: { onBack: () => void; data: AnalysisRepo
             {data.title}
           </div>
           <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#7E948A", letterSpacing: "0.06em", marginTop: 2 }}>
-            Submitted {data.date} · {data.query_count ?? data.patents.length} queries · {data.patents.length} patents scanned
+            Submitted {data.date} · {data.query_count} queries · {data.patents.length} patents scanned
           </div>
         </div>
-        <button onClick={() => downloadReportJson(data)} style={{ background: "transparent", border: "1px solid #263630", borderRadius: 8, color: "#9AABA2", fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 13, cursor: "pointer", padding: "7px 16px" }}>
+        <button style={{ background: "transparent", border: "1px solid #263630", borderRadius: 8, color: "#9AABA2", fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 13, cursor: "pointer", padding: "7px 16px" }}>
           View JSON
         </button>
-        <button onClick={() => exportReportPdf(data)} style={{ background: "#35E08A", border: "none", borderRadius: 8, color: "#07130D", fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 13, cursor: "pointer", padding: "7px 16px", boxShadow: "0 0 14px rgba(53,224,138,0.3)" }}>
+        <button style={{ background: "#35E08A", border: "none", borderRadius: 8, color: "#07130D", fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 13, cursor: "pointer", padding: "7px 16px", boxShadow: "0 0 14px rgba(53,224,138,0.3)" }}>
           Export PDF
         </button>
       </div>
@@ -588,10 +486,11 @@ function ReportScreen({ onBack, data }: { onBack: () => void; data: AnalysisRepo
           {data.patents.map((p, i) => {
             const c = riskColor(p.risk);
             return (
-              <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 20, padding: "16px 24px", borderBottom: i < data.patents.length - 1 ? "1px solid #1B2721" : "none" }}>
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 20, padding: "16px 24px", borderBottom: i < data.patents.length - 1 ? "1px solid #1B2721" : "none" }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 3 }}>
                     <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#7E948A", letterSpacing: "0.05em", flexShrink: 0 }}>{p.num}</span>
+                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#4C8F72", letterSpacing: "0.04em", flexShrink: 0 }}>{p.source}</span>
                     <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 14, color: "#C9D6CF", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {p.title}
                     </span>

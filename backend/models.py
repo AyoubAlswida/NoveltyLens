@@ -15,6 +15,10 @@ class PatentRecord:
     publication_date: str = ""
     source: str = ""
     url: str = ""
+    serpapi_id: str = ""
+    """Google Patents Details identifier (e.g. 'patent/US1234567B2/en'), used to fetch full text."""
+    full_text: str = ""
+    """Full description + claims text fetched from Google Patents Details, when available."""
 
 
 @dataclass(slots=True)

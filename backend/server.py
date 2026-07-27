@@ -17,7 +17,7 @@ load_dotenv()
 from compare import compare_invention_to_patents
 from llm import rationale_for_match, recommendations_for, understand_invention
 from models import ComparisonResult
-from search.search import PatentSearchError, search_patents
+from search.search import PatentSearchError, enrich_with_full_text, search_patents
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -53,6 +53,7 @@ def _format_and_rank(results: list[ComparisonResult], concepts: list[str]) -> li
             "risk": risk,
             "rationale": "",
             "source": patent.source or "live",
+            "full_text_chars": len(patent.full_text),
             "_patent": patent,
         })
     return sorted(formatted, key=lambda item: int(item["pct"]), reverse=True)
@@ -64,10 +65,19 @@ def _run_pipeline(description: str, claims: Optional[str]) -> Iterator[dict[str,
     try:
         analysis = understand_invention(description)
     except Exception:
-        logger.exception("Invention understanding failed; using description as search query")
-        from models import InventionAnalysis
-        analysis = InventionAnalysis(queries=[description[:60]])
-    queries = analysis.queries or [description[:60]]
+        logger.exception("Invention understanding failed")
+        yield {
+            "type": "error",
+            "detail": "Invention analysis failed. Check that the LLM is configured and try again.",
+        }
+        return
+    queries = analysis.queries
+    if not queries:
+        yield {
+            "type": "error",
+            "detail": "Invention analysis returned no search queries. Please try a more detailed description.",
+        }
+        return
     full_text = f"{description} {claims or ''} {' '.join(analysis.concepts)} {' '.join(analysis.keywords)}"
     yield {"type": "progress", "phase": "queries", "message": f"Generated {len(queries)} AI search queries", "count": len(queries)}
 
@@ -83,6 +93,17 @@ def _run_pipeline(description: str, claims: Optional[str]) -> Iterator[dict[str,
     if not patents:
         yield {"type": "result", "data": {"title": description[:45] + "...", "date": "Today", "concepts": analysis.concepts, "patents": [], "top_score": 0, "verdict": "Strong", "query_count": len(queries), "recommendations": ["No reference targets found. Focus claims on wide utility targets."]}}
         return
+
+    yield {"type": "progress", "phase": "enrich", "message": f"Fetching full text for {len(patents)} patents…"}
+    patents = enrich_with_full_text(patents)
+    enriched_count = sum(1 for patent in patents if patent.full_text)
+    yield {
+        "type": "progress",
+        "phase": "enrich",
+        "message": f"Full text retrieved for {enriched_count}/{len(patents)} patents",
+        "enriched": enriched_count,
+        "total": len(patents),
+    }
 
     yield {"type": "progress", "phase": "compare", "message": f"Scoring {len(patents)} candidates for similarity…"}
     formatted = _format_and_rank(compare_invention_to_patents(full_text, patents)[:MAX_RESULTS], analysis.concepts)
