@@ -2,8 +2,6 @@
 
 import json
 import logging
-import math
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Iterator, Optional
 
 from dotenv import load_dotenv
@@ -15,7 +13,7 @@ from pydantic import BaseModel
 load_dotenv()
 
 from compare import compare_invention_to_patents
-from llm import rationale_for_match, recommendations_for, understand_invention
+from llm import analyze_all_matches, understand_invention
 from models import ComparisonResult
 from search.search import PatentSearchError, enrich_with_full_text, search_patents
 
@@ -35,16 +33,9 @@ class InventionRequest(BaseModel):
 def _format_and_rank(results: list[ComparisonResult], concepts: list[str]) -> list[dict[str, object]]:
     """Adapt typed comparison results to the unchanged frontend response shape."""
     formatted: list[dict[str, object]] = []
-    for index, result in enumerate(results):
+    for result in results:
         patent = result.patent
-        if result.similarity_score == 0.0:
-            number_hash = sum(int(char) for char in patent.id if char.isdigit()) % 6
-            score = 7 + number_hash + (index * 2)
-        else:
-            score = int(25 + (math.log10(result.similarity_score + 0.1) * 75))
-        if any(concept.lower() in patent.title.lower() or concept.lower() in patent.abstract.lower() for concept in concepts[:2]):
-            score += 20
-        score = max(6, min(96, score))
+        score = max(0, min(100, int(result.similarity_score * 100)))
         risk = "High" if score >= 75 else "Low" if score <= 25 else "Medium"
         formatted.append({
             "num": patent.id,
@@ -111,15 +102,12 @@ def _run_pipeline(description: str, claims: Optional[str]) -> Iterator[dict[str,
     verdict = "Weak" if top_score >= 75 else "Moderate" if top_score >= 25 else "Strong"
 
     top_patents = [item["_patent"] for item in formatted]
-    yield {"type": "progress", "phase": "analyze", "message": f"Writing detailed analysis… 0/{len(top_patents)}", "current": 0, "total": len(top_patents)}
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        recommendation_future = executor.submit(recommendations_for, description, top_patents)
-        rationale_futures = {executor.submit(rationale_for_match, description, patent): index for index, patent in enumerate(top_patents)}
-        for completed, future in enumerate(as_completed(rationale_futures), start=1):
-            index = rationale_futures[future]
-            formatted[index]["rationale"] = future.result()
-            yield {"type": "progress", "phase": "analyze", "message": f"Writing detailed analysis… {completed}/{len(top_patents)}", "current": completed, "total": len(top_patents)}
-        recommendations = recommendation_future.result()
+    yield {"type": "progress", "phase": "analyze", "message": f"Writing detailed analysis for {len(top_patents)} matches…", "current": 0, "total": len(top_patents)}
+    analysis_result = analyze_all_matches(description, top_patents)
+    for item, rationale in zip(formatted, analysis_result.rationales):
+        item["rationale"] = rationale
+    recommendations = analysis_result.recommendations
+    yield {"type": "progress", "phase": "analyze", "message": f"Writing detailed analysis… {len(top_patents)}/{len(top_patents)}", "current": len(top_patents), "total": len(top_patents)}
 
     for item in formatted:
         item.pop("_patent", None)
@@ -140,11 +128,17 @@ async def analyze_stream(request: InventionRequest) -> StreamingResponse:
 
 @app.post("/api/analyze")
 async def analyze_invention(request: InventionRequest) -> dict[str, object]:
-    for event in _run_pipeline(request.description, request.claims):
-        if event["type"] == "result":
-            return event["data"]  # type: ignore[return-value]
-        if event["type"] == "error":
-            raise HTTPException(status_code=502, detail=event["detail"])
+    try:
+        for event in _run_pipeline(request.description, request.claims):
+            if event["type"] == "result":
+                return event["data"]  # type: ignore[return-value]
+            if event["type"] == "error":
+                raise HTTPException(status_code=502, detail=event["detail"])
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.exception("Analysis pipeline error")
+        raise HTTPException(status_code=502, detail=str(error)) from error
     raise HTTPException(status_code=500, detail="Analysis produced no result.")
 
 

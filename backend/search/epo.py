@@ -1,3 +1,5 @@
+"""European Patent Office provider via the EPO Open Patent Services API."""
+
 import requests
 import xml.etree.ElementTree as ET
 
@@ -7,23 +9,17 @@ from tracing import trace
 
 AUTH_URL = "https://ops.epo.org/3.2/auth/accesstoken"
 SEARCH_URL = "https://ops.epo.org/3.2/rest-services/published-data/search/biblio"
-
+NAMESPACE = {"ops": "http://ops.epo.org", "exchange": "http://www.epo.org/exchange"}
 
 
 def get_access_token() -> str:
-    """
-    Authenticate with the EPO OPS API and return an access token.
-    """
-    if not settings.epo_key or not settings.epo_secret:
-        raise RuntimeError("EPO_KEY/EPO_SECRET are not configured")
-
+    """Authenticate with the EPO OPS API and return an access token."""
     response = requests.post(
         AUTH_URL,
         data={"grant_type": "client_credentials"},
         auth=(settings.epo_key, settings.epo_secret),
         timeout=30,
     )
-
     response.raise_for_status()
     trace("epo.auth.ok")
 
@@ -31,57 +27,25 @@ def get_access_token() -> str:
 
 
 def search_epo(query: str, size: int = 10) -> list[PatentRecord]:
-    """
-    Search the European Patent Office and return normalized PatentRecord objects.
-    """
+    """Search the European Patent Office and return normalized PatentRecord objects."""
     trace("epo.search.request", query=query, size=size)
-
     token = get_access_token()
-
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/xml",
-    }
-
-    response = requests.get(
-        SEARCH_URL,
-        headers=headers,
-        params={"q": query},
-        timeout=30,
-    )
-
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/xml"}
+    response = requests.get(SEARCH_URL, headers=headers, params={"q": query}, timeout=30)
     response.raise_for_status()
-
     root = ET.fromstring(response.content)
 
     patents = []
-
-    namespace = {
-        "ops": "http://ops.epo.org",
-        "exchange": "http://www.epo.org/exchange",
-    }
-
-    for doc in root.findall(".//exchange:exchange-document", namespace)[:size]:
-
+    for doc in root.findall(".//exchange:exchange-document", NAMESPACE)[:size]:
         publication = doc.attrib.get("doc-number", "")
 
         title = ""
-
-        abstract = ""
-
-        title_node = doc.find(
-            ".//exchange:invention-title",
-            namespace,
-        )
-
+        title_node = doc.find(".//exchange:invention-title", NAMESPACE)
         if title_node is not None and title_node.text:
             title = title_node.text.strip()
 
-        abstract_node = doc.find(
-            ".//exchange:abstract",
-            namespace,
-        )
-
+        abstract = ""
+        abstract_node = doc.find(".//exchange:abstract", NAMESPACE)
         if abstract_node is not None:
             abstract = "".join(abstract_node.itertext()).strip()
 
@@ -94,6 +58,5 @@ def search_epo(query: str, size: int = 10) -> list[PatentRecord]:
                 url=f"https://worldwide.espacenet.com/patent/search?q={publication}",
             )
         )
-
     trace("epo.search.response", query=query, count=len(patents), ids=[p.id for p in patents])
     return patents
