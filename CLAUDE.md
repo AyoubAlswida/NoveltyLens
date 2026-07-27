@@ -112,6 +112,15 @@ The Phase 1 migration re-expresses the four steps above as a LangGraph `StateGra
   testing, so this is the one place it can still be caught. Keep this tuple identical to
   the frontend's `PHASES` array.
 
+- `understanding.py` — Query Understanding + Query Expansion (P1.2), over `llm.py`
+  unchanged. Contains no `except`: a failed or malformed LLM response fails the request.
+- `searching.py` — Search Orchestrator + Keyword Search (P1.3). **One deliberate behavior
+  change from legacy**: one provider failing fails the whole request, via
+  `search_all_providers_strict` in `backend/search/search.py` (added alongside
+  `search_patents`, which is unchanged). Under legacy, an EPO outage halves the corpus and
+  still returns a confident verdict. Finding *nothing* is not a failure — an empty result
+  set is a genuine answer and flows through to an empty report.
+
 Nodes emit progress through LangGraph's custom stream writer, which preserves call
 ordering — the same interleaving the legacy generator got from `yield`.
 
