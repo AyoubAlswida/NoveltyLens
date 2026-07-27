@@ -121,6 +121,12 @@ The Phase 1 migration re-expresses the four steps above as a LangGraph `StateGra
   still returns a confident verdict. Finding *nothing* is not a failure — an empty result
   set is a genuine answer and flows through to an empty report.
 
+- `ranking.py` — Ranking + Explanation (P1.4). Calls `compare.py`'s TF-IDF **unchanged**
+  (P3.6 owns replacing it) and `analyze_all_matches` with no `except`. The displayed score
+  is the real one, truncated and clamped to 0–100 and nothing else — a dissimilar patent
+  shows an honest `0`. Also holds `format_matches` and `verdict_for`, which build the
+  `patents[]` entries and the novelty verdict.
+
 Nodes emit progress through LangGraph's custom stream writer, which preserves call
 ordering — the same interleaving the legacy generator got from `yield`.
 
