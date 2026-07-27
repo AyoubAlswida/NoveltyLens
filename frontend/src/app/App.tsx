@@ -69,6 +69,138 @@ function verdictColor(v: "Strong" | "Moderate" | "Weak") {
   return "#FF7A59";
 }
 
+function buildReport(backendData: any, desc: string): AnalysisReport {
+  const mappedPatents: DynamicPatent[] = (backendData.patents || []).map((p: any) => {
+    const finalPct = p.pct <= 1 ? Math.floor(p.pct * 100) : Math.floor(p.pct);
+    let structuralRisk: "High" | "Medium" | "Low" = "Medium";
+    if (finalPct >= 75) structuralRisk = "High";
+    else if (finalPct <= 25) structuralRisk = "Low";
+    return {
+      num: p.num || p.number || "US Unknown",
+      title: p.title || "Patent Prior Art Record",
+      pct: finalPct,
+      // Never substitute prose here. This used to fall back to "Shares common
+      // vocabulary or systemic overlap with your primary description." for any
+      // patent the backend did not explain, which reads as model output and is
+      // not. The backend guarantees a rationale per match or fails the request,
+      // so an empty one means something is wrong and must look wrong.
+      rationale: p.rationale || "",
+    };
+  });
+
+  const topScore = mappedPatents.length > 0 ? mappedPatents[0].pct : 0;
+  let finalVerdict: "Strong" | "Moderate" | "Weak" = "Strong";
+  if (topScore >= 75) finalVerdict = "Weak";
+  else if (topScore >= 25) finalVerdict = "Moderate";
+
+  return {
+    title: desc.length > 50 ? desc.slice(0, 47) + "..." : desc,
+    date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+    // No invented placeholder concept. The backend always sends the real list.
+    concepts: backendData.concepts || [],
+    patents: mappedPatents,
+    top_score: topScore,
+    verdict: finalVerdict,
+    query_count: backendData.query_count,
+    recommendations: backendData.recommendations || [],
+  };
+}
+
+function escapeHtml(value: string) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function downloadReportJson(data: AnalysisReport) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const safeName = (data.title || "patent-report").replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "report";
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${safeName}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+function exportReportPdf(data: AnalysisReport) {
+  const win = window.open("", "_blank");
+  if (!win) {
+    alert("Please allow pop-ups for this site to export the PDF.");
+    return;
+  }
+
+  const rows = data.patents
+    .map(
+      (p) => `
+        <tr>
+          <td class="mono">${escapeHtml(p.num)}</td>
+          <td>${escapeHtml(p.title)}<div class="rationale">${escapeHtml(p.rationale)}</div></td>
+          <td class="center">${p.pct}%</td>
+          <td class="center risk-${p.risk.toLowerCase()}">${escapeHtml(p.risk)}</td>
+        </tr>`
+    )
+    .join("");
+
+  const recs = data.recommendations.map((r) => `<li>${escapeHtml(r)}</li>`).join("");
+  const concepts = data.concepts.map((c) => `<span class="chip">${escapeHtml(c)}</span>`).join("");
+
+  win.document.write(`<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>${escapeHtml(data.title)}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color: #12211a; margin: 40px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .meta { color: #5c7266; font-size: 12px; margin-bottom: 24px; }
+  .summary { display: flex; gap: 32px; margin-bottom: 24px; }
+  .summary .big { font-size: 40px; font-weight: 700; }
+  .label { text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px; color: #5c7266; }
+  .chip { display: inline-block; background: #eaf7f0; color: #1a7a4c; border-radius: 20px; padding: 3px 10px; font-size: 11px; margin: 0 6px 6px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 24px; font-size: 12px; }
+  th { text-align: left; border-bottom: 2px solid #d5e3db; padding: 8px 6px; color: #5c7266; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+  td { border-bottom: 1px solid #eef3f0; padding: 8px 6px; vertical-align: top; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+  .center { text-align: center; }
+  .rationale { color: #6b8177; font-size: 11px; margin-top: 3px; }
+  .risk-high { color: #c0392b; font-weight: 700; }
+  .risk-medium { color: #b8860b; font-weight: 700; }
+  .risk-low { color: #1a7a4c; font-weight: 700; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: #5c7266; margin: 24px 0 8px; }
+  ol { padding-left: 18px; } li { margin-bottom: 8px; font-size: 12px; }
+  .foot { margin-top: 32px; color: #93a69c; font-size: 10px; border-top: 1px solid #eef3f0; padding-top: 12px; }
+</style>
+</head>
+<body>
+  <h1>${escapeHtml(data.title)}</h1>
+  <div class="meta">PatentScout AI &middot; Submitted ${escapeHtml(data.date)} &middot; ${data.patents.length} patents scanned</div>
+  <div class="summary">
+    <div><div class="label">Top similarity</div><div class="big">${data.top_score}%</div></div>
+    <div><div class="label">Novelty verdict</div><div class="big">${escapeHtml(data.verdict)}</div></div>
+  </div>
+  <div class="label">Key concepts</div>
+  <div style="margin:8px 0 8px">${concepts || "<span class='rationale'>None extracted</span>"}</div>
+  <h2>Prior-art matches</h2>
+  <table>
+    <thead><tr><th>Number</th><th>Title</th><th class="center">Match</th><th class="center">Risk</th></tr></thead>
+    <tbody>${rows || "<tr><td colspan='4' class='rationale'>No matches found.</td></tr>"}</tbody>
+  </table>
+  <h2>Recommendations</h2>
+  <ol>${recs || "<li class='rationale'>None.</li>"}</ol>
+  <div class="foot">Decision-support only &middot; not legal advice. Generated by PatentScout AI.</div>
+  <script>window.onload = function () { window.print(); };</script>
+</body>
+</html>`);
+  win.document.close();
+}
+
 export default function App() {
   const [screen, setScreen] = useState<Screen>("submit");
   const [stepIdx, setStepIdx] = useState(-1);
@@ -520,8 +652,10 @@ function ReportScreen({ onBack, data }: { onBack: () => void; data: AnalysisRepo
             <span>✦</span> How to make it more unique
           </div>
           <ol style={{ margin: 0, padding: 0, listStyle: "none" }}>
-    {/* COMPLETE REWRITE OF THIS CONDITIONAL BLOCK: No more hardcoded strings! */}
-    {data && Array.isArray(data.recommendations) && data.recommendations.length > 0 ? (
+    {/* Only ever renders recommendations the backend actually sent. The empty
+        case says so plainly -- it must NOT substitute invented advice, which is
+        what this block used to do. */}
+    {data.recommendations.length > 0 ? (
       data.recommendations.map((rec, i) => (
         <li key={i} style={{ display: "flex", gap: 12, marginBottom: i < data.recommendations.length - 1 ? 12 : 0, fontSize: 13, color: "#C9D6CF", lineHeight: 1.6 }}>
           <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#35E08A", fontWeight: 700, flexShrink: 0, marginTop: 2 }}>
@@ -531,18 +665,9 @@ function ReportScreen({ onBack, data }: { onBack: () => void; data: AnalysisRepo
         </li>
       ))
     ) : (
-      [
-        `Differentiate structural elements to separate functionality from typical ${data.concepts?.[0] || 'device'} baselines.`,
-        `Incorporate automated tracking routines missing from standard prior art reference libraries.`,
-        `Isolate your independent claim definitions to explicit deployment components.`
-      ].map((rec, i) => (
-        <li key={i} style={{ display: "flex", gap: 12, marginBottom: i < 2 ? 12 : 0, fontSize: 13, color: "#C9D6CF", lineHeight: 1.6 }}>
-          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#35E08A", fontWeight: 700, flexShrink: 0, marginTop: 2 }}>
-            {i + 1}.
-          </span>
-          {rec}
-        </li>
-      ))
+      <li style={{ fontSize: 13, color: "#7E948A", lineHeight: 1.6 }}>
+        No recommendations were generated — no prior art was found to distinguish this invention from.
+      </li>
     )}
   </ol>
         </div>

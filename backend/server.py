@@ -13,6 +13,7 @@ from pydantic import BaseModel
 load_dotenv()
 
 from compare import compare_invention_to_patents
+from config import settings
 from llm import analyze_all_matches, understand_invention
 from models import ComparisonResult
 from search.search import PatentSearchError, enrich_with_full_text, search_patents
@@ -114,11 +115,24 @@ def _run_pipeline(description: str, claims: Optional[str]) -> Iterator[dict[str,
     yield {"type": "result", "data": {"title": description[:45] + "...", "date": "Today", "concepts": analysis.concepts, "patents": formatted, "top_score": top_score, "verdict": verdict, "query_count": len(queries), "recommendations": recommendations}}
 
 
+# Resolved once, at import, on the PIPELINE flag that config.py has already
+# validated. LangGraph is the default; PIPELINE=legacy selects the original
+# generator and skips importing backend/graph/ entirely, so the fallback stays
+# available even if something is wrong with the langgraph install. Resolving
+# here rather than per-request means a broken selection fails at startup.
+if settings.pipeline == "langgraph":
+    from graph.pipeline import run_graph_pipeline as _active_pipeline
+else:
+    _active_pipeline = _run_pipeline
+
+logger.info("Serving requests with the %r pipeline", settings.pipeline)
+
+
 @app.post("/api/analyze/stream")
 async def analyze_stream(request: InventionRequest) -> StreamingResponse:
     def sse() -> Iterator[str]:
         try:
-            for event in _run_pipeline(request.description, request.claims):
+            for event in _active_pipeline(request.description, request.claims):
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception as error:
             logger.exception("Streaming pipeline error")
@@ -129,7 +143,7 @@ async def analyze_stream(request: InventionRequest) -> StreamingResponse:
 @app.post("/api/analyze")
 async def analyze_invention(request: InventionRequest) -> dict[str, object]:
     try:
-        for event in _run_pipeline(request.description, request.claims):
+        for event in _active_pipeline(request.description, request.claims):
             if event["type"] == "result":
                 return event["data"]  # type: ignore[return-value]
             if event["type"] == "error":

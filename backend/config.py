@@ -23,7 +23,9 @@ class Settings:
     llm_api_url: str = os.getenv("LLM_API_URL", "https://router.huggingface.co/v1/chat/completions")
     llm_model: str = os.getenv("LLM_MODEL", "meta-llama/Llama-3.1-8B-Instruct:novita")
     uspto_api_key: str = os.getenv("PATENTSVIEW_API_KEY", "")
-    pipeline: str = os.getenv("PIPELINE", "legacy")
+    # LangGraph is the default as of P1.5, which proved byte-identical SSE
+    # parity with the legacy generator. Set PIPELINE=legacy to fall back.
+    pipeline: str = os.getenv("PIPELINE", "langgraph")
     database_url: str = os.getenv(
         "DATABASE_URL", "postgresql://agenticai:agenticai@127.0.0.1:5432/agenticai"
     )
