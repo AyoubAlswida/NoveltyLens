@@ -58,8 +58,12 @@ function buildReport(backendData: any, desc: string): AnalysisReport {
       num: p.num || p.number || "US Unknown",
       title: p.title || "Patent Prior Art Record",
       pct: finalPct,
-      risk: structuralRisk,
-      rationale: p.rationale || "Shares common vocabulary or systemic overlap with your primary description.",
+      // Never substitute prose here. This used to fall back to "Shares common
+      // vocabulary or systemic overlap with your primary description." for any
+      // patent the backend did not explain, which reads as model output and is
+      // not. The backend guarantees a rationale per match or fails the request,
+      // so an empty one means something is wrong and must look wrong.
+      rationale: p.rationale || "",
     };
   });
 
@@ -71,7 +75,8 @@ function buildReport(backendData: any, desc: string): AnalysisReport {
   return {
     title: desc.length > 50 ? desc.slice(0, 47) + "..." : desc,
     date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
-    concepts: backendData.concepts || ["Extracted Concept Cluster"],
+    // No invented placeholder concept. The backend always sends the real list.
+    concepts: backendData.concepts || [],
     patents: mappedPatents,
     top_score: topScore,
     verdict: finalVerdict,
@@ -621,8 +626,10 @@ function ReportScreen({ onBack, data }: { onBack: () => void; data: AnalysisRepo
             <span>✦</span> How to make it more unique
           </div>
           <ol style={{ margin: 0, padding: 0, listStyle: "none" }}>
-    {/* COMPLETE REWRITE OF THIS CONDITIONAL BLOCK: No more hardcoded strings! */}
-    {data && Array.isArray(data.recommendations) && data.recommendations.length > 0 ? (
+    {/* Only ever renders recommendations the backend actually sent. The empty
+        case says so plainly -- it must NOT substitute invented advice, which is
+        what this block used to do. */}
+    {data.recommendations.length > 0 ? (
       data.recommendations.map((rec, i) => (
         <li key={i} style={{ display: "flex", gap: 12, marginBottom: i < data.recommendations.length - 1 ? 12 : 0, fontSize: 13, color: "#C9D6CF", lineHeight: 1.6 }}>
           <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#35E08A", fontWeight: 700, flexShrink: 0, marginTop: 2 }}>
@@ -632,18 +639,9 @@ function ReportScreen({ onBack, data }: { onBack: () => void; data: AnalysisRepo
         </li>
       ))
     ) : (
-      [
-        `Differentiate structural elements to separate functionality from typical ${data.concepts?.[0] || 'device'} baselines.`,
-        `Incorporate automated tracking routines missing from standard prior art reference libraries.`,
-        `Isolate your independent claim definitions to explicit deployment components.`
-      ].map((rec, i) => (
-        <li key={i} style={{ display: "flex", gap: 12, marginBottom: i < 2 ? 12 : 0, fontSize: 13, color: "#C9D6CF", lineHeight: 1.6 }}>
-          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#35E08A", fontWeight: 700, flexShrink: 0, marginTop: 2 }}>
-            {i + 1}.
-          </span>
-          {rec}
-        </li>
-      ))
+      <li style={{ fontSize: 13, color: "#7E948A", lineHeight: 1.6 }}>
+        No recommendations were generated — no prior art was found to distinguish this invention from.
+      </li>
     )}
   </ol>
         </div>

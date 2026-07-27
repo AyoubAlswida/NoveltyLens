@@ -10,9 +10,8 @@ against prior art that was never retrieved.
 Finding nothing is *not* a failure.  A search that reaches every provider and
 gets zero results has produced a genuine answer, and the pipeline reports it as
 an empty report rather than an error.  What it must never do is dress that
-emptiness up: legacy pairs it with a canned
-``"No reference targets found. Focus claims on wide utility targets."``, which
-is drafting advice no model wrote.  ``graph/pipeline.py`` returns an empty
+emptiness up: legacy pairs it with a hardcoded sentence of claim-drafting
+advice that no model wrote.  ``graph/pipeline.py`` sends an empty
 recommendation list instead.
 """
 
