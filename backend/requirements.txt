@@ -4,3 +4,12 @@ requests
 scikit-learn
 pydantic
 python-dotenv
+langgraph
+qdrant-client
+psycopg[binary]
+yoyo-migrations
+rank_bm25
+httpx
+pytest
+pytest-asyncio
+sentence-transformers
