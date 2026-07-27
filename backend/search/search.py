@@ -16,7 +16,12 @@ SOURCES: tuple[tuple[str, Provider], ...] = (
 
 
 class PatentSearchError(RuntimeError):
-    """Raised only when every configured provider failed."""
+    """A provider call failed.
+
+    ``search_patents`` (legacy) raises this only when every provider failed.
+    ``search_all_providers_strict`` (LangGraph) raises it when any single one
+    does.
+    """
 
 
 def merge_patents(patents: list[PatentRecord]) -> list[PatentRecord]:
@@ -58,6 +63,42 @@ def search_patents(
 
     if not successful_calls:
         raise PatentSearchError("All patent search providers failed")
+
+    merged = merge_patents(all_patents)
+    logger.info("Merged %d search records into %d unique patents", len(all_patents), len(merged))
+    return merged
+
+
+def search_all_providers_strict(
+    queries: list[str], results_per_query: int = 10
+) -> list[PatentRecord]:
+    """Search every provider for every query, failing if any single call fails.
+
+    This is :func:`search_patents` without the partial-success behavior, for the
+    LangGraph pipeline.  The two exist side by side until ticket P1.5 retires
+    the legacy path.
+
+    The difference is the whole point.  ``search_patents`` treats a run as
+    successful when at least one provider worked, which means an EPO outage
+    silently halves the corpus and the user is shown a novelty verdict computed
+    against prior art the system never actually retrieved.  The verdict looks
+    identical to a healthy one.  Here, a provider that fails fails the request.
+
+    Raises:
+        PatentSearchError: if any provider call raises, wrapping the original
+            error so the real cause survives.
+    """
+    all_patents: list[PatentRecord] = []
+    for query in filter(None, (query.strip() for query in queries)):
+        for provider_name, provider in SOURCES:
+            try:
+                results = provider(query, results_per_query)
+            except Exception as error:
+                raise PatentSearchError(
+                    f"{provider_name} failed for query {query!r}: {error}"
+                ) from error
+            all_patents.extend(results)
+            logger.info("%s returned %d patents for %r", provider_name, len(results), query)
 
     merged = merge_patents(all_patents)
     logger.info("Merged %d search records into %d unique patents", len(all_patents), len(merged))
