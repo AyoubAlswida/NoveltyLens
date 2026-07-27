@@ -65,12 +65,12 @@ running the wrong pipeline — but no code branches on it. Wiring that branch is
 
 ## Architecture
 
-### Backend: one linear pipeline, not yet an agent framework
+### Backend: the legacy linear pipeline still serves every request
 
-Despite `langgraph`, `qdrant-client`, `psycopg[binary]`, `yoyo-migrations`, `rank_bm25`,
-and `sentence-transformers` sitting in `backend/requirements.txt`, **none of them are
-imported anywhere in the code today**.
-They are pre-staged dependencies for the migration in `docs/`. The actual request flow is
+`qdrant-client`, `psycopg[binary]`, `yoyo-migrations`, `rank_bm25` and
+`sentence-transformers` sit in `backend/requirements.txt` but are **imported nowhere** —
+they are pre-staged for Phases 2 and 3. `langgraph` is now used, by `backend/graph/`
+(below), but that package does not serve requests yet. The actual request flow remains
 a single generator, `_run_pipeline` in `backend/server.py`, called by both
 `POST /api/analyze/stream` (SSE) and `POST /api/analyze` (drains the same generator,
 returns only the final JSON). It runs, in strict sequence:
@@ -93,6 +93,27 @@ erroring. The stream must end with exactly one `result` event (data shape:
 `patents[].{num,title,pct,rationale}` plus `concepts`, `recommendations`, `query_count`)
 or the frontend throws. Any change to event shape or phase names must update both files
 together.
+
+### `backend/graph/` — the LangGraph pipeline, under construction
+
+The Phase 1 migration re-expresses the four steps above as a LangGraph `StateGraph` in
+`backend/graph/`. It is **not wired to any request path yet** (ticket P1.5 does that);
+`_run_pipeline` above stays the parity reference until it is.
+
+- `state.py` — `GraphState`, the `TypedDict` every node reads and writes. It carries the
+  `backend/models.py` dataclasses rather than re-flattening them, and reserves fields for
+  Phase 3 (`semantic_patents`, `fused_patents`, `validated_patents`). `total=False`, so
+  later tickets add keys additively. **It has no error field on purpose** — under the
+  zero-tolerance policy a node that cannot produce a genuine result raises, and an error
+  slot would invite nodes to record a problem and continue to a degraded answer.
+- `events.py` — `PHASES` plus `emit_progress`, which **raises `SSEContractError` on a
+  phase name the frontend does not know**. The frontend's silent
+  fall-back-to-first-checklist-item behavior makes phase drift invisible in backend
+  testing, so this is the one place it can still be caught. Keep this tuple identical to
+  the frontend's `PHASES` array.
+
+Nodes emit progress through LangGraph's custom stream writer, which preserves call
+ordering — the same interleaving the legacy generator got from `yield`.
 
 ### LLM: Llama via HuggingFace Router, not a local model
 
@@ -144,8 +165,13 @@ this pipeline, even before the migration lands:
 
 - **Zero-tolerance failure policy**: no fallback, ever. If a step can't produce a genuine
   result, it must fail the request with a clear `error` event — never substitute
-  fabricated or placeholder output. (The current pipeline does not yet follow this — the
-  fake hash-based score in `_format_and_rank`, the `_fallback_rationale`/
-  `_fallback_recommendations` pair in `backend/llm.py`, and `search_patents`'s
-  "succeed if any provider works" behavior are all slated for removal, not extension.)
+  fabricated or placeholder output. Commit `e96edfac` already removed the fabricated
+  score in `_format_and_rank` and the `_fallback_rationale` / `_fallback_recommendations`
+  pair in `backend/llm.py`; do not go looking for them. Two fallbacks remain in the legacy
+  path, both of which the LangGraph path drops:
+  - `search_patents`'s "succeed if any provider works" (`backend/search/search.py`) —
+    a provider outage silently narrows the corpus and still reports success.
+  - the canned `"No reference targets found…"` recommendation `_run_pipeline` emits when
+    search returns zero patents (`backend/server.py`) — drafting advice presented as
+    analysis output that no LLM produced.
 - **USPTO is out of scope** — no API access is available. Don't add a USPTO provider.
