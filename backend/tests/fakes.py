@@ -170,12 +170,45 @@ class _FakePGCursor:
             self._db.query_cache[query] = list(patent_ids)
 
         elif sql_norm.startswith("INSERT INTO search_runs"):
+            description, claims, concepts, query_count, top_score, verdict, recommendations = params
             run_id = f"fake-run-{len(self._db.search_runs)}"
-            self._db.search_runs.append({"id": run_id, "params": params})
+            self._db.search_runs.append({
+                "id": run_id, "description": description, "claims": claims, "concepts": concepts,
+                "query_count": query_count, "top_score": top_score, "verdict": verdict,
+                "recommendations": recommendations,
+            })
             self._result = [(run_id,)]
 
         elif sql_norm.startswith("INSERT INTO search_run_matches"):
-            self._db.search_run_matches.append(params)
+            run_id, rank, patent_id, pct, risk, rationale, source = params
+            self._db.search_run_matches.append({
+                "run_id": run_id, "rank": rank, "patent_id": patent_id, "pct": pct,
+                "risk": risk, "rationale": rationale, "source": source,
+            })
+
+        elif sql_norm.startswith("SELECT id, concepts, query_count, top_score, verdict, recommendations FROM search_runs"):
+            # find_recent_report: no notion of time in this fake, so every
+            # matching run is treated as within REPORT_TTL -- tests that need
+            # a miss use a different description/claims, not an expired one.
+            description, claims = params[0], params[1]
+            matches = [
+                run for run in reversed(self._db.search_runs)
+                if run["description"] == description and run["claims"] == claims
+            ]
+            if matches:
+                run = matches[0]
+                self._result = [(run["id"], run["concepts"], run["query_count"], run["top_score"], run["verdict"], run["recommendations"])]
+
+        elif sql_norm.startswith("SELECT p.title, srm.pct, srm.risk, srm.rationale, srm.source, srm.patent_id"):
+            run_id = params[0]
+            rows = sorted(
+                (m for m in self._db.search_run_matches if m["run_id"] == run_id),
+                key=lambda m: m["rank"],
+            )
+            self._result = [
+                (self._db.patents.get(m["patent_id"], {}).get("title", ""), m["pct"], m["risk"], m["rationale"], m["source"], m["patent_id"])
+                for m in rows
+            ]
 
         elif sql_norm.startswith("SELECT id, description, concepts"):
             self._result = []  # list_history: not exercised by pipeline tests today.
@@ -205,7 +238,7 @@ class FakePostgresDB:
         self.patents: dict[str, dict] = {}
         self.query_cache: dict[str, list[str]] = {}
         self.search_runs: list[dict] = []
-        self.search_run_matches: list[tuple] = []
+        self.search_run_matches: list[dict] = []
 
     def cursor(self) -> _FakePGCursor:
         return _FakePGCursor(self)

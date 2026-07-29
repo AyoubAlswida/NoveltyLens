@@ -347,6 +347,21 @@ fetch. `id`/`created_at` (real values) stand in for the SSE payload's placeholde
 `title`/`date`; the frontend derives its own display title/date from the raw description,
 same as it already does for a live result.
 
+**Description-level report cache.** `_run_pipeline` checks `reports.py`'s
+`find_recent_report` before doing anything else: an exact resubmission of the same
+`description`+`claims` within 24h (`REPORT_TTL`) returns the stored report directly — zero
+LLM calls, zero provider calls, zero embedding calls. This exists because the pipeline is
+*not* actually deterministic even at `temperature=0.0` (query understanding) — observed
+directly, the same description produced different generated queries on two separate live
+runs — so without this, "search the same invention twice" could silently return a
+different verdict each time, which is a strange thing for a user to hit and undermines
+trust in the tool. `patents[]` entries reconstructed this way carry only
+`num/title/pct/risk/rationale/source` (`CORE_PATENT_FIELDS` in `test_pipeline_parity.py`)
+— the debug-only `full_text_chars` field a live run's entries also carry isn't persisted,
+so it's absent on a cache hit; harmless, since nothing reads it. Same legacy-only
+limitation as everything else in this section: `PIPELINE=langgraph` (the default) doesn't
+call `_run_pipeline` at all, so this cache is inactive unless `PIPELINE=legacy` is set.
+
 ### Remaining migration (see `docs/`)
 
 **Phases 1 and 3 have landed; Phase 2 has landed for the legacy pipeline only** (see above

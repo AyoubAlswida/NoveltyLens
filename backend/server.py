@@ -18,7 +18,7 @@ from config import settings
 from db import connect
 from llm import analyze_all_matches, understand_invention
 from models import ComparisonResult
-from reports import list_history, save_report
+from reports import find_recent_report, list_history, save_report
 from search.search import PatentSearchError, enrich_with_full_text, search_patents
 
 logging.basicConfig(level=logging.INFO)
@@ -65,6 +65,16 @@ def _run_pipeline(description: str, claims: Optional[str]) -> Iterator[dict[str,
     (`graph/pipeline.py`) has no persistence yet -- see CLAUDE.md.
     """
     with connect() as conn:
+        cached_report = find_recent_report(conn, description, claims)
+        if cached_report is not None:
+            # An exact resubmission within REPORT_TTL: skip every LLM/search
+            # call and return the same genuine result as last time, not a
+            # fresh (and possibly differently-worded, or differently-ranked)
+            # one. See reports.py's find_recent_report docstring.
+            yield {"type": "progress", "phase": "understand", "message": "Found a recent identical search — reusing its result…"}
+            yield {"type": "result", "data": {"title": description[:45] + "...", "date": "Today", **cached_report}}
+            return
+
         yield {"type": "progress", "phase": "understand", "message": "Extracting technical concepts & keywords…"}
         try:
             analysis = understand_invention(description)
