@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-load_dotenv()
+load_dotenv(override=True)  # see config.py's load_dotenv(override=True) for why
 
 from cache import store_enriched_patents
 from compare import compare_invention_to_patents
