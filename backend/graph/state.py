@@ -73,22 +73,19 @@ class GraphState(TypedDict, total=False):
     in front of it without touching the ranking node.
     """
 
-    # --- Reserved for Phase 3.  No node writes these yet. ---
+    # --- Semantic Search (P3.3) ---
     semantic_patents: list[PatentRecord]
-    """P3.3: vector-similarity hits from Qdrant.  Runs in parallel with keyword
-    search, so it is a separate field rather than a shared accumulator - the two
-    branches must not race on one list."""
+    """Vector-similarity hits from Qdrant, written by ``semantic_search_node``
+    (``graph/searching.py``).  Runs in parallel with keyword search, so it is a
+    separate field rather than a shared accumulator - the two branches must not
+    race on one list."""
 
+    # --- Result Fusion (P3.4) ---
     fused_patents: list[PatentRecord]
-    """P3.4: keyword and semantic results merged by Reciprocal Rank Fusion.
-    Writing this must also replace ``candidates``."""
+    """Keyword and semantic results merged by Reciprocal Rank Fusion
+    (``graph/fusion.py``).  Writing this also replaces ``candidates``."""
 
+    # --- Validation (P3.5) ---
     validated_patents: list[PatentRecord]
-    """P3.5: the subset the LLM relevance check kept.  Writing this must also
-    replace ``candidates``.
-
-    P3.5 also needs somewhere to record *why* each patent was kept or dropped.
-    That verdict shape is P3.5's to define - add it as a new key here rather
-    than overloading this list.  Because this is a ``total=False`` TypedDict,
-    that addition breaks nothing.
-    """
+    """The subset of ``fused_patents`` the LLM relevance check
+    (``graph/validation.py``) kept.  Writing this also replaces ``candidates``."""

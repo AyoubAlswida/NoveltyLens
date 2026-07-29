@@ -65,6 +65,16 @@ def _fake_llm_chat(prompt: str, **kwargs: object) -> str:
     if "PatentScout AI" in prompt:
         return json.dumps({"concepts": CONCEPTS, "keywords": KEYWORDS, "queries": QUERIES})
 
+    if "screening" in prompt:
+        # validate_relevance's prompt also contains "expert patent examiner", so
+        # this check must come before the analyze_all_matches one below. Marks
+        # every candidate relevant, keeping existing tests' candidate counts
+        # unchanged unless a test overrides this stub.
+        count = int(re.search(r"screening (\d+) candidate", prompt).group(1))
+        return json.dumps({
+            "verdicts": [{"index": i, "relevant": True} for i in range(1, count + 1)],
+        })
+
     if "expert patent examiner" in prompt:
         # The prompt states how many patents it is analyzing; honor that exactly,
         # because analyze_all_matches raises on a missing rationale.
@@ -142,36 +152,42 @@ def test_invalid_pipeline_value_is_rejected():
 # The gate
 # --------------------------------------------------------------------------
 
-def test_event_streams_are_byte_identical(deterministic):
-    """The whole point of Phase 1: same input, same bytes on the wire."""
-    legacy = _drain(_run_pipeline)
-    graph = _drain(run_graph_pipeline)
+def test_graph_covers_every_legacy_phase_plus_the_new_agents(deterministic):
+    """Phase 3 makes the graph do genuinely more than legacy on the happy path -
+    three new agents (semantic search, fusion, validation) legacy has no
+    concept of - so the two streams are no longer byte-identical by design, only
+    by accident before Phase 3 landed. What must still hold: every phase legacy
+    emits, the graph emits too, and the graph's *only* extra phases are exactly
+    the three new agents, in the expected relative order."""
+    legacy_phases = [e["phase"] for e in _drain(_run_pipeline) if e["type"] == "progress"]
+    graph_phases = [e["phase"] for e in _drain(run_graph_pipeline) if e["type"] == "progress"]
 
-    # Compare the serialized frames, not the dicts: the frontend sees bytes, and
-    # this catches key-order and unicode differences that == on dicts would not.
-    legacy_frames = [json.dumps(event, ensure_ascii=False, sort_keys=True) for event in legacy]
-    graph_frames = [json.dumps(event, ensure_ascii=False, sort_keys=True) for event in graph]
-    assert legacy_frames == graph_frames
-
-
-def test_progress_sequence_matches(deterministic):
-    """Phase order and per-phase extras must line up event for event."""
-    legacy = [e for e in _drain(_run_pipeline) if e["type"] == "progress"]
-    graph = [e for e in _drain(run_graph_pipeline) if e["type"] == "progress"]
-
-    assert [e["phase"] for e in legacy] == [e["phase"] for e in graph]
-    assert legacy == graph
+    assert set(legacy_phases) <= set(graph_phases)
+    assert set(graph_phases) - set(legacy_phases) == {"semantic_search", "fuse", "validate"}
+    assert graph_phases.index("fuse") < graph_phases.index("validate") < graph_phases.index("compare")
+    assert graph_phases.index("compare") < graph_phases.index("analyze")
 
 
-def test_result_payload_matches(deterministic):
-    """Every field the frontend reads out of the terminal event."""
+CORE_PATENT_FIELDS = {"num", "title", "pct", "risk", "rationale", "source"}
+"""What the frontend actually reads off each patents[] entry (App.tsx's
+BackendPatent). Legacy's `_format_and_rank` (server.py) also carries a
+`full_text_chars` debug field the graph's `format_matches` never had - a
+pre-existing, Phase-3-unrelated divergence, not something to pin key-for-key."""
+
+
+def test_result_shape_matches(deterministic):
+    """Phase 3 lets the graph consider more candidates than legacy ever could
+    (semantic-only hits) and drop some via validation, so *values* are allowed
+    to diverge now - but the payload's shape, the contract the frontend depends
+    on, must not."""
     legacy = _drain(_run_pipeline)[-1]
     graph = _drain(run_graph_pipeline)[-1]
 
     assert legacy["type"] == graph["type"] == "result"
     assert legacy["data"].keys() == graph["data"].keys()
-    for key in legacy["data"]:
-        assert legacy["data"][key] == graph["data"][key], f"result.data[{key!r}] diverged"
+    if legacy["data"]["patents"] and graph["data"]["patents"]:
+        assert CORE_PATENT_FIELDS <= legacy["data"]["patents"][0].keys()
+        assert CORE_PATENT_FIELDS <= graph["data"]["patents"][0].keys()
 
 
 def test_stream_ends_with_exactly_one_result(deterministic):
@@ -242,8 +258,13 @@ def test_empty_corpus_returns_an_honest_empty_report():
 
 
 def test_empty_corpus_differs_from_legacy_only_in_recommendations():
-    """Pin the divergence to exactly one field, so a future change that quietly
-    widens it fails here."""
+    """Pin the divergence to exactly one field of the terminal payload, so a
+    future change that quietly widens it fails here.
+
+    Progress events are allowed to differ here too, unlike before Phase 3:
+    keyword search finding nothing doesn't stop the graph's independent
+    semantic-search and fusion steps from running - a real, if empty, result -
+    and legacy has no concept of either."""
     empty = (("Google Patents", _provider("empty", [])),)
 
     with patch("llm._llm_chat", side_effect=_fake_llm_chat), \
@@ -251,9 +272,9 @@ def test_empty_corpus_differs_from_legacy_only_in_recommendations():
         legacy = _drain(_run_pipeline)
         graph = _drain(run_graph_pipeline)
 
-    # Progress events are identical; only the terminal payload differs.
-    assert [e for e in legacy if e["type"] == "progress"] == \
-           [e for e in graph if e["type"] == "progress"]
+    legacy_phases = [e["phase"] for e in legacy if e["type"] == "progress"]
+    graph_phases = [e["phase"] for e in graph if e["type"] == "progress"]
+    assert set(graph_phases) - set(legacy_phases) <= {"semantic_search", "fuse", "validate"}
 
     differing = {
         key for key in legacy[-1]["data"]

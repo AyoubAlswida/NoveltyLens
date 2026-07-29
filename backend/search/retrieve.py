@@ -26,7 +26,13 @@ def retrieve_similar_patents(
                 id=payload["id"],
                 title=payload["title"],
                 abstract=payload.get("abstract", ""),
+                inventors=payload.get("inventors") or [],
+                assignee=payload.get("assignee", ""),
+                publication_date=payload.get("publication_date", ""),
                 source=payload.get("source", ""),
+                url=payload.get("url", ""),
+                serpapi_id=payload.get("serpapi_id", ""),
+                full_text=payload.get("full_text", ""),
             )
         )
 

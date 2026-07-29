@@ -1,7 +1,6 @@
 fastapi
 uvicorn[standard]
 requests
-scikit-learn
 pydantic
 python-dotenv
 langgraph

@@ -1,16 +1,10 @@
 """Patent ranking. This is the only module coupled to the ranking method."""
 
-import logging
 import math
-
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity as sk_cosine_similarity
 
 from embeddings import chunk_text, embed_texts
 from models import ComparisonResult, PatentRecord
 from tracing import trace
-
-logger = logging.getLogger(__name__)
 
 CHUNK_MAX_WORDS = 180
 CHUNK_OVERLAP_WORDS = 20
@@ -117,38 +111,17 @@ def _compare_semantic(invention_text: str, patents: list[PatentRecord]) -> list[
 
     return ranked
 
-def _compare_tfidf(invention_text: str, patents: list[PatentRecord]) -> list[ComparisonResult]:
-    """Legacy lexical fallback, used only if semantic comparison is unavailable."""
-    documents = [invention_text]
-    documents.extend(_document_text(patent) for patent in patents)
-
-    vectorizer = TfidfVectorizer(stop_words="english")
-    tfidf = vectorizer.fit_transform(documents)
-    scores = sk_cosine_similarity(tfidf[0], tfidf[1:])[0]
-
-    return sorted(
-        (
-            ComparisonResult(patent=patent, similarity_score=float(score))
-            for patent, score in zip(patents, scores, strict=True)
-        ),
-        key=lambda result: result.similarity_score,
-        reverse=True,
-    )
-
-
 def compare_invention_to_patents(
     invention_text: str, patents: list[PatentRecord]
 ) -> list[ComparisonResult]:
     """Rank normalized patents by semantic similarity to the invention.
 
-    Falls back to TF-IDF cosine similarity if embeddings are unavailable
-    (e.g. HF_TOKEN not configured, or the embedding API failed), so the
-    pipeline degrades gracefully instead of hard-failing.
+    Raises whatever the embedding call raises (e.g. HF_TOKEN not configured, or
+    the embedding API failed) rather than degrading to a lexical fallback - a
+    similarity score computed by a different method than the one the user was
+    told is being used is exactly the kind of untrue "good enough" result the
+    zero-tolerance policy forbids.
     """
     if not patents:
         return []
-    try:
-        return _compare_semantic(invention_text, patents)
-    except Exception:
-        logger.exception("Semantic comparison failed; falling back to TF-IDF")
-        return _compare_tfidf(invention_text, patents)
+    return _compare_semantic(invention_text, patents)

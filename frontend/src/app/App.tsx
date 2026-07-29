@@ -1,21 +1,72 @@
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 
 type Screen = "submit" | "running" | "report" | "history";
 
 const EXAMPLE_DESC =
   "A portable, refillable drinking-water bottle that automatically sterilizes its contents with an integrated UV-C emitter and filters particulates through a replaceable graphene-oxide membrane. A flow-rate sensor in the cap detects use and triggers a self-cleaning sterilization cycle without manual activation.";
 
-const STEPS = [
-  "Extracting technical keywords…",
-  "Expanding into 5 search queries…",
-  "Searching Google Patents…",
-  "Searching USPTO full-text…",
-  "Comparing patent similarities…",
-  "Generating similarity scores…",
-  "Building recommendations…",
-];
+// Must stay identical to backend/graph/events.py's PHASES tuple - this is the
+// checklist the real SSE stream (POST /api/analyze/stream) drives, not a
+// simulated timer. Order here is the checklist's display order; the running
+// state ("how far the request has actually gotten") is computed from
+// whichever of these phases is the furthest-along one seen so far, since
+// semantic_search runs in parallel with search/enrich on the backend and can
+// arrive interleaved with them.
+const PHASE_ORDER = [
+  "understand",
+  "queries",
+  "search",
+  "enrich",
+  "semantic_search",
+  "fuse",
+  "validate",
+  "compare",
+  "analyze",
+] as const;
+
+// Fallback label shown for a phase before any real progress message has
+// arrived for it. Once a message arrives, the real backend text replaces
+// this (see PHASE_LABELS usage in RunningScreen).
+const PHASE_LABELS: Record<(typeof PHASE_ORDER)[number], string> = {
+  understand: "Extracting technical concepts…",
+  queries: "Expanding into search queries…",
+  search: "Searching patent databases…",
+  enrich: "Fetching full patent text…",
+  semantic_search: "Searching indexed patents by meaning…",
+  fuse: "Combining keyword and semantic results…",
+  validate: "Checking relevance of candidates…",
+  compare: "Scoring patent similarities…",
+  analyze: "Writing detailed analysis…",
+};
 
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8001";
+
+// Structural pattern (light page + dark icon rail, centered card layout) is inspired by
+// search.projectpq.ai; the palette itself is PatentScout's own brand green, not PQAI's.
+const COLORS = {
+  page: "#F3F4F6",
+  sidebar: "#FFFFFF",
+  sidebarBorder: "#E2E5EA",
+  sidebarHover: "rgba(27,154,107,0.08)",
+  sidebarActive: "rgba(27,154,107,0.14)",
+  brandOnDark: "#1B9A6B",
+  brand: "#1B9A6B",
+  brandDark: "#158058",
+  brandTint: "#E6F7EF",
+  brandTintBorder: "rgba(27,154,107,0.25)",
+  card: "#FFFFFF",
+  border: "#E2E5EA",
+  inputBg: "#FAFAFB",
+  textPrimary: "#1F2937",
+  textSecondary: "#5B6472",
+  textMuted: "#9AA3AF",
+  riskHighText: "#DC2626",
+  riskHighBg: "rgba(220,38,38,0.08)",
+  riskMediumText: "#B45309",
+  riskMediumBg: "rgba(180,83,9,0.08)",
+  riskLowText: "#158058",
+  riskLowBg: "rgba(27,154,107,0.10)",
+};
 
 interface DynamicPatent {
   num: string;
@@ -58,15 +109,15 @@ interface BackendAnalysisResponse {
 }
 
 function riskColor(risk: "High" | "Medium" | "Low") {
-  if (risk === "High") return { text: "#FF7A59", bg: "rgba(255,122,89,0.14)" };
-  if (risk === "Medium") return { text: "#E8B24A", bg: "rgba(232,178,74,0.14)" };
-  return { text: "#35E08A", bg: "rgba(53,224,138,0.14)" };
+  if (risk === "High") return { text: COLORS.riskHighText, bg: COLORS.riskHighBg };
+  if (risk === "Medium") return { text: COLORS.riskMediumText, bg: COLORS.riskMediumBg };
+  return { text: COLORS.riskLowText, bg: COLORS.riskLowBg };
 }
 
 function verdictColor(v: "Strong" | "Moderate" | "Weak") {
-  if (v === "Strong") return "#35E08A";
-  if (v === "Moderate") return "#E8B24A";
-  return "#FF7A59";
+  if (v === "Strong") return COLORS.riskLowText;
+  if (v === "Moderate") return COLORS.riskMediumText;
+  return COLORS.riskHighText;
 }
 
 function buildReport(backendData: any, desc: string): AnalysisReport {
@@ -201,60 +252,106 @@ function exportReportPdf(data: AnalysisReport) {
   win.document.close();
 }
 
+/** Reads the SSE body of POST /api/analyze/stream and invokes onEvent for
+ * each `data: {...}` frame as it arrives. Native EventSource can't be used
+ * here since it only supports GET with no body - this endpoint is a POST
+ * carrying the invention description/claims as JSON. */
+async function streamAnalysis(payload: object, onEvent: (event: any) => void) {
+  const response = await fetch(`${API_BASE_URL}/api/analyze/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok || !response.body) {
+    throw new Error("Backend query failed");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? ""; // keep the trailing partial frame for next chunk
+    for (const frame of frames) {
+      const line = frame.trim();
+      if (!line.startsWith("data:")) continue;
+      const jsonStr = line.slice("data:".length).trim();
+      if (jsonStr) onEvent(JSON.parse(jsonStr));
+    }
+  }
+}
+
 export default function App() {
   const [screen, setScreen] = useState<Screen>("submit");
-  const [stepIdx, setStepIdx] = useState(-1);
   const [desc, setDesc] = useState(EXAMPLE_DESC);
   const [claims, setClaims] = useState("");
-  
+
+  // Real progress state, driven by SSE events - not a simulated timer.
+  // phaseIdx is the furthest-along index into PHASE_ORDER seen so far;
+  // phaseMessages holds the actual backend message text per phase, so the
+  // checklist shows what the pipeline is really reporting.
+  const [phaseIdx, setPhaseIdx] = useState(-1);
+  const [phaseMessages, setPhaseMessages] = useState<Partial<Record<(typeof PHASE_ORDER)[number], string>>>({});
+
   const [reportData, setReportData] = useState<AnalysisReport | null>(null);
   const [history, setHistory] = useState<AnalysisReport[]>([]);
-
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   async function startRunning() {
     console.log("🚀 Starting analysis request loop...");
     setScreen("running");
-    setStepIdx(0);
+    setPhaseIdx(-1);
+    setPhaseMessages({});
     setReportData(null);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/analyze`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description: desc, claims: claims }),
+      let finalReport: AnalysisReport | null = null;
+
+      await streamAnalysis({ description: desc, claims: claims }, (event) => {
+        if (event.type === "progress") {
+          const idx = (PHASE_ORDER as readonly string[]).indexOf(event.phase);
+          if (idx >= 0) {
+            setPhaseIdx((prev) => Math.max(prev, idx));
+            setPhaseMessages((prev) => ({ ...prev, [event.phase]: event.message }));
+          }
+        } else if (event.type === "error") {
+          throw new Error(event.detail || "Backend query failed");
+        } else if (event.type === "result") {
+          const backendData: BackendAnalysisResponse = event.data;
+          console.log("📦 Result received from backend:", backendData);
+
+          // Keep backend rankings, risk labels, verdict, and recommendations intact.
+          const mappedPatents: DynamicPatent[] = (backendData.patents ?? []).map((patent) => ({
+            num: patent.num || "Unknown publication",
+            title: patent.title || "Untitled patent record",
+            pct: Math.round(patent.pct),
+            risk: patent.risk,
+            rationale: patent.rationale || "No detailed rationale was returned for this record.",
+            source: patent.source || "Patent database",
+          }));
+
+          finalReport = {
+            title: backendData.title || (desc.length > 50 ? desc.slice(0, 47) + "..." : desc),
+            date: backendData.date || new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+            concepts: backendData.concepts ?? [],
+            patents: mappedPatents,
+            top_score: Math.round(backendData.top_score ?? 0),
+            verdict: backendData.verdict ?? "Strong",
+            recommendations: backendData.recommendations ?? [],
+            query_count: backendData.query_count ?? 0,
+          };
+        }
       });
 
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        throw new Error(error.detail || "Backend query failed");
+      if (!finalReport) {
+        throw new Error("Stream ended without a result.");
       }
-      const backendData: BackendAnalysisResponse = await response.json();
-      console.log("📦 Raw data received from backend:", backendData);
-
-      // Keep backend rankings, risk labels, verdict, and recommendations intact.
-      const mappedPatents: DynamicPatent[] = (backendData.patents ?? []).map((patent) => ({
-        num: patent.num || "Unknown publication",
-        title: patent.title || "Untitled patent record",
-        pct: Math.round(patent.pct),
-        risk: patent.risk,
-        rationale: patent.rationale || "No detailed rationale was returned for this record.",
-        source: patent.source || "Patent database",
-      }));
-
-      const finalReport: AnalysisReport = {
-        title: backendData.title || (desc.length > 50 ? desc.slice(0, 47) + "..." : desc),
-        date: backendData.date || new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
-        concepts: backendData.concepts ?? [],
-        patents: mappedPatents,
-        top_score: Math.round(backendData.top_score ?? 0),
-        verdict: backendData.verdict ?? "Strong",
-        recommendations: backendData.recommendations ?? [],
-        query_count: backendData.query_count ?? 0,
-      };
-
       setReportData(finalReport);
-      setHistory((prev) => [finalReport, ...prev]);
+      setHistory((prev) => [finalReport!, ...prev]);
+      setScreen("report");
 
     } catch (err) {
       console.error("❌ Link Error:", err);
@@ -263,29 +360,6 @@ export default function App() {
     }
   }
 
-  useEffect(() => {
-    if (screen !== "running") return;
-    intervalRef.current = setInterval(() => {
-      setStepIdx((prev) => {
-        if (prev >= STEPS.length - 1) {
-          clearInterval(intervalRef.current!);
-          return prev;
-        }
-        return prev + 1;
-      });
-    }, 450);
-    return () => clearInterval(intervalRef.current!);
-  }, [screen]);
-
-  useEffect(() => {
-    if (screen === "running" && stepIdx === STEPS.length - 1 && reportData) {
-      const timeout = setTimeout(() => setScreen("report"), 200);
-      return () => clearTimeout(timeout);
-    }
-  }, [stepIdx, reportData, screen]);
-
-  const isNewSearchSection = screen === "submit" || screen === "running" || screen === "report";
-
   return (
     <div
       style={{
@@ -293,90 +367,60 @@ export default function App() {
         width: "100vw",
         height: "100vh",
         overflow: "hidden",
-        background: "#0D1512",
+        background: COLORS.page,
         fontFamily: "'IBM Plex Sans', sans-serif",
       }}
     >
-      {/* Sidebar */}
+      {/* Icon rail */}
       <aside
         style={{
-          width: 236,
-          minWidth: 236,
-          background: "#101915",
-          borderRight: "1px solid #1F2C26",
+          width: 64,
+          minWidth: 64,
+          background: COLORS.sidebar,
+          borderRight: `1px solid ${COLORS.sidebarBorder}`,
           display: "flex",
           flexDirection: "column",
+          alignItems: "center",
           height: "100vh",
-          overflow: "hidden",
+          padding: "16px 0",
         }}
       >
-        {/* Logo Header */}
-        <div style={{ padding: "20px 16px 18px", borderBottom: "1px solid #1F2C26" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 32, height: 32, borderRadius: 8, background: "rgba(53,224,138,0.12)", border: "1px solid rgba(53,224,138,0.3)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: 16, color: "#35E08A" }}>
-              P
-            </div>
-            <div>
-              <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 15, color: "#E7EFEA", lineHeight: 1.2 }}>
-                PatentScout
-              </div>
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: "#35E08A", letterSpacing: "0.12em", lineHeight: 1.3 }}>
-                AI · PRIOR-ART
-              </div>
-            </div>
-          </div>
+        <div
+          title="PatentScout AI"
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: 9,
+            background: COLORS.brandTint,
+            border: `1px solid ${COLORS.brandTintBorder}`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontFamily: "'JetBrains Mono', monospace",
+            fontWeight: 700,
+            fontSize: 16,
+            color: COLORS.brandOnDark,
+            marginBottom: 20,
+            flexShrink: 0,
+          }}
+        >
+          P
         </div>
 
-        {/* Navigation Tabs */}
-        <nav style={{ padding: "12px 8px 0" }}>
-          <NavItem active={isNewSearchSection} icon="✎" label="New search" onClick={() => setScreen("submit")} />
-          <NavItem active={screen === "history"} icon="≣" label="History" onClick={() => setScreen("history")} />
+        <nav style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%", alignItems: "center" }}>
+          <RailIcon active={screen === "submit" || screen === "running" || screen === "report"} icon="✎" label="New search" onClick={() => setScreen("submit")} />
+          <RailIcon active={screen === "history"} icon="≣" label="History" onClick={() => setScreen("history")} />
         </nav>
 
-        {/* History Links List */}
-        <div style={{ padding: "20px 8px 0" }}>
-          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: "#516057", letterSpacing: "0.14em", padding: "0 8px", marginBottom: 6 }}>
-            RECENT
-          </div>
-          {history.slice(0, 4).map((h, i) => (
-            <button
-              key={i}
-              onClick={() => {
-                setReportData(h);
-                setScreen("report");
-              }}
-              style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 8px", borderRadius: 6, border: "none", background: "transparent", cursor: "pointer", color: "#9AABA2", fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 12, fontWeight: 400, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", transition: "background 0.15s, color 0.15s" }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background = "rgba(53,224,138,0.05)";
-                (e.currentTarget as HTMLButtonElement).style.color = "#C9D6CF";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-                (e.currentTarget as HTMLButtonElement).style.color = "#9AABA2";
-              }}
-            >
-              {h.title}
-            </button>
-          ))}
-        </div>
-
         <div style={{ flex: 1 }} />
-        <div style={{ padding: "0 16px 20px" }}>
-          <div style={{ display: "inline-block", padding: "3px 8px", borderRadius: 20, border: "1px solid #263630", background: "rgba(53,224,138,0.06)", fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: "#35E08A", letterSpacing: "0.1em", marginBottom: 8 }}>
-            PHASE 1 · MVP
-          </div>
-          <div style={{ fontSize: 11, color: "#556B61", lineHeight: 1.4 }}>
-            Decision-support only · not legal advice
-          </div>
-        </div>
       </aside>
 
       {/* Workspace Display Routing Manager */}
-      <main style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", background: "#0D1512" }}>
+      <main style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", background: COLORS.page }}>
         {screen === "submit" && (
           <SubmitScreen desc={desc} setDesc={setDesc} claims={claims} setClaims={setClaims} concepts={reportData?.concepts || ["Water treatment", "Consumer hardware"]} onRun={startRunning} />
         )}
-        {screen === "running" && <RunningScreen stepIdx={stepIdx} />}
+        {screen === "running" && <RunningScreen phaseIdx={phaseIdx} phaseMessages={phaseMessages} />}
         {screen === "report" && (
           <ReportScreen onBack={() => setScreen("submit")} data={reportData} />
         )}
@@ -391,112 +435,142 @@ export default function App() {
   );
 }
 
-function NavItem({ active, icon, label, onClick }: { active: boolean; icon: string; label: string; onClick: () => void }) {
+function RailIcon({ active, icon, label, onClick }: { active: boolean; icon: string; label: string; onClick: () => void }) {
   const [hover, setHover] = useState(false);
   return (
     <button
+      title={label}
+      aria-label={label}
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 10px", borderRadius: 8, border: "none", cursor: "pointer", marginBottom: 2, background: active ? "rgba(53,224,138,0.1)" : hover ? "rgba(53,224,138,0.05)" : "transparent", color: active ? "#35E08A" : hover ? "#C9D6CF" : "#7E948A", fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 14, transition: "background 0.15s, color 0.15s" }}
+      style={{
+        width: 40,
+        height: 40,
+        borderRadius: 10,
+        border: "none",
+        cursor: "pointer",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: active ? COLORS.sidebarActive : hover ? COLORS.sidebarHover : "transparent",
+        color: active ? COLORS.brand : hover ? COLORS.textPrimary : COLORS.textMuted,
+        fontSize: 17,
+        transition: "background 0.15s, color 0.15s",
+      }}
     >
-      <span style={{ fontSize: 15 }}>{icon}</span> {label}
+      {icon}
     </button>
   );
 }
 
 function SubmitScreen({ desc, setDesc, claims, setClaims, concepts, onRun }: { desc: string; setDesc: (v: string) => void; claims: string; setClaims: (v: string) => void; concepts: string[]; onRun: () => void }) {
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: "40px 48px" }}>
-      <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#35E08A", letterSpacing: "0.14em", marginBottom: 14 }}>
-        STEP 1 · DESCRIBE THE INVENTION
-      </div>
-      <h1 style={{ color: "#E7EFEA", marginBottom: 12, fontSize: 28 }}>Check a new invention</h1>
-      <p style={{ color: "#9AABA2", fontSize: 15, lineHeight: 1.65, maxWidth: 620, marginBottom: 32 }}>
-        Describe your idea in plain language — no patent terminology required. PatentScout expands it into multiple search queries and scores it against real prior art.
-      </p>
-
-      <div style={{ maxWidth: 720 }}>
-        <label style={{ display: "block", fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 13, color: "#C9D6CF", letterSpacing: "0.02em", marginBottom: 8 }}>
-          Invention description
-        </label>
-        <textarea
-          value={desc}
-          onChange={(e) => setDesc(e.target.value)}
-          rows={6}
-          style={{ width: "100%", background: "#131E19", border: "1px solid #263630", borderRadius: 10, padding: "14px 16px", color: "#E7EFEA", fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 14, lineHeight: 1.7, resize: "vertical", outline: "none", transition: "border-color 0.15s", boxSizing: "border-box" }}
-          onFocus={(e) => (e.currentTarget.style.borderColor = "rgba(53,224,138,0.5)")}
-          onBlur={(e) => (e.currentTarget.style.borderColor = "#263630")}
-        />
-
-        <label style={{ display: "block", fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 13, color: "#C9D6CF", letterSpacing: "0.02em", marginTop: 20, marginBottom: 8 }}>
-          Draft claims · optional
-        </label>
-        <textarea
-          value={claims}
-          onChange={(e) => setClaims(e.target.value)}
-          rows={3}
-          placeholder="Paste any draft independent claims to sharpen the search…"
-          style={{ width: "100%", background: "#131E19", border: "1px solid #263630", borderRadius: 10, padding: "14px 16px", color: "#E7EFEA", fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 14, lineHeight: 1.7, resize: "vertical", outline: "none", transition: "border-color 0.15s", boxSizing: "border-box" }}
-          onFocus={(e) => (e.currentTarget.style.borderColor = "rgba(53,224,138,0.5)")}
-          onBlur={(e) => (e.currentTarget.style.borderColor = "#263630")}
-        />
-
-        <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
-          {concepts.map((tag) => (
-            <span key={tag} style={{ padding: "4px 12px", borderRadius: 20, background: "rgba(53,224,138,0.1)", border: "1px solid rgba(53,224,138,0.25)", color: "#35E08A", fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 12 }}>
-              {tag}
-            </span>
-          ))}
-          <span style={{ padding: "4px 12px", borderRadius: 20, background: "transparent", border: "1px dashed #263630", color: "#7E948A", fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 12, cursor: "pointer" }}>
-            + detected concepts
-          </span>
+    <div style={{ flex: 1, overflowY: "auto", padding: "48px 24px" }}>
+      <div style={{ maxWidth: 640, margin: "0 auto" }}>
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
+          <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 15, color: COLORS.brand, letterSpacing: "0.02em", marginBottom: 10 }}>
+            PatentScout
+          </div>
+          <h1 style={{ color: COLORS.textPrimary, marginBottom: 10, fontSize: 30, fontFamily: "'Space Grotesk', sans-serif" }}>
+            AI-Powered Prior-Art Search
+          </h1>
+          <p style={{ color: COLORS.textSecondary, fontSize: 15, lineHeight: 1.6, margin: "0 auto" }}>
+            Describe your idea in plain language — PatentScout expands it into search queries and scores it against real prior art.
+          </p>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 28 }}>
-          <button
-            onClick={onRun}
-            style={{ padding: "12px 24px", borderRadius: 10, border: "none", background: "#35E08A", color: "#07130D", fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 15, cursor: "pointer", boxShadow: "0 0 20px rgba(53,224,138,0.3)", transition: "background 0.15s, box-shadow 0.15s" }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background = "#2BD47F";
-              (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 0 28px rgba(53,224,138,0.45)";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background = "#35E08A";
-              (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 0 20px rgba(53,224,138,0.3)";
-            }}
-          >
-            Run PatentScout →
-          </button>
-          <span style={{ color: "#7E948A", fontSize: 13 }}>Typical result in under 60 seconds</span>
+        <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 24, boxShadow: "0 1px 2px rgba(16,24,25,0.04)" }}>
+          <label style={{ display: "block", fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 13, color: COLORS.textPrimary, letterSpacing: "0.02em", marginBottom: 8 }}>
+            Invention description
+          </label>
+          <textarea
+            value={desc}
+            onChange={(e) => setDesc(e.target.value)}
+            rows={6}
+            style={{ width: "100%", background: COLORS.inputBg, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "14px 16px", color: COLORS.textPrimary, fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 14, lineHeight: 1.7, resize: "vertical", outline: "none", transition: "border-color 0.15s", boxSizing: "border-box" }}
+            onFocus={(e) => (e.currentTarget.style.borderColor = COLORS.brand)}
+            onBlur={(e) => (e.currentTarget.style.borderColor = COLORS.border)}
+          />
+
+          <label style={{ display: "block", fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 13, color: COLORS.textPrimary, letterSpacing: "0.02em", marginTop: 20, marginBottom: 8 }}>
+            Draft claims · optional
+          </label>
+          <textarea
+            value={claims}
+            onChange={(e) => setClaims(e.target.value)}
+            rows={3}
+            placeholder="Paste any draft independent claims to sharpen the search…"
+            style={{ width: "100%", background: COLORS.inputBg, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "14px 16px", color: COLORS.textPrimary, fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 14, lineHeight: 1.7, resize: "vertical", outline: "none", transition: "border-color 0.15s", boxSizing: "border-box" }}
+            onFocus={(e) => (e.currentTarget.style.borderColor = COLORS.brand)}
+            onBlur={(e) => (e.currentTarget.style.borderColor = COLORS.border)}
+          />
+
+          <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
+            {concepts.map((tag) => (
+              <span key={tag} style={{ padding: "4px 12px", borderRadius: 20, background: COLORS.brandTint, border: `1px solid ${COLORS.brandTintBorder}`, color: COLORS.brand, fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 12 }}>
+                {tag}
+              </span>
+            ))}
+            <span style={{ padding: "4px 12px", borderRadius: 20, background: "transparent", border: `1px dashed ${COLORS.border}`, color: COLORS.textMuted, fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 12, cursor: "pointer" }}>
+              + detected concepts
+            </span>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 24 }}>
+            <button
+              onClick={onRun}
+              style={{ padding: "12px 24px", borderRadius: 10, border: "none", background: COLORS.brand, color: "#FFFFFF", fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 15, cursor: "pointer", boxShadow: "0 1px 2px rgba(21,128,88,0.3)", transition: "background 0.15s" }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background = COLORS.brandDark;
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background = COLORS.brand;
+              }}
+            >
+              Run PatentScout →
+            </button>
+            <span style={{ color: COLORS.textMuted, fontSize: 13 }}>Typical result in under 60 seconds</span>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-function RunningScreen({ stepIdx }: { stepIdx: number }) {
+function RunningScreen({
+  phaseIdx,
+  phaseMessages,
+}: {
+  phaseIdx: number;
+  phaseMessages: Partial<Record<(typeof PHASE_ORDER)[number], string>>;
+}) {
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 48 }}>
-      <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#35E08A", letterSpacing: "0.14em", marginBottom: 16, display: "flex", alignItems: "center", gap: 6 }}>
-        <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: "#35E08A", boxShadow: "0 0 6px #35E08A", animation: "pulse 1.2s ease-in-out infinite" }} />
+      <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: COLORS.brand, letterSpacing: "0.14em", marginBottom: 16, display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: COLORS.brand, animation: "pulse 1.2s ease-in-out infinite" }} />
         WORKING
       </div>
       <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }`}</style>
-      <h2 style={{ color: "#E7EFEA", marginBottom: 10, fontFamily: "'Space Grotesk',sans-serif" }}>Analyzing your invention</h2>
-      <p style={{ color: "#9AABA2", fontSize: 14, marginBottom: 36 }}>Searching global patent databases and scoring similarity.</p>
+      <h2 style={{ color: COLORS.textPrimary, marginBottom: 10, fontFamily: "'Space Grotesk',sans-serif" }}>Analyzing your invention</h2>
+      <p style={{ color: COLORS.textSecondary, fontSize: 14, marginBottom: 36 }}>
+        This can take a couple of minutes — several uncached LLM and embedding calls run in sequence.
+      </p>
 
-      <div style={{ width: "100%", maxWidth: 520, background: "#131E19", border: "1px solid #223029", borderRadius: 12, padding: "20px 24px" }}>
-        {STEPS.map((step, i) => {
-          const done = i < stepIdx;
-          const active = i === stepIdx;
+      <div style={{ width: "100%", maxWidth: 520, background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: "20px 24px", boxShadow: "0 1px 2px rgba(16,24,25,0.04)" }}>
+        {PHASE_ORDER.map((phase, i) => {
+          const done = i < phaseIdx;
+          const active = i === phaseIdx;
+          // Real backend message once this phase has actually reported progress;
+          // the static label is only a preview for a phase not reached yet.
+          const label = phaseMessages[phase] ?? PHASE_LABELS[phase];
           return (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "7px 0", borderBottom: i < STEPS.length - 1 ? "1px solid #1B2721" : "none" }}>
-              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, color: done ? "#35E08A" : active ? "#E7EFEA" : "#3A4E44", width: 16, flexShrink: 0 }}>
+            <div key={phase} style={{ display: "flex", alignItems: "center", gap: 12, padding: "7px 0", borderBottom: i < PHASE_ORDER.length - 1 ? `1px solid ${COLORS.border}` : "none" }}>
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, color: done ? COLORS.brand : active ? COLORS.textPrimary : COLORS.textMuted, width: 16, flexShrink: 0 }}>
                 {done ? "✔" : active ? "▸" : "·"}
               </span>
-              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: done ? "#35E08A" : active ? "#C9D6CF" : "#3A4E44" }}>
-                {step}
+              <span style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, color: done ? COLORS.brand : active ? COLORS.textPrimary : COLORS.textMuted }}>
+                {label}
               </span>
             </div>
           );
@@ -511,38 +585,41 @@ function ReportScreen({ onBack, data }: { onBack: () => void; data: AnalysisRepo
 
   const topPatent = data.patents[0];
   const displayRiskLabel = topPatent ? topPatent.risk.toUpperCase() : "LOW";
-  const displayRiskColor = topPatent ? riskColor(topPatent.risk).text : "#35E08A";
+  const displayRiskColor = topPatent ? riskColor(topPatent.risk).text : COLORS.riskLowText;
 
   return (
     <div style={{ flex: 1, overflowY: "auto" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 32px", background: "#101915", borderBottom: "1px solid #1F2C26", position: "sticky", top: 0, zIndex: 10 }}>
-        <button onClick={onBack} style={{ background: "transparent", border: "1px solid #263630", borderRadius: 8, color: "#9AABA2", fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 16, cursor: "pointer", padding: "4px 12px", lineHeight: 1.4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 32px", background: COLORS.card, borderBottom: `1px solid ${COLORS.border}`, position: "sticky", top: 0, zIndex: 10 }}>
+        <button onClick={onBack} style={{ background: COLORS.inputBg, border: `1px solid ${COLORS.border}`, borderRadius: 8, color: COLORS.textSecondary, fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 16, cursor: "pointer", padding: "4px 12px", lineHeight: 1.4 }}>
           ‹
         </button>
         <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 15, color: "#E7EFEA", lineHeight: 1.2 }}>
+          <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 15, color: COLORS.textPrimary, lineHeight: 1.2 }}>
             {data.title}
           </div>
-          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#7E948A", letterSpacing: "0.06em", marginTop: 2 }}>
+          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: COLORS.textMuted, letterSpacing: "0.06em", marginTop: 2 }}>
             Submitted {data.date} · {data.query_count} queries · {data.patents.length} patents scanned
           </div>
         </div>
-        <button style={{ background: "transparent", border: "1px solid #263630", borderRadius: 8, color: "#9AABA2", fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 13, cursor: "pointer", padding: "7px 16px" }}>
+        <button style={{ background: COLORS.inputBg, border: `1px solid ${COLORS.border}`, borderRadius: 8, color: COLORS.textSecondary, fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 13, cursor: "pointer", padding: "7px 16px" }}>
           View JSON
         </button>
-        <button style={{ background: "#35E08A", border: "none", borderRadius: 8, color: "#07130D", fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 13, cursor: "pointer", padding: "7px 16px", boxShadow: "0 0 14px rgba(53,224,138,0.3)" }}>
+        <button
+          onClick={() => exportReportPdf(data)}
+          style={{ background: COLORS.brand, border: "none", borderRadius: 8, color: "#FFFFFF", fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 13, cursor: "pointer", padding: "7px 16px" }}
+        >
           Export PDF
         </button>
       </div>
 
       <div style={{ padding: "32px 32px 48px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24 }}>
+        <div style={{ marginBottom: 24 }}>
           {/* Score Circle Card */}
-          <div style={{ background: "#131E19", border: "1px solid #223029", borderRadius: 12, padding: "28px 28px 24px" }}>
+          <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: "28px 28px 24px", boxShadow: "0 1px 2px rgba(16,24,25,0.04)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 28, marginBottom: 20 }}>
               <div style={{ position: "relative", width: 100, height: 100, flexShrink: 0 }}>
                 <svg width="100" height="100" style={{ transform: "rotate(-90deg)" }}>
-                  <circle cx="50" cy="50" r="40" fill="none" stroke="#1B2721" strokeWidth="10" />
+                  <circle cx="50" cy="50" r="40" fill="none" stroke={COLORS.border} strokeWidth="10" />
                   <circle
                     cx="50"
                     cy="50"
@@ -552,7 +629,6 @@ function ReportScreen({ onBack, data }: { onBack: () => void; data: AnalysisRepo
                     strokeWidth="10"
                     strokeDasharray={`${2 * Math.PI * 40 * (data.top_score / 100)} ${2 * Math.PI * 40 * (1 - data.top_score / 100)}`}
                     strokeLinecap="round"
-                    style={{ filter: `drop-shadow(0 0 6px ${displayRiskColor})` }}
                   />
                 </svg>
                 <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1 }}>
@@ -565,71 +641,62 @@ function ReportScreen({ onBack, data }: { onBack: () => void; data: AnalysisRepo
                 </div>
               </div>
               <div>
-                <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 15, color: "#E7EFEA", marginBottom: 4 }}>
+                <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 15, color: COLORS.textPrimary, marginBottom: 4 }}>
                   Closest prior-art similarity
                 </div>
-                <div style={{ color: "#9AABA2", fontSize: 13, lineHeight: 1.5 }}>
+                <div style={{ color: COLORS.textSecondary, fontSize: 13, lineHeight: 1.5 }}>
                   {topPatent ? `Top match: ${topPatent.num}` : "No matching prior art indexed"}
                 </div>
               </div>
             </div>
-            <div style={{ borderTop: "1px solid #1F2C26", paddingTop: 16, display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#7E948A", letterSpacing: "0.1em" }}>NOVELTY VERDICT:</span>
+
+            {data.concepts.length > 0 && (
+              <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 16, marginBottom: 16 }}>
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: COLORS.textMuted, letterSpacing: "0.1em", marginBottom: 10 }}>
+                  DETECTED CONCEPTS
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {data.concepts.map((concept) => (
+                    <span key={concept} style={{ padding: "4px 12px", borderRadius: 20, background: COLORS.brandTint, border: `1px solid ${COLORS.brandTintBorder}`, color: COLORS.brand, fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 12 }}>
+                      {concept}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 16, display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: COLORS.textMuted, letterSpacing: "0.1em" }}>NOVELTY VERDICT:</span>
               <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: verdictColor(data.verdict), letterSpacing: "0.06em", fontWeight: 600 }}>
                 {data.verdict}
               </span>
             </div>
           </div>
-
-          {/* Dynamic Score Drivers Card */}
-          <div style={{ background: "#131E19", border: "1px solid #223029", borderRadius: 12, padding: "24px 24px 20px" }}>
-            <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 14, color: "#E7EFEA", marginBottom: 6 }}>
-              What drove the top score
-            </div>
-            <div style={{ color: "#9AABA2", fontSize: 13, lineHeight: 1.55, marginBottom: 18 }}>
-              {topPatent ? `${topPatent.num} shares semantic text clusters overlapping terms inside your description abstract.` : "No structural vocabulary matches found across reference files."}
-            </div>
-            {[
-              { label: "Patent title similarity", pct: Math.min(100, Math.floor(data.top_score * 0.85)) },
-              { label: "Abstract similarity", pct: Math.min(100, Math.floor(data.top_score * 0.92)) },
-              { label: "Technical concept overlap", pct: data.top_score },
-            ].map((bar) => (
-              <div key={bar.label} style={{ marginBottom: 12 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
-                  <span style={{ fontSize: 12, color: "#9AABA2" }}>{bar.label}</span>
-                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#C9D6CF" }}>{bar.pct}%</span>
-                </div>
-                <div style={{ height: 5, background: "#1B2721", borderRadius: 3, overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${bar.pct}%`, background: "#4C8F72", borderRadius: 3 }} />
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
 
         {/* Dynamic Prior Art List matches */}
-        <div style={{ background: "#131E19", border: "1px solid #223029", borderRadius: 12, marginBottom: 20, overflow: "hidden" }}>
-          <div style={{ padding: "16px 24px", borderBottom: "1px solid #1F2C26", display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 15, color: "#E7EFEA" }}>Prior-art matches</span>
-            <span style={{ padding: "2px 8px", borderRadius: 20, background: "rgba(53,224,138,0.1)", fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#35E08A" }}>
+        <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, marginBottom: 20, overflow: "hidden", boxShadow: "0 1px 2px rgba(16,24,25,0.04)" }}>
+          <div style={{ padding: "16px 24px", borderBottom: `1px solid ${COLORS.border}`, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 15, color: COLORS.textPrimary }}>Prior-art matches</span>
+            <span style={{ padding: "2px 8px", borderRadius: 20, background: COLORS.brandTint, fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: COLORS.brand }}>
               {data.patents.length}
             </span>
           </div>
           {data.patents.map((p, i) => {
             const c = riskColor(p.risk);
             return (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: 20, padding: "16px 24px", borderBottom: i < data.patents.length - 1 ? "1px solid #1B2721" : "none" }}>
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 20, padding: "16px 24px", borderBottom: i < data.patents.length - 1 ? `1px solid ${COLORS.border}` : "none" }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 3 }}>
-                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#7E948A", letterSpacing: "0.05em", flexShrink: 0 }}>{p.num}</span>
-                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "#4C8F72", letterSpacing: "0.04em", flexShrink: 0 }}>{p.source}</span>
-                    <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 14, color: "#C9D6CF", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: COLORS.textMuted, letterSpacing: "0.05em", flexShrink: 0 }}>{p.num}</span>
+                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: COLORS.brand, letterSpacing: "0.04em", flexShrink: 0 }}>{p.source}</span>
+                    <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 14, color: COLORS.textPrimary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {p.title}
                     </span>
                   </div>
-                  <div style={{ fontSize: 12, color: "#7E948A", lineHeight: 1.5 }}>{p.rationale}</div>
+                  <div style={{ fontSize: 12, color: COLORS.textSecondary, lineHeight: 1.5 }}>{p.rationale}</div>
                 </div>
-                
+
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, flexShrink: 0, minWidth: 100 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: 15, color: c.text }}>{p.pct}%</span>
@@ -637,8 +704,8 @@ function ReportScreen({ onBack, data }: { onBack: () => void; data: AnalysisRepo
                       {p.risk.toUpperCase()}
                     </span>
                   </div>
-                  <div style={{ width: 100, height: 4, background: "#1B2721", borderRadius: 2, overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: `${p.pct}%`, background: c.text, borderRadius: 2, opacity: 0.7 }} />
+                  <div style={{ width: 100, height: 4, background: COLORS.inputBg, borderRadius: 2, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${p.pct}%`, background: c.text, borderRadius: 2, opacity: 0.75 }} />
                   </div>
                 </div>
               </div>
@@ -647,8 +714,8 @@ function ReportScreen({ onBack, data }: { onBack: () => void; data: AnalysisRepo
         </div>
 
         {/* Dynamic Action Recommendations */}
-        <div style={{ background: "rgba(53,224,138,0.05)", border: "1px solid rgba(53,224,138,0.2)", borderRadius: 12, padding: "22px 24px" }}>
-          <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 15, color: "#35E08A", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ background: COLORS.brandTint, border: `1px solid ${COLORS.brandTintBorder}`, borderRadius: 12, padding: "22px 24px" }}>
+          <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 15, color: COLORS.brandDark, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
             <span>✦</span> How to make it more unique
           </div>
           <ol style={{ margin: 0, padding: 0, listStyle: "none" }}>
@@ -657,15 +724,15 @@ function ReportScreen({ onBack, data }: { onBack: () => void; data: AnalysisRepo
         what this block used to do. */}
     {data.recommendations.length > 0 ? (
       data.recommendations.map((rec, i) => (
-        <li key={i} style={{ display: "flex", gap: 12, marginBottom: i < data.recommendations.length - 1 ? 12 : 0, fontSize: 13, color: "#C9D6CF", lineHeight: 1.6 }}>
-          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#35E08A", fontWeight: 700, flexShrink: 0, marginTop: 2 }}>
+        <li key={i} style={{ display: "flex", gap: 12, marginBottom: i < data.recommendations.length - 1 ? 12 : 0, fontSize: 13, color: COLORS.textPrimary, lineHeight: 1.6 }}>
+          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: COLORS.brand, fontWeight: 700, flexShrink: 0, marginTop: 2 }}>
             {i + 1}.
           </span>
           {rec}
         </li>
       ))
     ) : (
-      <li style={{ fontSize: 13, color: "#7E948A", lineHeight: 1.6 }}>
+      <li style={{ fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.6 }}>
         No recommendations were generated — no prior art was found to distinguish this invention from.
       </li>
     )}
@@ -679,35 +746,34 @@ function ReportScreen({ onBack, data }: { onBack: () => void; data: AnalysisRepo
 function HistoryScreen({ historyList, onSelectReport }: { historyList: AnalysisReport[]; onSelectReport: (report: AnalysisReport) => void }) {
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: "40px 48px" }}>
-      <h1 style={{ color: "#E7EFEA", marginBottom: 8, fontSize: 26 }}>Search history</h1>
-      <p style={{ color: "#9AABA2", fontSize: 14, marginBottom: 32 }}>Sessions and reports from this workspace, most recent first.</p>
+      <h1 style={{ color: COLORS.textPrimary, marginBottom: 8, fontSize: 26, fontFamily: "'Space Grotesk', sans-serif" }}>Search history</h1>
+      <p style={{ color: COLORS.textSecondary, fontSize: 14, marginBottom: 32 }}>Sessions and reports from this workspace, most recent first.</p>
 
-      <div style={{ background: "#131E19", border: "1px solid #223029", borderRadius: 12, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 140px 120px 100px", padding: "10px 24px", borderBottom: "1px solid #1F2C26", gap: 16 }}>
+      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 2px rgba(16,24,25,0.04)" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 140px 120px 100px", padding: "10px 24px", borderBottom: `1px solid ${COLORS.border}`, gap: 16 }}>
           {["INVENTION", "DATE", "TOP MATCH", "NOVELTY"].map((h) => (
-            <span key={h} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: "#516057", letterSpacing: "0.14em" }}>{h}</span>
+            <span key={h} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: COLORS.textMuted, letterSpacing: "0.14em" }}>{h}</span>
           ))}
         </div>
 
         {historyList.length === 0 ? (
-          <div style={{ padding: "24px", color: "#7E948A", fontSize: 13, textAlign: "center" }}>No searches logged.</div>
+          <div style={{ padding: "24px", color: COLORS.textSecondary, fontSize: 13, textAlign: "center" }}>No searches logged.</div>
         ) : (
           historyList.map((row, i) => {
             const vc = verdictColor(row.verdict);
-            const pctColor = row.verdict === "Weak" ? "#FF7A59" : row.verdict === "Moderate" ? "#E8B24A" : "#35E08A";
             return (
               <button
                 key={i}
                 onClick={() => onSelectReport(row)}
-                style={{ display: "grid", gridTemplateColumns: "1fr 140px 120px 100px", width: "100%", padding: "14px 24px", background: "transparent", border: "none", borderBottom: i < historyList.length - 1 ? "1px solid #1B2721" : "none", cursor: "pointer", textAlign: "left", gap: 16, alignItems: "center", transition: "background 0.15s" }}
-                onMouseEnter={(e) => (e.currentTarget as HTMLButtonElement).style.background = "rgba(53,224,138,0.04)"}
+                style={{ display: "grid", gridTemplateColumns: "1fr 140px 120px 100px", width: "100%", padding: "14px 24px", background: "transparent", border: "none", borderBottom: i < historyList.length - 1 ? `1px solid ${COLORS.border}` : "none", cursor: "pointer", textAlign: "left", gap: 16, alignItems: "center", transition: "background 0.15s" }}
+                onMouseEnter={(e) => (e.currentTarget as HTMLButtonElement).style.background = COLORS.inputBg}
                 onMouseLeave={(e) => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}
               >
-                <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 14, color: "#C9D6CF", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 14, color: COLORS.textPrimary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {row.title}
                 </span>
-                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#7E948A", letterSpacing: "0.04em" }}>{row.date}</span>
-                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: 14, color: pctColor }}>{row.top_score}%</span>
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: COLORS.textMuted, letterSpacing: "0.04em" }}>{row.date}</span>
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: 14, color: vc }}>{row.top_score}%</span>
                 <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: vc, letterSpacing: "0.06em", fontWeight: 600 }}>{row.verdict}</span>
               </button>
             );

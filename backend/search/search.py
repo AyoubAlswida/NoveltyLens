@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 Provider = Callable[[str, int], list[PatentRecord]]
 SOURCES: tuple[tuple[str, Provider], ...] = (
     ("Google Patents", search_google),
-    ("European Patent Office", search_epo),
+    # ("European Patent Office", search_epo),  # TEMP: EPO OPS auth is being throttled - re-enable once resolved.
 )
 
 

@@ -1,4 +1,4 @@
-"""LLM integration for invention understanding and top-match explanation."""
+"""LLM integration for invention understanding, match explanation, and relevance validation."""
 
 import json
 import logging
@@ -8,12 +8,11 @@ import time
 import requests
 
 from config import settings
-from models import InventionAnalysis, PatentRecord
+from models import InventionAnalysis, MatchAnalysis, PatentRecord
 from tracing import trace
 
 
 logger = logging.getLogger(__name__)
-_STOPWORDS = {"a", "an", "the", "and", "or", "if", "with", "by", "for", "is", "that", "this", "using", "system", "device", "method", "process", "of", "to", "in", "on", "as", "are", "be", "from", "at", "it", "its", "into"}
 
 
 def _llm_chat(prompt: str, max_tokens: int = 400, temperature: float = 0.3, timeout: int = 30, retries: int = 2) -> str:
@@ -72,69 +71,129 @@ Invention:
         queries=[str(value) for value in data.get("queries", []) if str(value).strip()],
         keywords=[str(value) for value in data.get("keywords", []) if str(value).strip()],
         concepts=[str(value) for value in data.get("concepts", []) if str(value).strip()],
-        synonyms={str(key): [str(value) for value in values] for key, values in data.get("synonyms", {}).items() if isinstance(values, list)},
     )
     trace("understand_invention.done", queries=analysis.queries, keywords=analysis.keywords, concepts=analysis.concepts)
     return analysis
 
 
-def _keywords(text: str) -> set[str]:
-    return set(re.findall(r"\w+", text.lower()))
+def analyze_all_matches(invention: str, patents: list[PatentRecord]) -> MatchAnalysis:
+    """Rationalize every patent and propose recommendations in one LLM call.
 
+    A single batched request is far friendlier to the model provider's rate
+    limits than issuing one call per patent. Raises on any failure - a missing
+    rationale or an empty recommendation list is a failure of this call, not a
+    reason to substitute canned text.
+    """
+    count = len(patents)
+    if count == 0:
+        return MatchAnalysis(rationales=[], recommendations=[])
 
-def _fallback_rationale(invention: str, patent: PatentRecord) -> str:
-    shared = list((_keywords(invention) & _keywords(f"{patent.title} {patent.abstract}")) - _STOPWORDS)[:4]
-    if shared:
-        return (f"This reference ({patent.title}) overlaps with your invention through shared technical terminology around {', '.join(shared)}. "
-                "The disclosed implementation and claim scope may nevertheless differ, so emphasize the structural configuration and control logic that distinguish your approach.")
-    return (f"This reference ({patent.title}) was surfaced in a related technical domain but has limited direct textual overlap. "
-            "Confirm that the independent claims avoid the broad concepts it covers.")
-
-
-
-
-
-def rationale_for_match(invention: str, patent: PatentRecord) -> str:
-    """Explain a single top-ranked normalized patent, with a local fallback."""
-    prompt = f'''You are an expert patent examiner. In 3 to 5 full sentences, write a DETAILED technical rationale explaining specifically how the prior-art patent below overlaps with or differs from the user's invention. Reference the patent's concrete technical features. Return ONLY the paragraph text - no preamble, no bullet points, no JSON.
+    patent_block = "\n".join(
+        f"[{index}] Number: {patent.id}\n    Title: {patent.title}\n    Abstract: {patent.abstract[:350]}"
+        for index, patent in enumerate(patents, start=1)
+    )
+    prompt = f'''You are an expert patent examiner comparing a user's invention against {count} prior-art patents.
 
 User Invention:
 {invention}
 
-Prior-art patent:
-Number: {patent.id}
-Title: {patent.title}
-Abstract: {patent.abstract[:400]}'''
+Prior-art patents:
+{patent_block}
+
+Tasks:
+1. For EACH of the {count} patents, write a DETAILED one-paragraph technical rationale (3 to 5 full sentences) explaining specifically how that patent's technology OVERLAPS with the user's invention - the shared mechanism, purpose, structure, or technical approach that makes it relevant prior art. Reference the concrete technical features of that individual patent that are similar to the user's invention. Do NOT describe how the invention differs from the patent - that is covered separately; focus this rationale entirely on the similarity. Every rationale must be distinct - never reuse wording between patents.
+2. Provide AS MANY actionable, specific uniqueness recommendations as you can (at least 10) describing concrete engineering, structural, or claim-drafting changes the user can make to distinguish their invention from this body of prior art.
+
+Return ONLY valid JSON in exactly this schema:
+{{"rationales": [{{"index": 1, "text": "detailed paragraph for patent 1"}}], "recommendations": ["tip 1", "tip 2"]}}
+Include one rationale object for every patent from index 1 through {count}, in order. Do not include markdown code fences or any text outside the JSON object.'''
+
+    trace("analyze_all_matches.start", patent_count=count)
     try:
-        text = _llm_chat(prompt, max_tokens=280, temperature=0.3, timeout=30).strip().strip('"')
-        if text and not text.lstrip().startswith("{"):
-            trace("rationale_for_match.llm_ok", patent_id=patent.id)
-            return text
-        raise ValueError("unusable rationale text")
+        raw = _llm_chat(prompt, max_tokens=3200, temperature=0.3, timeout=60)
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not match:
+            raise ValueError("no JSON object found in LLM response")
+        parsed = json.loads(match.group(0))
     except Exception:
-        logger.exception("Rationale generation failed for %s", patent.id)
-        trace("rationale_for_match.fallback", patent_id=patent.id)
-        return _fallback_rationale(invention, patent)
+        logger.exception("Batched multi-match analysis failed")
+        raise
+
+    rationales = [""] * count
+    raw_rationales = parsed.get("rationales", [])
+    for item in raw_rationales:
+        if isinstance(item, dict):
+            index = int(item.get("index", 0)) - 1
+            if 0 <= index < count:
+                rationales[index] = str(item.get("text", "")).strip()
+    if not any(rationales):
+        # Tolerate a plain array of strings instead of indexed objects.
+        for index, item in enumerate(raw_rationales[:count]):
+            if isinstance(item, str):
+                rationales[index] = item.strip()
+
+    missing = [index + 1 for index, text in enumerate(rationales) if not text]
+    if missing:
+        raise ValueError(f"LLM omitted rationale(s) for patent index/indices: {missing}")
+
+    recommendations = [str(item).strip() for item in parsed.get("recommendations", []) if str(item).strip()]
+    if not recommendations:
+        raise ValueError("LLM returned no uniqueness recommendations")
+
+    trace("analyze_all_matches.done", rationale_count=len(rationales), recommendation_count=len(recommendations))
+    return MatchAnalysis(rationales=rationales, recommendations=recommendations)
 
 
-def recommendations_for(invention: str, patents: list[PatentRecord]) -> list[str]:
-    """Generate claim and engineering recommendations for the top patents only."""
-    titles = "; ".join(patent.title for patent in patents[:8])
-    prompt = f'''You are an expert patent examiner. Given the user's invention and the closest prior art, list AS MANY specific, actionable uniqueness recommendations as you can (at least 10) describing concrete engineering, structural, or claim-drafting changes to distinguish the invention. Return ONLY a JSON array of strings like ["tip one","tip two"]. No other text.
+def validate_relevance(invention: str, patents: list[PatentRecord]) -> list[bool]:
+    """Judge which candidate patents are plausibly relevant prior art, in one batched call.
 
-User Invention:
-{invention}
-
-Closest prior-art titles: {titles}'''
-    try:
-        raw = _llm_chat(prompt, max_tokens=900, temperature=0.4, timeout=40)
-        match = re.search(r"\[.*\]", raw, re.DOTALL)
-        recommendations = json.loads(match.group(0)) if match else []
-        if isinstance(recommendations, list) and recommendations:
-            trace("recommendations_for.llm_ok", count=len(recommendations))
-            return [str(item).strip() for item in recommendations if str(item).strip()]
-        raise ValueError("no recommendation JSON array found")
-    except Exception:
-        logger.exception("Recommendation generation failed")
-        trace("recommendations_for.failed")
+    Aligned 1:1 with ``patents``. Raises rather than assuming irrelevance: a missing
+    or malformed verdict for any candidate is a failure of this call, not evidence
+    that the candidate should be dropped.
+    """
+    count = len(patents)
+    if count == 0:
         return []
+
+    patent_block = "\n".join(
+        f"[{index}] Number: {patent.id}\n    Title: {patent.title}\n    Abstract: {patent.abstract[:300]}"
+        for index, patent in enumerate(patents, start=1)
+    )
+    prompt = f'''You are an expert patent examiner screening {count} candidate prior-art patents for relevance before a detailed comparison is written.
+
+User Invention:
+{invention}
+
+Candidate patents:
+{patent_block}
+
+For EACH of the {count} candidates, judge whether it is plausibly relevant prior art for the user's invention - meaning it shares enough of the same technical field, function, or mechanism that a detailed comparison is worth writing. Exclude only candidates that are clearly unrelated.
+
+Return ONLY valid JSON in exactly this schema:
+{{"verdicts": [{{"index": 1, "relevant": true}}]}}
+Include one verdict object for every candidate from index 1 through {count}, in order. Do not include markdown code fences or any text outside the JSON object.'''
+
+    trace("validate_relevance.start", candidate_count=count)
+    try:
+        raw = _llm_chat(prompt, max_tokens=800, temperature=0.0, timeout=40)
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not match:
+            raise ValueError("no JSON object found in validation response")
+        parsed = json.loads(match.group(0))
+    except Exception:
+        logger.exception("Relevance validation failed")
+        raise
+
+    verdicts: list[bool | None] = [None] * count
+    for item in parsed.get("verdicts", []):
+        if isinstance(item, dict):
+            index = int(item.get("index", 0)) - 1
+            if 0 <= index < count:
+                verdicts[index] = bool(item.get("relevant"))
+
+    missing = [index + 1 for index, verdict in enumerate(verdicts) if verdict is None]
+    if missing:
+        raise ValueError(f"LLM omitted a relevance verdict for patent index/indices: {missing}")
+
+    trace("validate_relevance.done", kept=sum(1 for verdict in verdicts if verdict))
+    return [bool(verdict) for verdict in verdicts]

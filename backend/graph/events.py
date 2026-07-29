@@ -19,12 +19,31 @@ from typing import Any
 
 from langgraph.config import get_stream_writer
 
-PHASES: tuple[str, ...] = ("understand", "queries", "search", "compare", "analyze")
+PHASES: tuple[str, ...] = (
+    "understand",
+    "queries",
+    "search",
+    "enrich",
+    "semantic_search",
+    "fuse",
+    "validate",
+    "compare",
+    "analyze",
+)
 """The complete progress vocabulary, in checklist order.
 
 This tuple must stay identical to the ``id`` values in the frontend's ``PHASES``
 array (``frontend/src/app/App.tsx``).  Ticket P3.7 is the only one permitted to
 change it, and it changes both files in the same commit.
+
+``enrich`` and ``semantic_search``/``fuse``/``validate`` were added to bring this
+package in line with two things that had drifted ahead of it: legacy's
+``_run_pipeline`` (``backend/server.py``) already emits ``enrich``, and Phase 3
+adds three new agents between Keyword Search and Ranking. NOTE: the frontend does
+not currently consume the SSE stream at all (``frontend/src/app/App.tsx`` calls
+the non-streaming ``POST /api/analyze`` and fakes progress with a timer), so this
+extension is backend-only and does not yet have a frontend counterpart to update
+in lockstep - see the Architecture section of ``CLAUDE.md``.
 """
 
 

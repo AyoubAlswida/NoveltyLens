@@ -1,8 +1,11 @@
 """Graph assembly and the SSE generator ``server.py`` consumes.
 
-The graph is linear today, matching the legacy pipeline step for step.  Phase 3
-makes it branch: semantic search runs parallel to keyword search and the two
-converge at fusion.
+The graph branches: ``keyword_search`` and ``semantic_search`` both run off
+``search_orchestrator`` and converge at ``fuse``, which feeds ``validate``, which
+feeds ``rank``.  Semantic search reads whatever Qdrant already holds from
+*earlier* requests - keyword search indexes its own results as a side effect,
+but only after this request's semantic branch has already read, so the two
+cannot race on the same data (see ``graph/searching.py``).
 
 Progress events reach the client through LangGraph's custom stream writer, which
 preserves the order nodes wrote them in.  The final ``result`` event is built
@@ -19,19 +22,26 @@ from typing import Iterator, Optional
 
 from langgraph.graph import END, START, StateGraph
 
+from graph.fusion import fuse_node
 from graph.ranking import explain_node, format_matches, rank_node, verdict_for
-from graph.searching import keyword_search_node, search_orchestrator_node
+from graph.searching import (
+    keyword_search_node,
+    search_orchestrator_node,
+    semantic_search_node,
+)
 from graph.state import GraphState
 from graph.understanding import expand_queries_node, understand_node
+from graph.validation import validate_node
 
 
-def _route_after_search(state: GraphState) -> str:
-    """Skip ranking and explanation when the search found nothing.
+def _route_after_validate(state: GraphState) -> str:
+    """Skip ranking and explanation when nothing survived search, fusion, and
+    validation.
 
     Running them anyway would emit ``Scoring 0 candidates…`` and ``Writing
     detailed analysis for 0 matches…`` - progress messages describing work that
-    is not happening. Ending here also matches legacy's event sequence, which
-    returns straight after the search phase.
+    is not happening. An empty ``candidates`` here is a genuine answer (nothing
+    found, or nothing judged relevant), not a failure.
     """
     return "rank" if state["candidates"] else END
 
@@ -43,6 +53,9 @@ def build_graph():
     builder.add_node("expand_queries", expand_queries_node)
     builder.add_node("search_orchestrator", search_orchestrator_node)
     builder.add_node("keyword_search", keyword_search_node)
+    builder.add_node("semantic_search", semantic_search_node)
+    builder.add_node("fuse", fuse_node)
+    builder.add_node("validate", validate_node)
     builder.add_node("rank", rank_node)
     builder.add_node("explain", explain_node)
 
@@ -50,8 +63,12 @@ def build_graph():
     builder.add_edge("understand", "expand_queries")
     builder.add_edge("expand_queries", "search_orchestrator")
     builder.add_edge("search_orchestrator", "keyword_search")
+    builder.add_edge("search_orchestrator", "semantic_search")
+    builder.add_edge("keyword_search", "fuse")
+    builder.add_edge("semantic_search", "fuse")
+    builder.add_edge("fuse", "validate")
     builder.add_conditional_edges(
-        "keyword_search", _route_after_search, {"rank": "rank", END: END}
+        "validate", _route_after_validate, {"rank": "rank", END: END}
     )
     builder.add_edge("rank", "explain")
     builder.add_edge("explain", END)

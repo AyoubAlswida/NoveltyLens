@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This project is mid-migration from the linear pipeline described below to the LangGraph
 multi-agent architecture proposed in `docs/LangGraph-Multi-Agent-Architecture-Plan.docx`
 (diagrams in `docs/assets/`). **When you implement any part of that plan** — a
-`backend/graph/` package, `backend/embeddings.py`, `backend/vectorstore.py`, the
+`backend/graph/` package, `backend/embeddings.py`, `backend/search/vector_store.py`, the
 `PIPELINE` flag going live, PostgreSQL persistence, etc. — update the Architecture
 section below in the same edit so it describes what the code actually does, not the
 pre-migration pipeline. More generally: if you add or remove a major dependency, data
@@ -27,7 +27,7 @@ and a Vite/React frontend — with no shared tooling; each is run and developed 
 **Backend** (from `backend/`):
 - Install deps: `pip install -r requirements.txt`
 - Run the API: `python server.py` — serves on `http://127.0.0.1:8001` (hardcoded host/port in `server.py`'s `__main__` block)
-- Run the tests: `python -m pytest` from `backend/` (config in `backend/pytest.ini`, which sets `pythonpath = .` because the modules import each other flat, e.g. `from config import settings`). The suite is `backend/tests/` and covers legacy↔LangGraph SSE parity; it stubs only `_llm_chat` and `SOURCES`, so it needs no credentials and makes no network calls. Ticket P3.8 extends it into full failure-path coverage.
+- Run the tests: `python -m pytest` from `backend/` (config in `backend/pytest.ini`, which sets `pythonpath = .` because the modules import each other flat, e.g. `from config import settings`). The suite is `backend/tests/`. `backend/tests/conftest.py` now stubs embeddings and Qdrant (autouse, for every test) alongside the existing `_llm_chat`/`SOURCES` stubs — `compare.py`'s ranking and the semantic-search path are on the happy path for both pipelines now, not just Phase-3-specific tests, so the suite still needs no credentials and makes no network calls. `test_pipeline_parity.py` covers legacy↔LangGraph parity (no longer byte-identical on the happy path — see below); `test_phase3_agents.py` covers Semantic Search, Fusion, and Validation individually. This is not yet the full P3.8 failure-path matrix (LLM failure, single-provider failure, Qdrant/embeddings outage, zero-similarity are covered for the parts that existed pre-Phase-3; a dedicated outage-injection suite for the new agents is still open).
 - Still no lint config and no `pyproject.toml`. `pytest-asyncio` remains unused — the tests are all synchronous.
 
 **Frontend** (from `frontend/`):
@@ -39,10 +39,13 @@ and a Vite/React frontend — with no shared tooling; each is run and developed 
 **Local infrastructure** (from the repo root): `docker compose up -d --wait` starts
 PostgreSQL 17.10 (`127.0.0.1:5432`) and Qdrant 1.18.3 (`127.0.0.1:6333` HTTP, `6334`
 gRPC), both with persisted named volumes and healthchecks, so `--wait` returns only once
-both are actually serving. **No application code connects to either service yet** — they
-exist so the Phase 2 (persistence) and Phase 3 (semantic search) migration tickets can
-build against a real service. The backend and frontend are not containerized, and the app
-as it exists today runs fine without these services.
+both are actually serving. **PostgreSQL is still unread by application code** — it exists
+so the Phase 2 (persistence) migration tickets can build against a real service. **Qdrant
+is different as of Phase 3**: `backend/search/vector_store.py` and the graph's
+`keyword_search`/`semantic_search` nodes connect to it on every request (see Architecture
+below), so a Qdrant-reachable environment is required for the LangGraph pipeline to run at
+all, not just for local development convenience. The backend and frontend are not
+containerized.
 
 Keep the Qdrant image version in step with `qdrant-client` in `requirements.txt` — the
 client warns when the server is more than a minor version away.
@@ -71,9 +74,13 @@ remains a working escape hatch even if the `langgraph` install is broken.
 
 ### Backend: two pipelines, selected by the `PIPELINE` flag
 
-`qdrant-client`, `psycopg[binary]`, `yoyo-migrations`, `rank_bm25` and
-`sentence-transformers` sit in `backend/requirements.txt` but are **imported nowhere** —
-they are pre-staged for Phases 2 and 3. `langgraph` is live and **is the default**.
+`psycopg[binary]`, `yoyo-migrations`, and `rank_bm25` sit in `backend/requirements.txt` but
+are **imported nowhere** — they are pre-staged for Phase 2. `sentence-transformers` is
+listed but also unused *by design*: `backend/embeddings.py` calls a HuggingFace-**hosted**
+model over the network (see below), not a local `sentence-transformers` model — do not
+"fix" this by importing it. `langgraph` and `qdrant-client` are live and load-bearing.
+`scikit-learn` was removed from `requirements.txt` — `compare.py`'s TF-IDF fallback (the
+only thing that used it) is gone.
 
 **`backend/graph/` serves requests now**; the legacy generator below runs only under
 `PIPELINE=legacy`. Legacy is nonetheless unchanged and must stay that way — it is the
@@ -83,86 +90,114 @@ flow is a single generator, `_run_pipeline` in `backend/server.py`, reached thro
 `_active_pipeline` by both `POST /api/analyze/stream` (SSE) and `POST /api/analyze`
 (drains the same generator, returns only the final JSON). It runs, in strict sequence:
 
-1. `understand_invention` (`backend/llm.py`) — one Llama call that returns concepts, keywords, synonyms, and exactly 6 search queries.
+1. `understand_invention` (`backend/llm.py`) — one Llama call that returns concepts, keywords, and exactly 5 search queries (the prompt also asks for synonyms; nothing downstream reads them).
 2. `search_patents` (`backend/search/search.py`) — fans every query out across all providers in `SOURCES` (currently Google Patents + EPO only; USPTO was evaluated and is intentionally **out of scope** — no API access), isolates per-provider failures, dedupes by uppercased patent ID.
-3. `compare_invention_to_patents` (`backend/compare.py`) — TF-IDF cosine similarity; its own docstring notes it's a deliberate placeholder for a future embedding-based ranker.
-4. `analyze_all_matches` (`backend/llm.py`) — one batched Llama call producing a rationale per patent plus shared recommendations (batched deliberately, to stay friendly to provider rate limits).
+3. `enrich_with_full_text` (`backend/search/google.py`) — fetches full description + claims text for Google-sourced results via the Details API (records with no `serpapi_id`, i.e. non-Google sources, are left with an empty `full_text` and downstream code falls back to the abstract). Feeds richer input to step 4 than an abstract alone.
+4. `compare_invention_to_patents` (`backend/compare.py`) — embedding-based cosine similarity (chunked, via `backend/embeddings.py`). Raises on failure; there is no TF-IDF fallback.
+5. `analyze_all_matches` (`backend/llm.py`) — one batched Llama call producing a rationale per patent plus shared recommendations (batched deliberately, to stay friendly to provider rate limits).
 
 Each stage `yield`s a progress event before/after it runs; `server.py` wraps these as
 `data: <json>\n\n` SSE frames.
 
-**The SSE contract is the most fragile cross-cutting constraint in this codebase** — it
-spans `backend/server.py` and `frontend/src/app/App.tsx` and there is no schema enforcing
-it. Every event has a `type` of `progress` | `result` | `error`. `progress.phase` must be
-one of exactly five values — `understand`, `queries`, `search`, `compare`, `analyze` — because
-the frontend hard-codes this vocabulary in a `PHASES` array to drive a live checklist UI;
-an unrecognized phase silently falls back to the first checklist item instead of
-erroring. The stream must end with exactly one `result` event (data shape:
-`patents[].{num,title,pct,rationale}` plus `concepts`, `recommendations`, `query_count`)
-or the frontend throws. Any change to event shape or phase names must update both files
-together.
+**The SSE contract used to be described as spanning `backend/server.py` and
+`frontend/src/app/App.tsx` — that is no longer true, and this section previously said
+otherwise.** The frontend does not consume the SSE stream at all: `App.tsx` calls the
+non-streaming `POST /api/analyze` and fakes progress with a hardcoded `STEPS` array driven
+by a `setInterval` timer, unrelated to `progress.phase`. There is no `PHASES` array in the
+frontend today. The SSE contract (`POST /api/analyze/stream`) is real, tested
+(`backend/tests/test_sse_transport.py`), and worth keeping correct for the day the frontend
+is wired to it — but changing it cannot currently break the running app. Every event has a
+`type` of `progress` | `result` | `error`. `progress.phase` is one of the values in
+`backend/graph/events.py`'s `PHASES` tuple (nine now — see below). The stream must end with
+exactly one `result` event (data shape: `patents[].{num,title,pct,risk,rationale,source}`
+plus `title`, `date`, `concepts`, `top_score`, `verdict`, `recommendations`, `query_count`)
+or a client reading the stream would throw.
 
 ### `backend/graph/` — the LangGraph pipeline
 
-Phase 1 re-expressed the four steps above as a LangGraph `StateGraph`. **This is the
-default pipeline** — it serves every request unless `PIPELINE=legacy` says otherwise — and
-it emits byte-identical SSE events to legacy on the happy path. The graph is linear today,
-matching legacy step for step; Phase 3 makes it branch, with semantic search parallel to
-keyword search converging at fusion.
+**This is the default pipeline** — it serves every request unless `PIPELINE=legacy` says
+otherwise. As of Phase 3 it genuinely branches and does more than legacy on the happy
+path, so it is **no longer byte-identical to legacy's SSE stream** the way Phase 1 left
+it — see the divergence table below. `keyword_search` and `semantic_search` both run off
+`search_orchestrator` and converge at `fuse`, which feeds `validate`, which feeds `rank`.
 
 - `state.py` — `GraphState`, the `TypedDict` every node reads and writes. It carries the
-  `backend/models.py` dataclasses rather than re-flattening them, and reserves fields for
-  Phase 3 (`semantic_patents`, `fused_patents`, `validated_patents`). `total=False`, so
-  later tickets add keys additively. **It has no error field on purpose** — under the
-  zero-tolerance policy a node that cannot produce a genuine result raises, and an error
-  slot would invite nodes to record a problem and continue to a degraded answer.
-- `events.py` — `PHASES` plus `emit_progress`, which **raises `SSEContractError` on a
-  phase name the frontend does not know**. The frontend's silent
-  fall-back-to-first-checklist-item behavior makes phase drift invisible in backend
-  testing, so this is the one place it can still be caught. Keep this tuple identical to
-  the frontend's `PHASES` array.
+  `backend/models.py` dataclasses rather than re-flattening them. `semantic_patents`,
+  `fused_patents`, and `validated_patents` are no longer reserved-for-later fields — every
+  one is written by a live node (see below). `total=False`, so later tickets can still add
+  keys additively. **It has no error field on purpose** — under the zero-tolerance policy a
+  node that cannot produce a genuine result raises, and an error slot would invite nodes to
+  record a problem and continue to a degraded answer.
+- `events.py` — `PHASES` plus `emit_progress`, which **raises `SSEContractError` on an
+  unknown phase name**. `PHASES` now has nine entries: `understand`, `queries`, `search`,
+  `enrich`, `semantic_search`, `fuse`, `validate`, `compare`, `analyze`. There is no
+  frontend `PHASES` array to keep this in lockstep with today (see the SSE contract note
+  above) — extending this tuple is backend-only and safe until that changes.
 
 - `understanding.py` — Query Understanding + Query Expansion (P1.2), over `llm.py`
   unchanged. Contains no `except`: a failed or malformed LLM response fails the request.
-- `searching.py` — Search Orchestrator + Keyword Search (P1.3). **One deliberate behavior
-  change from legacy**: one provider failing fails the whole request, via
-  `search_all_providers_strict` in `backend/search/search.py` (added alongside
-  `search_patents`, which is unchanged). Under legacy, an EPO outage halves the corpus and
-  still returns a confident verdict. Finding *nothing* is not a failure — an empty result
-  set is a genuine answer and flows through to an empty report.
-
-- `ranking.py` — Ranking + Explanation (P1.4). Calls `compare.py`'s TF-IDF **unchanged**
-  (P3.6 owns replacing it) and `analyze_all_matches` with no `except`. The displayed score
-  is the real one, truncated and clamped to 0–100 and nothing else — a dissimilar patent
-  shows an honest `0`. Also holds `format_matches` and `verdict_for`, which build the
-  `patents[]` entries and the novelty verdict.
+- `searching.py` — Search Orchestrator, Keyword Search, and Semantic Search. Keyword search
+  keeps its one deliberate behavior change from legacy: one provider failing fails the
+  whole request, via `search_all_providers_strict` in `backend/search/search.py` (added
+  alongside `search_patents`, which is unchanged and still backs legacy). It also enriches
+  results with full text (`enrich_with_full_text`, skipped entirely when nothing was
+  found) and indexes them into Qdrant (`store_patents`) — no `except` around either, so an
+  unreachable Qdrant fails the whole request rather than silently shipping a keyword-only
+  result. Semantic Search (`semantic_search_node`) runs in parallel and queries whatever
+  Qdrant already holds from *earlier* requests — not this request's own keyword hits, which
+  aren't indexed yet when it runs. A Qdrant collection that simply doesn't exist yet (cold
+  start) returns an empty list rather than raising (`search/vector_store.py`); an
+  unreachable Qdrant still raises.
+- `fusion.py` — Result Fusion. Reciprocal Rank Fusion (`backend/ranking.py`,
+  `reciprocal_rank_fusion`, pure and unit-tested directly) over the keyword and semantic
+  result sets, deduped by patent ID.
+- `validation.py` — Validation. One batched LLM call (`llm.validate_relevance`) judges
+  relevance over the top of the fused set (capped at `MAX_CANDIDATES = 30` candidates, to
+  keep the prompt bounded). No `except`: a missing or malformed verdict for any candidate
+  fails the request rather than being treated as an implicit keep or drop. An empty fused
+  set skips the LLM call entirely rather than validating nothing.
+- `ranking.py` — Ranking + Explanation (P1.4). Calls `compare.py`'s embedding-based scoring
+  (no TF-IDF fallback as of Phase 3 — see `compare.py` below) and `analyze_all_matches` with
+  no `except`. The displayed score is the real one, truncated and clamped to 0–100 and
+  nothing else — a dissimilar patent shows an honest `0`. Also holds `format_matches` and
+  `verdict_for`, which build the `patents[]` entries and the novelty verdict.
 
 - `pipeline.py` — graph assembly, the terminal `result` event, and `run_graph_pipeline`,
   the generator `server.py` consumes. Signature-compatible with `_run_pipeline` so the
   flag can swap them. **It catches nothing**: a raising node propagates out to
   `server.py`'s existing wrapper, which emits one `error` event. There is deliberately no
-  point at which a partial result could be assembled and sent.
+  point at which a partial result could be assembled and sent. The single "found anything?"
+  routing check now runs after `validate` (not right after `keyword_search`, since both
+  search branches and validation can each reduce the candidate set to zero).
 
 Nodes emit progress through LangGraph's custom stream writer, which preserves call
 ordering — the same interleaving the legacy generator got from `yield`.
 
-**Where the two pipelines diverge**, all of it failure-path and all of it deliberate.
-Since LangGraph is now the default, the right-hand column is what users actually get —
-the left is what `PIPELINE=legacy` falls back to:
+**Where the two pipelines diverge.** Since LangGraph is now the default, the right-hand
+column is what users actually get — the left is what `PIPELINE=legacy` falls back to:
 
 | Condition | Legacy | LangGraph |
 |---|---|---|
-| One provider fails | narrows the corpus, returns a confident verdict | `PatentSearchError` |
+| One search provider fails | narrows the corpus, returns a confident verdict | `PatentSearchError` |
 | All providers fail | one `error` event with a friendly message | `PatentSearchError`, wrapper emits `error` |
-| Zero results found | canned recommendation | identical report, but `recommendations: []` |
-| LLM call fails | raises (already) | raises |
+| Zero keyword results | canned recommendation | identical report, but `recommendations: []` |
+| Qdrant unreachable | n/a — legacy has no semantic search | raises, request fails |
+| LLM call fails (understand/analyze) | raises (already) | raises |
+| Validation LLM call fails | n/a — legacy has no validation step | raises, request fails |
+| **Happy path** | keyword-only corpus, TF-IDF-free embedding score against it | broader corpus (keyword + semantic, fused, LLM-filtered), same scorer — **result contents can differ, this is intentional** |
 
 Zero results is **not** an error — reaching every provider and finding nothing is a
-genuine answer. `_route_after_search` skips ranking and explanation (running them would
-emit `Scoring 0 candidates…`, describing work that is not happening) and the report goes
-out with real `concepts` and `query_count`, a measured `top_score` of 0, and an **empty**
-recommendation list. That empty list is the entire divergence, and a test pins it to
-exactly that one field.
+genuine answer, and so is validation filtering the fused set down to nothing. The graph
+skips ranking and explanation in either case (running them would emit
+`Scoring 0 candidates…`, describing work that is not happening) and the report goes out
+with real `concepts` and `query_count`, a measured `top_score` of 0, and an **empty**
+recommendation list.
+
+The Phase 1 parity tests that asserted the two streams were byte-identical on the happy
+path (`test_pipeline_parity.py`) were rewritten for this: they now assert the graph emits
+every phase legacy does, plus exactly `semantic_search`/`fuse`/`validate`, and that the
+terminal payload's *shape* still matches — not its values, which are now allowed to
+differ by design.
 
 ### LLM: Llama via HuggingFace Router, not a local model
 
@@ -170,7 +205,47 @@ All LLM calls go through `_llm_chat` in `backend/llm.py`, a raw `requests.post` 
 OpenAI-compatible chat-completions endpoint (`LLM_API_URL`, default the HuggingFace
 Router) using `LLM_MODEL` (default `meta-llama/Llama-3.1-8B-Instruct:novita` — Llama 3.1
 8B served through HF's Router via the Novita provider). It is not Ollama, Together, or
-Groq; any OpenAI-compatible endpoint is a drop-in replacement.
+Groq; any OpenAI-compatible endpoint is a drop-in replacement. Three functions call it:
+`understand_invention`, `analyze_all_matches` (both restored from a regression that had
+briefly deleted `analyze_all_matches` and replaced it with a silent-fallback
+`rationale_for_match`/`recommendations_for` pair — if you find yourself reintroducing
+either of those, stop), and `validate_relevance` (Phase 3's Validation agent, same
+batched-call-with-no-`except` shape as `analyze_all_matches`).
+
+### Embeddings and Qdrant: hosted, not local, corpus grows from live traffic
+
+`backend/embeddings.py` calls a HuggingFace-**hosted** embedding model
+(`settings.embedding_model`, default `BAAI/bge-large-en-v1.5`) over the HF Inference
+Router, reusing `settings.hf_token` the same way `_llm_chat` does — not
+`sentence-transformers`, which stays an unused dependency by design (see above). Raises on
+failure; there is no zero-vector fallback. `chunk_text` splits long documents into
+overlapping word-count windows (capped at `MAX_CHUNKS_PER_DOCUMENT`), used by both
+`compare.py`'s ranking and nothing else.
+
+`backend/search/vector_store.py` wraps a `qdrant-client` `QdrantClient` (`settings.qdrant_url`
+/ `settings.qdrant_api_key`) around a single `patents` collection, created lazily on first
+write (`store_patents`) — **there is no bulk-ingestion step**. The collection growing at
+all is a side effect of `graph/searching.py`'s `keyword_search_node` indexing every
+enriched result it finds. `backend/search/retrieve.py`'s `retrieve_similar_patents` is the
+read side, used by `semantic_search_node`. A collection that doesn't exist yet returns an
+empty result (a legitimate cold-start state); an unreachable Qdrant still raises. Queries
+go through `client.query_points(...).points` — **not** `client.search(...)`, which
+`qdrant-client` removed in 1.10+ (installed here: 1.18). `requirements.txt` doesn't pin a
+version, so a fresh install always gets current `qdrant-client`; if you see
+`'QdrantClient' object has no attribute 'search'`, that's why.
+
+The query also passes `score_threshold=MIN_SIMILARITY_SCORE` (0.6 — see the
+constant's docstring for the live-Qdrant probe it's based on: unrelated
+queries scored 0.51-0.56, related ones 0.68-0.76, against this project's own
+BAAI/bge-large-en-v1.5 embeddings; there's no exact-zero baseline for this
+model, so the threshold has to clear that floor rather than sit at 0). Without
+it, `query_points` always returns its `limit` nearest neighbors even when the
+closest thing in a small or unrelated corpus still isn't actually similar —
+"the least-bad options available" would otherwise flow into validation and
+ranking looking like real candidates. `validate_node` and `rank_node` would
+likely still catch a weak match downstream (an honest low score, or an LLM
+relevance rejection), but the threshold cuts it off at the source instead of
+relying on that safety net.
 
 ### Data sources normalize to one shape
 
@@ -205,26 +280,26 @@ three are gone — the empty case now says so plainly. Two lesser defaults remai
 for a patent with no id or title); they are reachable only if a provider returns a record
 the backend's `PatentRecord` normalization left blank.
 
-### No persistence layer exists yet — but the services are now provisioned locally
+### No PostgreSQL persistence yet — but Qdrant is live
 
-Every search re-fetches live from external APIs. There is still no database access, no
-cache, and no vector store **in the code**: nothing imports `psycopg` or `qdrant-client`,
-there are no migrations, and no Qdrant collection is created.
-
-What changed in ticket P0.1 is only the environment around the code — the root
-`docker-compose.yml` runs PostgreSQL and Qdrant locally, `backend/config.py` carries
-`database_url`/`qdrant_url`/`qdrant_api_key`, and `PIPELINE` is now validated at import.
-All of it is unread by the pipeline. Ticket P2.1 adds the schema and migrations, P2.2
-wires the cache, and P3.2 creates the Qdrant collection.
+Every search still re-fetches live from external APIs, and there is no PostgreSQL access
+and no cache: nothing imports `psycopg`, and there are no migrations. `database_url` in
+`backend/config.py` remains unread. **Qdrant is different as of Phase 3**: every keyword
+search indexes its results, and semantic search reads from it — see the Embeddings and
+Qdrant section above. Ticket P2.1 still owns the PostgreSQL schema and migrations, and
+P2.2 the cache.
 
 ### Remaining migration (see `docs/`)
 
-**Phase 1 has landed**: the `StateGraph`, the four steps as nodes, and the `PIPELINE`
-flag that switches between them. Still to come — Phase 2 adds PostgreSQL caching and
-persisted history, and Phase 3 adds the three genuinely new agents (Qdrant semantic
-search with embeddings from a HuggingFace-hosted model, Reciprocal Rank Fusion, and an
-LLM validation gate), upgrades ranking from TF-IDF to embeddings, and extends the SSE
-phase vocabulary to match. Two constraints govern all of it:
+**Phases 1 and 3 have landed.** The `StateGraph`, the graph steps as nodes, and the
+`PIPELINE` flag that switches between them (Phase 1); Semantic Search, Result Fusion, and
+Validation as live graph nodes, plus embedding-based ranking with no TF-IDF fallback
+(Phase 3, P3.1–P3.6). **Still open within Phase 3**: P3.7 (the frontend does not consume
+the SSE stream at all today, so there is no `PHASES` array to extend in lockstep — see the
+SSE contract note earlier in this file) and the full P3.8 failure-path test matrix (a
+handful of focused tests exist per new agent; a dedicated outage-injection suite does
+not). Phase 2 (PostgreSQL caching and persisted history) has not started. Two constraints
+govern all of it:
 
 - **Zero-tolerance failure policy**: no fallback, ever. If a step can't produce a genuine
   result, it must fail the request with a clear `error` event — never substitute
