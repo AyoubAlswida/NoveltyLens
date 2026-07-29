@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type Screen = "submit" | "running" | "report" | "history";
 
@@ -285,6 +285,42 @@ async function streamAnalysis(payload: object, onEvent: (event: any) => void) {
   }
 }
 
+/** Maps a GET /api/history entry (backend/reports.py's list_history) into
+ * the same AnalysisReport shape a live run produces, so ReportScreen and
+ * HistoryScreen don't need to know the difference. History entries have no
+ * `title`/`date` from the backend (see reports.py) -- they carry the real
+ * `description`/`created_at` instead, so the date shown is when the search
+ * actually happened, not "now". */
+function buildHistoryReport(entry: any): AnalysisReport {
+  const desc: string = entry.description || "";
+  const mappedPatents: DynamicPatent[] = (entry.patents ?? []).map((patent: any) => ({
+    num: patent.num || "Unknown publication",
+    title: patent.title || "Untitled patent record",
+    pct: Math.round(patent.pct),
+    risk: patent.risk,
+    rationale: patent.rationale || "No detailed rationale was returned for this record.",
+    source: patent.source || "Patent database",
+  }));
+
+  return {
+    title: desc.length > 50 ? desc.slice(0, 47) + "..." : desc,
+    date: new Date(entry.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+    concepts: entry.concepts ?? [],
+    patents: mappedPatents,
+    top_score: Math.round(entry.top_score ?? 0),
+    verdict: entry.verdict ?? "Strong",
+    recommendations: entry.recommendations ?? [],
+    query_count: entry.query_count ?? 0,
+  };
+}
+
+async function fetchHistory(): Promise<AnalysisReport[]> {
+  const response = await fetch(`${API_BASE_URL}/api/history`);
+  if (!response.ok) throw new Error(`History fetch failed: ${response.status}`);
+  const data = await response.json();
+  return data.map(buildHistoryReport);
+}
+
 export default function App() {
   const [screen, setScreen] = useState<Screen>("submit");
   const [desc, setDesc] = useState(EXAMPLE_DESC);
@@ -299,6 +335,20 @@ export default function App() {
 
   const [reportData, setReportData] = useState<AnalysisReport | null>(null);
   const [history, setHistory] = useState<AnalysisReport[]>([]);
+
+  async function refreshHistory() {
+    try {
+      setHistory(await fetchHistory());
+    } catch (err) {
+      console.error("❌ Failed to load history:", err);
+    }
+  }
+
+  // Search history is persisted server-side (ticket P2.3) and survives a
+  // backend restart -- load it once on mount instead of starting empty.
+  useEffect(() => {
+    refreshHistory();
+  }, []);
 
   async function startRunning() {
     console.log("🚀 Starting analysis request loop...");
@@ -350,8 +400,10 @@ export default function App() {
         throw new Error("Stream ended without a result.");
       }
       setReportData(finalReport);
-      setHistory((prev) => [finalReport!, ...prev]);
       setScreen("report");
+      // The backend already persisted this run before sending "result" --
+      // refresh from there instead of appending our own client-side guess.
+      refreshHistory();
 
     } catch (err) {
       console.error("❌ Link Error:", err);
