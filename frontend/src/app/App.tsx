@@ -653,7 +653,10 @@ function ReportScreen({ onBack, data }: { onBack: () => void; data: AnalysisRepo
             Submitted {data.date} · {data.query_count} queries · {data.patents.length} patents scanned
           </div>
         </div>
-        <button style={{ background: COLORS.inputBg, border: `1px solid ${COLORS.border}`, borderRadius: 8, color: COLORS.textSecondary, fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 13, cursor: "pointer", padding: "7px 16px" }}>
+        <button
+          onClick={() => downloadReportJson(data)}
+          style={{ background: COLORS.inputBg, border: `1px solid ${COLORS.border}`, borderRadius: 8, color: COLORS.textSecondary, fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 13, cursor: "pointer", padding: "7px 16px" }}
+        >
           View JSON
         </button>
         <button
