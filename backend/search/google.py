@@ -136,11 +136,18 @@ def enrich_with_full_text(patents: list[PatentRecord], max_workers: int = 8, inc
     """Populate ``full_text`` on each Google-sourced patent via parallel
     Details API calls. Non-Google records, or any record whose call fails,
     are left with an empty ``full_text`` so callers fall back to title+abstract.
+
+    A record that already has full_text is skipped too (ticket P2.2): a
+    patent restored from the Postgres query cache (``search/search.py``,
+    ``cache.py``) may already carry enriched text from an earlier request,
+    and re-fetching it would spend a live Details API call for no new data.
     """
-    targets = [patent for patent in patents if patent.serpapi_id]
+    targets = [patent for patent in patents if patent.serpapi_id and not patent.full_text]
     skipped = len(patents) - len(targets)
     if skipped:
-        logger.info("Full-text enrichment: skipping %d patent(s) with no serpapi_id (non-Google source)", skipped)
+        logger.info(
+            "Full-text enrichment: skipping %d patent(s) (no serpapi_id, or already enriched from cache)", skipped
+        )
     if not targets:
         return patents
 

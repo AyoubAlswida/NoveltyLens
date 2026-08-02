@@ -10,12 +10,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-load_dotenv()
+load_dotenv(override=True)  # see config.py's load_dotenv(override=True) for why
 
+from cache import store_enriched_patents
 from compare import compare_invention_to_patents
 from config import settings
+from db import connect
 from llm import analyze_all_matches, understand_invention
 from models import ComparisonResult
+from reports import find_recent_report, list_history, save_report
 from search.search import PatentSearchError, enrich_with_full_text, search_patents
 
 logging.basicConfig(level=logging.INFO)
@@ -52,67 +55,119 @@ def _format_and_rank(results: list[ComparisonResult], concepts: list[str]) -> li
 
 
 def _run_pipeline(description: str, claims: Optional[str]) -> Iterator[dict[str, object]]:
-    """Run the typed pipeline and emit the existing SSE event contract."""
-    yield {"type": "progress", "phase": "understand", "message": "Extracting technical concepts & keywords…"}
-    try:
-        analysis = understand_invention(description)
-    except Exception:
-        logger.exception("Invention understanding failed")
+    """Run the typed pipeline and emit the existing SSE event contract.
+
+    Opens one Postgres connection for the whole run (ticket P2.2): search
+    caching and the completed-run report both need it. A connection failure
+    is not caught here, so it propagates out and fails the request with a
+    clean error event -- a down database is not a degraded-but-successful
+    search. This only applies to this legacy generator; the LangGraph path
+    (`graph/pipeline.py`) has no persistence yet -- see CLAUDE.md.
+    """
+    with connect() as conn:
+        cached_report = find_recent_report(conn, description, claims)
+        if cached_report is not None:
+            # An exact resubmission within REPORT_TTL: skip every LLM/search
+            # call and return the same genuine result as last time, not a
+            # fresh (and possibly differently-worded, or differently-ranked)
+            # one. See reports.py's find_recent_report docstring.
+            yield {"type": "progress", "phase": "understand", "message": "Found a recent identical search — reusing its result…"}
+            yield {"type": "result", "data": {"title": description[:45] + "...", "date": "Today", **cached_report}}
+            return
+
+        yield {"type": "progress", "phase": "understand", "message": "Extracting technical concepts & keywords…"}
+        try:
+            analysis = understand_invention(description)
+        except Exception:
+            logger.exception("Invention understanding failed")
+            yield {
+                "type": "error",
+                "detail": "Invention analysis failed. Check that the LLM is configured and try again.",
+            }
+            return
+        queries = analysis.queries
+        if not queries:
+            yield {
+                "type": "error",
+                "detail": "Invention analysis returned no search queries. Please try a more detailed description.",
+            }
+            return
+        full_text = f"{description} {claims or ''} {' '.join(analysis.concepts)} {' '.join(analysis.keywords)}"
+        yield {"type": "progress", "phase": "queries", "message": f"Generated {len(queries)} AI search queries", "count": len(queries)}
+
+        yield {"type": "progress", "phase": "search", "message": "Searching patent databases…", "current": 0, "total": len(queries), "found": 0}
+        try:
+            patents = search_patents(conn, queries, results_per_query=4)
+        except PatentSearchError:
+            logger.exception("All patent providers failed")
+            yield {"type": "error", "detail": "Patent search failed: the patent databases could not be reached. Please check the backend network and try again."}
+            return
+        yield {"type": "progress", "phase": "search", "message": f"Searching patent databases… {len(queries)}/{len(queries)} · {len(patents)} found", "current": len(queries), "total": len(queries), "found": len(patents)}
+
+        if not patents:
+            recommendations = ["No reference targets found. Focus claims on wide utility targets."]
+            save_report(
+                conn,
+                description=description,
+                claims=claims,
+                concepts=analysis.concepts,
+                query_count=len(queries),
+                top_score=0,
+                verdict="Strong",
+                recommendations=recommendations,
+                matches=[],
+            )
+            yield {"type": "result", "data": {"title": description[:45] + "...", "date": "Today", "concepts": analysis.concepts, "patents": [], "top_score": 0, "verdict": "Strong", "query_count": len(queries), "recommendations": recommendations}}
+            return
+
+        yield {"type": "progress", "phase": "enrich", "message": f"Fetching full text for {len(patents)} patents…"}
+        patents = enrich_with_full_text(patents)
+        # Persist the now-enriched full_text: search_patents already cached
+        # these patents once, before enrichment ran (full_text was still
+        # empty then). Without this second write, a future query-cache hit
+        # could never skip re-enrichment, because nothing enriched would be
+        # on record to skip it with (see cache.py's store_enriched_patents).
+        store_enriched_patents(conn, patents)
+        enriched_count = sum(1 for patent in patents if patent.full_text)
         yield {
-            "type": "error",
-            "detail": "Invention analysis failed. Check that the LLM is configured and try again.",
+            "type": "progress",
+            "phase": "enrich",
+            "message": f"Full text retrieved for {enriched_count}/{len(patents)} patents",
+            "enriched": enriched_count,
+            "total": len(patents),
         }
-        return
-    queries = analysis.queries
-    if not queries:
-        yield {
-            "type": "error",
-            "detail": "Invention analysis returned no search queries. Please try a more detailed description.",
-        }
-        return
-    full_text = f"{description} {claims or ''} {' '.join(analysis.concepts)} {' '.join(analysis.keywords)}"
-    yield {"type": "progress", "phase": "queries", "message": f"Generated {len(queries)} AI search queries", "count": len(queries)}
 
-    yield {"type": "progress", "phase": "search", "message": "Searching patent databases…", "current": 0, "total": len(queries), "found": 0}
-    try:
-        patents = search_patents(queries, results_per_query=4)
-    except PatentSearchError:
-        logger.exception("All patent providers failed")
-        yield {"type": "error", "detail": "Patent search failed: the patent databases could not be reached. Please check the backend network and try again."}
-        return
-    yield {"type": "progress", "phase": "search", "message": f"Searching patent databases… {len(queries)}/{len(queries)} · {len(patents)} found", "current": len(queries), "total": len(queries), "found": len(patents)}
+        yield {"type": "progress", "phase": "compare", "message": f"Scoring {len(patents)} candidates for similarity…"}
+        formatted = _format_and_rank(compare_invention_to_patents(full_text, patents)[:MAX_RESULTS], analysis.concepts)
+        top_score = int(formatted[0]["pct"]) if formatted else 0
+        verdict = "Weak" if top_score >= 75 else "Moderate" if top_score >= 25 else "Strong"
 
-    if not patents:
-        yield {"type": "result", "data": {"title": description[:45] + "...", "date": "Today", "concepts": analysis.concepts, "patents": [], "top_score": 0, "verdict": "Strong", "query_count": len(queries), "recommendations": ["No reference targets found. Focus claims on wide utility targets."]}}
-        return
+        top_patents = [item["_patent"] for item in formatted]
+        yield {"type": "progress", "phase": "analyze", "message": f"Writing detailed analysis for {len(top_patents)} matches…", "current": 0, "total": len(top_patents)}
+        analysis_result = analyze_all_matches(description, top_patents)
+        for item, rationale in zip(formatted, analysis_result.rationales):
+            item["rationale"] = rationale
+        recommendations = analysis_result.recommendations
+        yield {"type": "progress", "phase": "analyze", "message": f"Writing detailed analysis… {len(top_patents)}/{len(top_patents)}", "current": len(top_patents), "total": len(top_patents)}
 
-    yield {"type": "progress", "phase": "enrich", "message": f"Fetching full text for {len(patents)} patents…"}
-    patents = enrich_with_full_text(patents)
-    enriched_count = sum(1 for patent in patents if patent.full_text)
-    yield {
-        "type": "progress",
-        "phase": "enrich",
-        "message": f"Full text retrieved for {enriched_count}/{len(patents)} patents",
-        "enriched": enriched_count,
-        "total": len(patents),
-    }
+        for item in formatted:
+            item.pop("_patent", None)
 
-    yield {"type": "progress", "phase": "compare", "message": f"Scoring {len(patents)} candidates for similarity…"}
-    formatted = _format_and_rank(compare_invention_to_patents(full_text, patents)[:MAX_RESULTS], analysis.concepts)
-    top_score = int(formatted[0]["pct"]) if formatted else 0
-    verdict = "Weak" if top_score >= 75 else "Moderate" if top_score >= 25 else "Strong"
-
-    top_patents = [item["_patent"] for item in formatted]
-    yield {"type": "progress", "phase": "analyze", "message": f"Writing detailed analysis for {len(top_patents)} matches…", "current": 0, "total": len(top_patents)}
-    analysis_result = analyze_all_matches(description, top_patents)
-    for item, rationale in zip(formatted, analysis_result.rationales):
-        item["rationale"] = rationale
-    recommendations = analysis_result.recommendations
-    yield {"type": "progress", "phase": "analyze", "message": f"Writing detailed analysis… {len(top_patents)}/{len(top_patents)}", "current": len(top_patents), "total": len(top_patents)}
-
-    for item in formatted:
-        item.pop("_patent", None)
-    yield {"type": "result", "data": {"title": description[:45] + "...", "date": "Today", "concepts": analysis.concepts, "patents": formatted, "top_score": top_score, "verdict": verdict, "query_count": len(queries), "recommendations": recommendations}}
+        # Persist before yielding "result": if this raises, the caller's
+        # except-Exception wrapper turns it into an "error" event instead --
+        # never tell the user the search succeeded and then drop the report.
+        save_report(
+            conn,
+            description=description,
+            claims=claims,
+            concepts=analysis.concepts,
+            query_count=len(queries),
+            top_score=top_score,
+            verdict=verdict,
+            recommendations=recommendations,
+            matches=formatted,
+        )
+        yield {"type": "result", "data": {"title": description[:45] + "...", "date": "Today", "concepts": analysis.concepts, "patents": formatted, "top_score": top_score, "verdict": verdict, "query_count": len(queries), "recommendations": recommendations}}
 
 
 # Resolved once, at import, on the PIPELINE flag that config.py has already
@@ -154,6 +209,16 @@ async def analyze_invention(request: InventionRequest) -> dict[str, object]:
         logger.exception("Analysis pipeline error")
         raise HTTPException(status_code=502, detail=str(error)) from error
     raise HTTPException(status_code=500, detail="Analysis produced no result.")
+
+
+@app.get("/api/history")
+async def get_history() -> list[dict[str, object]]:
+    try:
+        with connect() as conn:
+            return list_history(conn)
+    except Exception as error:
+        logger.exception("History fetch failed")
+        raise HTTPException(status_code=502, detail=str(error)) from error
 
 
 if __name__ == "__main__":

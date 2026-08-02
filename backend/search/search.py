@@ -3,6 +3,9 @@
 import logging
 from collections.abc import Callable
 
+import psycopg
+
+from cache import get_cached_query_result, store_query_result
 from models import PatentRecord
 from tracing import trace
 from .epo import search_epo
@@ -49,26 +52,48 @@ def merge_patents(patents: list[PatentRecord]) -> list[PatentRecord]:
 
 
 def search_patents(
-    queries: list[str], results_per_query: int = 10
+    conn: psycopg.Connection, queries: list[str], results_per_query: int = 10
 ) -> list[PatentRecord]:
     """Search every provider for every query and return normalized records.
 
     A failure from an individual source is isolated.  The pipeline fails only
     when no provider call succeeded at all.
+
+    Each query checks the Postgres query cache first (ticket P2.2): a cache
+    hit skips every provider call for that query entirely. A cache miss is
+    normal and falls through to a live search, whose results are then
+    written back to the cache. A cache-read/write failure is a database
+    problem, not a search problem -- it is not caught here, so it propagates
+    and fails the request (see backend/cache.py).
     """
     all_patents: list[PatentRecord] = []
     successful_calls = 0
     for query in filter(None, (query.strip() for query in queries)):
+        cached = get_cached_query_result(conn, query)
+        if cached is not None:
+            logger.info("Cache hit for query %r (%d patents) -- skipping live search", query, len(cached))
+            trace("search.cache.hit", query=query, count=len(cached))
+            all_patents.extend(cached)
+            successful_calls += 1
+            continue
+
+        query_patents: list[PatentRecord] = []
+        query_succeeded = False
         for provider_name, provider in SOURCES:
             try:
                 results = provider(query, results_per_query)
                 successful_calls += 1
-                all_patents.extend(results)
+                query_succeeded = True
+                query_patents.extend(results)
                 logger.info("%s returned %d patents for %r", provider_name, len(results), query)
                 trace("search.provider.ok", provider=provider_name, query=query, count=len(results))
             except Exception as error:
                 logger.exception("%s search failed for %r", provider_name, query)
                 trace("search.provider.failed", provider=provider_name, query=query, error=str(error))
+
+        if query_succeeded:
+            store_query_result(conn, query, merge_patents(query_patents))
+        all_patents.extend(query_patents)
 
     if not successful_calls:
         raise PatentSearchError("All patent search providers failed")
