@@ -1,11 +1,13 @@
 """Graph assembly and the SSE generator ``server.py`` consumes.
 
 The graph branches: ``keyword_search`` and ``semantic_search`` both run off
-``search_orchestrator`` and converge at ``fuse``, which feeds ``validate``, which
-feeds ``rank``.  Semantic search reads whatever Qdrant already holds from
-*earlier* requests - keyword search indexes its own results as a side effect,
-but only after this request's semantic branch has already read, so the two
-cannot race on the same data (see ``graph/searching.py``).
+``search_orchestrator`` and converge at ``index_patents``, which feeds ``fuse``,
+then ``validate``, then ``rank``.  Semantic search reads whatever Qdrant already
+holds from *earlier* requests; this request's own keyword hits are indexed by
+``index_patents``, which sits behind the join precisely so that write cannot
+happen until the semantic branch has finished reading (see
+``graph/searching.py``'s ``index_patents_node`` for the bug that placement
+fixes).
 
 Progress events reach the client through LangGraph's custom stream writer, which
 preserves the order nodes wrote them in.  The final ``result`` event is built
@@ -25,6 +27,7 @@ from langgraph.graph import END, START, StateGraph
 from graph.fusion import fuse_node
 from graph.ranking import explain_node, format_matches, rank_node, verdict_for
 from graph.searching import (
+    index_patents_node,
     keyword_search_node,
     search_orchestrator_node,
     semantic_search_node,
@@ -54,6 +57,7 @@ def build_graph():
     builder.add_node("search_orchestrator", search_orchestrator_node)
     builder.add_node("keyword_search", keyword_search_node)
     builder.add_node("semantic_search", semantic_search_node)
+    builder.add_node("index_patents", index_patents_node)
     builder.add_node("fuse", fuse_node)
     builder.add_node("validate", validate_node)
     builder.add_node("rank", rank_node)
@@ -64,8 +68,14 @@ def build_graph():
     builder.add_edge("expand_queries", "search_orchestrator")
     builder.add_edge("search_orchestrator", "keyword_search")
     builder.add_edge("search_orchestrator", "semantic_search")
-    builder.add_edge("keyword_search", "fuse")
-    builder.add_edge("semantic_search", "fuse")
+    # Both branches join at `index_patents` before `fuse`. Indexing sits behind
+    # the join so this request's keyword hits reach Qdrant strictly *after* the
+    # semantic branch has read it - otherwise semantic search retrieves the
+    # patents keyword search just found. See `graph/searching.py`'s
+    # `index_patents_node`.
+    builder.add_edge("keyword_search", "index_patents")
+    builder.add_edge("semantic_search", "index_patents")
+    builder.add_edge("index_patents", "fuse")
     builder.add_edge("fuse", "validate")
     builder.add_conditional_edges(
         "validate", _route_after_validate, {"rank": "rank", END: END}

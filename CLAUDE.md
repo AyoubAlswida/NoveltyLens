@@ -127,7 +127,19 @@ or a client reading the stream would throw.
 otherwise. As of Phase 3 it genuinely branches and does more than legacy on the happy
 path, so it is **no longer byte-identical to legacy's SSE stream** the way Phase 1 left
 it — see the divergence table below. `keyword_search` and `semantic_search` both run off
-`search_orchestrator` and converge at `fuse`, which feeds `validate`, which feeds `rank`.
+`search_orchestrator` and converge at `index_patents`, which feeds `fuse`, then
+`validate`, then `rank`.
+
+**The two search branches are not isolated from each other — do not assume they are.**
+LangGraph runs a superstep's sync nodes *sequentially*, and `keyword_search` always runs
+first (verified directly; it is not registration-order dependent). Any side effect one
+branch performs is visible to the other. That is why Qdrant indexing lives in its own
+`index_patents` node behind the join instead of at the end of `keyword_search`, where it
+used to be: with the write inside `keyword_search`, semantic search retrieved the patents
+keyword search had just indexed, so on a cold or small corpus the semantic branch was a
+pure echo of the keyword branch, and RRF then credited those echoes from *both* branches
+and ranked them above patents only one branch found. If you add a node that writes shared
+external state, put the write behind the join too.
 
 - `state.py` — `GraphState`, the `TypedDict` every node reads and writes. It carries the
   `backend/models.py` dataclasses rather than re-flattening them. `semantic_patents`,
@@ -149,16 +161,23 @@ it — see the divergence table below. `keyword_search` and `semantic_search` bo
   whole request, via `search_all_providers_strict` in `backend/search/search.py` (added
   alongside `search_patents`, which is unchanged and still backs legacy). It also enriches
   results with full text (`enrich_with_full_text`, skipped entirely when nothing was
-  found) and indexes them into Qdrant (`store_patents`) — no `except` around either, so an
-  unreachable Qdrant fails the whole request rather than silently shipping a keyword-only
-  result. Semantic Search (`semantic_search_node`) runs in parallel and queries whatever
-  Qdrant already holds from *earlier* requests — not this request's own keyword hits, which
-  aren't indexed yet when it runs. A Qdrant collection that simply doesn't exist yet (cold
+  found) — no `except`, so a failure there fails the whole request. Indexing into Qdrant
+  (`store_patents`) is **not** part of keyword search; it is `index_patents_node`, which
+  the graph runs after both branches join, so this request's hits reach Qdrant strictly
+  after Semantic Search has read it (see the branch-isolation note above). No `except`
+  there either — an unreachable Qdrant fails the request rather than silently shipping a
+  result whose corpus never grew. Semantic Search (`semantic_search_node`) therefore
+  queries only what Qdrant holds from *earlier* requests. A Qdrant collection that simply doesn't exist yet (cold
   start) returns an empty list rather than raising (`search/vector_store.py`); an
   unreachable Qdrant still raises.
 - `fusion.py` — Result Fusion. Reciprocal Rank Fusion (`backend/ranking.py`,
   `reciprocal_rank_fusion`, pure and unit-tested directly) over the keyword and semantic
-  result sets, deduped by patent ID.
+  result sets, deduped on `id.strip().upper()` — the same key `merge_patents` uses, which
+  the two must keep in step or one patent reaches the report as two cards. When both
+  branches carry the same patent, fusion keeps whichever copy has `full_text` rather than
+  whichever came last: `compare.py` scores on `full_text or abstract`, so letting a Qdrant
+  payload indexed before enrichment clobber a freshly enriched record would quietly drop
+  that patent to abstract-only scoring.
 - `validation.py` — Validation. One batched LLM call (`llm.validate_relevance`) judges
   relevance over the top of the fused set (capped at `MAX_CANDIDATES = 30` candidates, to
   keep the prompt bounded). No `except`: a missing or malformed verdict for any candidate
@@ -233,8 +252,8 @@ overlapping word-count windows (capped at `MAX_CHUNKS_PER_DOCUMENT`), used by bo
 `backend/search/vector_store.py` wraps a `qdrant-client` `QdrantClient` (`settings.qdrant_url`
 / `settings.qdrant_api_key`) around a single `patents` collection, created lazily on first
 write (`store_patents`) — **there is no bulk-ingestion step**. The collection growing at
-all is a side effect of `graph/searching.py`'s `keyword_search_node` indexing every
-enriched result it finds. `backend/search/retrieve.py`'s `retrieve_similar_patents` is the
+all is a side effect of `graph/searching.py`'s `index_patents_node` indexing every
+enriched keyword result the request found. `backend/search/retrieve.py`'s `retrieve_similar_patents` is the
 read side, used by `semantic_search_node`. A collection that doesn't exist yet returns an
 empty result (a legitimate cold-start state); an unreachable Qdrant still raises. Queries
 go through `client.query_points(...).points` — **not** `client.search(...)`, which

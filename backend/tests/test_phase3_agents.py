@@ -10,9 +10,10 @@ from unittest.mock import patch
 
 import pytest
 
+from graph.pipeline import run_graph_pipeline
 from graph.searching import semantic_search_node
 from graph.validation import validate_node
-from models import PatentRecord
+from models import InventionAnalysis, MatchAnalysis, PatentRecord
 from ranking import reciprocal_rank_fusion
 from search.retrieve import retrieve_similar_patents
 from search.vector_store import store_patents
@@ -74,6 +75,60 @@ def test_semantic_search_node_sets_semantic_patents():
     assert result == {"semantic_patents": found}
 
 
+def test_semantic_search_does_not_retrieve_this_requests_own_keyword_hits():
+    """Semantic search must only ever see patents indexed by *earlier* requests.
+
+    The two search branches fan out from ``search_orchestrator`` in parallel,
+    but LangGraph runs a superstep's sync nodes sequentially - ``keyword_search``
+    always executes first. If it indexes its own hits into Qdrant before the
+    semantic branch reads, semantic search retrieves the patents keyword search
+    just handed over instead of genuinely new prior art, and Result Fusion then
+    awards those echoes credit from *both* branches - inflating their fused rank
+    over patents only one branch found.
+
+    Indexing must therefore happen after both branches have read, which is a
+    property of the graph's topology, not of the scheduler's ordering.
+    """
+    keyword_hits = [
+        PatentRecord(
+            id="US1000042A",
+            title="UV water sterilizer",
+            abstract="Sterilizes water with ultraviolet light in a portable vessel.",
+        ),
+    ]
+    invention = "Sterilizes water with ultraviolet light in a portable vessel."
+    analysis = InventionAnalysis(
+        queries=["uv water sterilizer"], keywords=["ultraviolet"], concepts=["uv sterilization"]
+    )
+    seen_by_semantic: list[list[PatentRecord]] = []
+
+    def spy_retrieve(invention_text: str, limit: int = 20) -> list[PatentRecord]:
+        hits = retrieve_similar_patents(invention_text, limit=limit)
+        seen_by_semantic.append(hits)
+        return hits
+
+    with patch("graph.understanding.understand_invention", return_value=analysis), \
+         patch("graph.searching.search_all_providers_strict", return_value=keyword_hits), \
+         patch("graph.searching.enrich_with_full_text", side_effect=lambda patents: patents), \
+         patch("graph.searching.retrieve_similar_patents", side_effect=spy_retrieve), \
+         patch("graph.validation.validate_relevance", side_effect=lambda text, c: [True] * len(c)), \
+         patch(
+             "graph.ranking.analyze_all_matches",
+             side_effect=lambda description, patents: MatchAnalysis(
+                 rationales=["r"] * len(patents), recommendations=["rec"]
+             ),
+         ):
+        list(run_graph_pipeline(invention, None))
+
+    # Qdrant was cold: no earlier request indexed anything, so the semantic
+    # branch had nothing legitimate to find.
+    assert seen_by_semantic == [[]]
+
+    # ...but this request's hits must still be indexed by the time it ends, or
+    # the corpus would never grow for the next request.
+    assert any(hit.id == "US1000042A" for hit in retrieve_similar_patents(invention))
+
+
 # --------------------------------------------------------------------------
 # P3.4 - Result Fusion
 # --------------------------------------------------------------------------
@@ -92,6 +147,44 @@ def test_fusion_surfaces_semantic_only_matches():
 
     assert "US9" in fused_ids
     assert fused_ids != [p.id for p in keyword_only]
+
+
+def test_fusion_dedupes_on_the_same_key_merge_patents_uses():
+    """`search.search.merge_patents` dedupes on `id.strip().upper()`. Fusion must
+    agree with it: it receives keyword results merge_patents already deduped
+    alongside semantic results rebuilt from Qdrant payloads, so a looser key here
+    would let one patent through as two separate cards in the final report."""
+    keyword = [PatentRecord(id="US1234567B2", title="A")]
+    semantic = [PatentRecord(id=" us1234567b2 ", title="A")]
+
+    fused = reciprocal_rank_fusion([keyword, semantic])
+
+    assert len(fused) == 1
+
+
+def test_fusion_does_not_replace_an_enriched_record_with_a_stale_one():
+    """`compare.py` scores on `full_text or abstract`, so which copy of a patent
+    survives fusion decides whether it is ranked on its full description or just
+    its abstract. The semantic branch rebuilds records from Qdrant payloads that
+    may have been indexed before enrichment ran; those must not clobber the copy
+    this request just enriched."""
+    enriched = PatentRecord(id="US1", title="A", abstract="abs", full_text="full description and claims")
+    stale = PatentRecord(id="US1", title="A", abstract="abs", full_text="")
+
+    fused = reciprocal_rank_fusion([[enriched], [stale]])
+
+    assert fused[0].full_text == "full description and claims"
+
+
+def test_fusion_upgrades_a_bare_record_when_a_later_list_has_full_text():
+    """The mirror of the above: whichever branch supplied the text, fusion keeps
+    the richer record rather than whichever happened to be seen first."""
+    bare = PatentRecord(id="US1", title="A", abstract="abs", full_text="")
+    enriched = PatentRecord(id="US1", title="A", abstract="abs", full_text="full description and claims")
+
+    fused = reciprocal_rank_fusion([[bare], [enriched]])
+
+    assert fused[0].full_text == "full description and claims"
 
 
 def test_fusion_dedupes_and_ranks_patents_both_branches_found_ahead_of_single_hits():

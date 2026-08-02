@@ -2,12 +2,13 @@
 
 The SSE contract is shared, unenforced state spanning ``backend/server.py`` and
 ``frontend/src/app/App.tsx``.  The frontend matches ``progress.phase`` against a
-hard-coded ``PHASES`` array and, on no match, **silently selects the first
-checklist item instead of erroring** - so a typo'd or invented phase name is
-invisible in backend testing and simply wrong in the UI.
+hard-coded ``PHASE_ORDER`` array and, on no match, **silently ignores the event**
+(``indexOf`` returns -1 and the update is skipped) - so a typo'd or invented
+phase name is invisible in backend testing and, in the UI, simply stalls the
+checklist at the last phase it did recognize while the request runs on.
 
 Every graph node emits through :func:`emit_progress`, which rejects any phase the
-frontend does not know.  That converts the frontend's silent fallback into a loud
+frontend does not know.  That converts the frontend's silent no-op into a loud
 backend failure at the one place it can still be caught.
 
 Nodes emit via LangGraph's custom stream writer, so events reach the client in
@@ -32,18 +33,20 @@ PHASES: tuple[str, ...] = (
 )
 """The complete progress vocabulary, in checklist order.
 
-This tuple must stay identical to the ``id`` values in the frontend's ``PHASES``
-array (``frontend/src/app/App.tsx``).  Ticket P3.7 is the only one permitted to
-change it, and it changes both files in the same commit.
+This tuple must stay identical to the frontend's ``PHASE_ORDER`` array
+(``frontend/src/app/App.tsx``), which as of ticket P3.7 drives the real progress
+checklist off this stream rather than a simulated timer.  **Changing this tuple
+means changing both files in the same commit** - there is no longer a grace
+period where the backend can extend the vocabulary on its own.
 
 ``enrich`` and ``semantic_search``/``fuse``/``validate`` were added to bring this
 package in line with two things that had drifted ahead of it: legacy's
 ``_run_pipeline`` (``backend/server.py``) already emits ``enrich``, and Phase 3
-adds three new agents between Keyword Search and Ranking. NOTE: the frontend does
-not currently consume the SSE stream at all (``frontend/src/app/App.tsx`` calls
-the non-streaming ``POST /api/analyze`` and fakes progress with a timer), so this
-extension is backend-only and does not yet have a frontend counterpart to update
-in lockstep - see the Architecture section of ``CLAUDE.md``.
+adds three new agents between Keyword Search and Ranking.
+
+Note this is the progress vocabulary, not the node list: ``index_patents``
+(``graph/searching.py``) deliberately emits nothing, because indexing for later
+requests is not work the user is waiting on.
 """
 
 
@@ -66,7 +69,7 @@ def emit_progress(phase: str, message: str, **fields: Any) -> None:
     if phase not in PHASES:
         raise SSEContractError(
             f"{phase!r} is not a known SSE progress phase. The frontend would "
-            f"silently render this as the first checklist item. "
+            f"silently drop this event and stall its checklist. "
             f"Expected one of: {', '.join(PHASES)}."
         )
     get_stream_writer()({"type": "progress", "phase": phase, "message": message, **fields})

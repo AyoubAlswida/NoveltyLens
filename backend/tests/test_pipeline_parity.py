@@ -1,15 +1,20 @@
 """Parity between the legacy pipeline and the LangGraph pipeline.
 
-This is the gate that turns ``PIPELINE=langgraph`` on.  On the happy path the
-two must emit byte-identical SSE events; where they differ, they differ because
-a ticket decided they should.
+This is the gate that turned ``PIPELINE=langgraph`` on.  Phase 1 could demand
+byte-identical SSE streams; Phase 3 cannot, because the graph searches a broader
+corpus than legacy can see (see ``test_graph_covers_every_legacy_phase_plus_the_new_agents``).
+What is asserted now is that the graph emits every phase legacy does plus exactly
+the new agents' phases, and that the terminal payload's *shape* still matches -
+its values are allowed to differ, by design.  Where they differ, they differ
+because a ticket decided they should.
 
-**Only the two non-deterministic boundaries are stubbed**: the HTTP call inside
-``_llm_chat`` and the search providers in ``SOURCES``.  Everything between them -
-prompt construction, JSON parsing, deduplication, TF-IDF scoring, score
-formatting, verdict thresholds - runs for real in both pipelines.  Stubbing
-``understand_invention`` or ``compare_invention_to_patents`` instead would prove
-far less, because those are exactly the layers that could drift apart.
+**The network boundaries are stubbed, the logic between them is not**: the HTTP
+call inside ``_llm_chat`` and the search providers in ``SOURCES`` here, plus
+embeddings, Qdrant and Postgres in ``tests/conftest.py``.  Everything between
+them - prompt construction, JSON parsing, deduplication, chunking, cosine
+scoring, score formatting, verdict thresholds - runs for real in both pipelines.
+Stubbing ``understand_invention`` or ``compare_invention_to_patents`` instead
+would prove far less, because those are exactly the layers that could drift apart.
 """
 
 import json

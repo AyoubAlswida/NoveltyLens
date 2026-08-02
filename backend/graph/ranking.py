@@ -1,8 +1,9 @@
 """Ranking and Explanation nodes.
 
-Ranking calls ``backend/compare.py`` with its TF-IDF algorithm **unchanged**.
-Ticket P3.6 replaces those internals with embeddings; changing them here would
-corrupt P1.5's parity test, which is the gate that turns this pipeline on.
+Ranking calls ``backend/compare.py``, which as of ticket P3.6 scores by chunked
+embedding cosine similarity and has no TF-IDF fallback: it raises rather than
+falling back to a different algorithm than the one the user was told is running.
+This node adds no ``except`` of its own, so that propagates.
 
 Explanation calls ``analyze_all_matches`` and catches nothing.  That function
 raises on a failed LLM call, on a response with no JSON, on a rationale missing

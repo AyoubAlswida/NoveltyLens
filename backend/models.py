@@ -32,7 +32,7 @@ class InventionAnalysis:
 
 @dataclass(slots=True)
 class ComparisonResult:
-    """A patent and its TF-IDF similarity score to an invention."""
+    """A patent and its embedding cosine similarity score to an invention."""
 
     patent: PatentRecord
     similarity_score: float

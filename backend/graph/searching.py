@@ -14,18 +14,19 @@ emptiness up: legacy pairs it with a hardcoded sentence of claim-drafting
 advice that no model wrote.  ``graph/pipeline.py`` sends an empty
 recommendation list instead.
 
-Keyword search also does two things Phase 3 needs and legacy's ``_run_pipeline``
-already does: it fetches full text for every result (``enrich_with_full_text``,
-so embeddings downstream see more than an abstract) and indexes the enriched
-patents into Qdrant (``store_patents``) so a later, related query's Semantic
-Search node can retrieve them.  Neither is wrapped in ``except`` - a Qdrant
-outage here fails the whole request rather than silently shipping a keyword-only
-result the user cannot tell apart from a healthy one.
+Keyword search also fetches full text for every result
+(``enrich_with_full_text``, so embeddings downstream see more than an abstract),
+as legacy's ``_run_pipeline`` already does.  It is not wrapped in ``except``.
 
-Semantic Search runs as a separate node, in parallel with keyword search (both
-branch off ``search_orchestrator`` in ``graph/pipeline.py``), so it queries
-whatever Qdrant already holds from *earlier* requests - not this request's own
-keyword hits, which have not been indexed yet when it runs.
+Indexing those results into Qdrant is a *separate* node, :func:`index_patents_node`,
+which the graph runs after both search branches have joined.  It used to be the
+last thing ``keyword_search_node`` did, which was wrong: the two branches fan out
+from ``search_orchestrator`` but LangGraph runs a superstep's sync nodes
+sequentially, keyword first, so the write reached Qdrant before Semantic Search
+read it and Semantic Search retrieved this request's own keyword hits.  See
+:func:`index_patents_node`.
+
+Semantic Search therefore queries only what Qdrant holds from *earlier* requests.
 """
 
 from graph.events import emit_progress
@@ -95,13 +96,12 @@ def keyword_search_node(state: GraphState) -> dict:
             total=len(patents),
         )
 
-        # Index into Qdrant so a later, related request's semantic_search_node
-        # can retrieve these. No try/except: an unreachable Qdrant fails the
-        # whole request rather than silently shipping a keyword-only result.
-        store_patents(patents)
-
     # `candidates` is what ranking reads.  Phase 3's fusion and validation nodes
     # will overwrite it after this point without touching `keyword_patents`.
+    #
+    # Indexing these into Qdrant deliberately does NOT happen here - it is
+    # `index_patents_node`, which the graph runs after *both* search branches
+    # have read. See that node for why.
     return {"keyword_patents": patents, "candidates": patents}
 
 
@@ -124,3 +124,35 @@ def semantic_search_node(state: GraphState) -> dict:
         found=len(patents),
     )
     return {"semantic_patents": patents}
+
+
+def index_patents_node(state: GraphState) -> dict:
+    """Index this request's keyword hits into Qdrant, for *later* requests.
+
+    This runs after both search branches, and that ordering is the entire point.
+    It used to sit at the end of ``keyword_search_node``, on the assumption that
+    the two branches fanning out from ``search_orchestrator`` were isolated from
+    each other. They are not: LangGraph runs a superstep's sync nodes
+    sequentially, and ``keyword_search`` always goes first - so the write landed
+    in Qdrant before ``semantic_search_node`` read, and semantic search
+    retrieved the patents keyword search had just found. On a cold or small
+    corpus that made the semantic branch a pure echo, and Result Fusion then
+    credited those echoes from *both* branches, ranking them above patents only
+    one branch found (see ``ranking.reciprocal_rank_fusion``).
+
+    Placing the write downstream of the join makes read-before-write a property
+    of the graph's shape rather than of the scheduler's ordering, so it cannot
+    silently regress if node ordering or LangGraph's execution model changes.
+
+    Only ``keyword_patents`` is indexed: ``semantic_patents`` came *out* of
+    Qdrant and is already there.
+
+    Raises:
+        Exception: whatever the embedding call or Qdrant client raises. No
+            ``except`` - an unreachable Qdrant fails the whole request rather
+            than silently shipping a result whose corpus never grew.
+    """
+    patents = state["keyword_patents"]
+    if patents:
+        store_patents(patents)
+    return {}
