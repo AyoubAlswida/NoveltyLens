@@ -52,7 +52,18 @@ class GraphState(TypedDict, total=False):
 
     # --- Keyword Search (P1.3) ---
     keyword_patents: list[PatentRecord]
-    """Deduplicated results from the keyword providers in ``SOURCES``."""
+    """Deduplicated results from the keyword providers in ``SOURCES``, enriched
+    with full text. These are the patents this request actually reasons about."""
+
+    index_only_patents: list[PatentRecord]
+    """Extra provider results that are indexed but never shown.
+
+    Providers return more per call than the pipeline enriches (see
+    ``search.search.FETCH_PER_QUERY``), and the surplus used to be discarded.
+    It is carried here instead so ``index_patents_node`` can grow the Qdrant
+    corpus with it. Deliberately kept out of ``candidates``: these records were
+    never enriched, so promoting them would mean ranking abstract-only patents
+    against full-text ones and reporting the difference as similarity."""
 
     # --- Ranking (P1.4, replaced in P3.6) ---
     comparisons: list[ComparisonResult]

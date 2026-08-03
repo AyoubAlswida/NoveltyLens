@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
-type Screen = "submit" | "running" | "report" | "history";
+type Screen = "submit" | "running" | "report";
 
 const EXAMPLE_DESC =
   "A portable, refillable drinking-water bottle that automatically sterilizes its contents with an integrated UV-C emitter and filters particulates through a replaceable graphene-oxide membrane. A flow-rate sensor in the cap detects use and triggers a self-cleaning sterilization cycle without manual activation.";
@@ -285,42 +285,6 @@ async function streamAnalysis(payload: object, onEvent: (event: any) => void) {
   }
 }
 
-/** Maps a GET /api/history entry (backend/reports.py's list_history) into
- * the same AnalysisReport shape a live run produces, so ReportScreen and
- * HistoryScreen don't need to know the difference. History entries have no
- * `title`/`date` from the backend (see reports.py) -- they carry the real
- * `description`/`created_at` instead, so the date shown is when the search
- * actually happened, not "now". */
-function buildHistoryReport(entry: any): AnalysisReport {
-  const desc: string = entry.description || "";
-  const mappedPatents: DynamicPatent[] = (entry.patents ?? []).map((patent: any) => ({
-    num: patent.num || "Unknown publication",
-    title: patent.title || "Untitled patent record",
-    pct: Math.round(patent.pct),
-    risk: patent.risk,
-    rationale: patent.rationale || "No detailed rationale was returned for this record.",
-    source: patent.source || "Patent database",
-  }));
-
-  return {
-    title: desc.length > 50 ? desc.slice(0, 47) + "..." : desc,
-    date: new Date(entry.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
-    concepts: entry.concepts ?? [],
-    patents: mappedPatents,
-    top_score: Math.round(entry.top_score ?? 0),
-    verdict: entry.verdict ?? "Strong",
-    recommendations: entry.recommendations ?? [],
-    query_count: entry.query_count ?? 0,
-  };
-}
-
-async function fetchHistory(): Promise<AnalysisReport[]> {
-  const response = await fetch(`${API_BASE_URL}/api/history`);
-  if (!response.ok) throw new Error(`History fetch failed: ${response.status}`);
-  const data = await response.json();
-  return data.map(buildHistoryReport);
-}
-
 export default function App() {
   const [screen, setScreen] = useState<Screen>("submit");
   const [desc, setDesc] = useState(EXAMPLE_DESC);
@@ -334,21 +298,6 @@ export default function App() {
   const [phaseMessages, setPhaseMessages] = useState<Partial<Record<(typeof PHASE_ORDER)[number], string>>>({});
 
   const [reportData, setReportData] = useState<AnalysisReport | null>(null);
-  const [history, setHistory] = useState<AnalysisReport[]>([]);
-
-  async function refreshHistory() {
-    try {
-      setHistory(await fetchHistory());
-    } catch (err) {
-      console.error("❌ Failed to load history:", err);
-    }
-  }
-
-  // Search history is persisted server-side (ticket P2.3) and survives a
-  // backend restart -- load it once on mount instead of starting empty.
-  useEffect(() => {
-    refreshHistory();
-  }, []);
 
   async function startRunning() {
     console.log("🚀 Starting analysis request loop...");
@@ -401,9 +350,6 @@ export default function App() {
       }
       setReportData(finalReport);
       setScreen("report");
-      // The backend already persisted this run before sending "result" --
-      // refresh from there instead of appending our own client-side guess.
-      refreshHistory();
 
     } catch (err) {
       console.error("❌ Link Error:", err);
@@ -461,7 +407,6 @@ export default function App() {
 
         <nav style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%", alignItems: "center" }}>
           <RailIcon active={screen === "submit" || screen === "running" || screen === "report"} icon="✎" label="New search" onClick={() => setScreen("submit")} />
-          <RailIcon active={screen === "history"} icon="≣" label="History" onClick={() => setScreen("history")} />
         </nav>
 
         <div style={{ flex: 1 }} />
@@ -475,12 +420,6 @@ export default function App() {
         {screen === "running" && <RunningScreen phaseIdx={phaseIdx} phaseMessages={phaseMessages} />}
         {screen === "report" && (
           <ReportScreen onBack={() => setScreen("submit")} data={reportData} />
-        )}
-        {screen === "history" && (
-          <HistoryScreen historyList={history} onSelectReport={(selectedReport) => {
-            setReportData(selectedReport);
-            setScreen("report");
-          }} />
         )}
       </main>
     </div>
@@ -793,47 +732,6 @@ function ReportScreen({ onBack, data }: { onBack: () => void; data: AnalysisRepo
     )}
   </ol>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function HistoryScreen({ historyList, onSelectReport }: { historyList: AnalysisReport[]; onSelectReport: (report: AnalysisReport) => void }) {
-  return (
-    <div style={{ flex: 1, overflowY: "auto", padding: "40px 48px" }}>
-      <h1 style={{ color: COLORS.textPrimary, marginBottom: 8, fontSize: 26, fontFamily: "'Space Grotesk', sans-serif" }}>Search history</h1>
-      <p style={{ color: COLORS.textSecondary, fontSize: 14, marginBottom: 32 }}>Sessions and reports from this workspace, most recent first.</p>
-
-      <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 2px rgba(16,24,25,0.04)" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 140px 120px 100px", padding: "10px 24px", borderBottom: `1px solid ${COLORS.border}`, gap: 16 }}>
-          {["INVENTION", "DATE", "TOP MATCH", "NOVELTY"].map((h) => (
-            <span key={h} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: COLORS.textMuted, letterSpacing: "0.14em" }}>{h}</span>
-          ))}
-        </div>
-
-        {historyList.length === 0 ? (
-          <div style={{ padding: "24px", color: COLORS.textSecondary, fontSize: 13, textAlign: "center" }}>No searches logged.</div>
-        ) : (
-          historyList.map((row, i) => {
-            const vc = verdictColor(row.verdict);
-            return (
-              <button
-                key={i}
-                onClick={() => onSelectReport(row)}
-                style={{ display: "grid", gridTemplateColumns: "1fr 140px 120px 100px", width: "100%", padding: "14px 24px", background: "transparent", border: "none", borderBottom: i < historyList.length - 1 ? `1px solid ${COLORS.border}` : "none", cursor: "pointer", textAlign: "left", gap: 16, alignItems: "center", transition: "background 0.15s" }}
-                onMouseEnter={(e) => (e.currentTarget as HTMLButtonElement).style.background = COLORS.inputBg}
-                onMouseLeave={(e) => (e.currentTarget as HTMLButtonElement).style.background = "transparent"}
-              >
-                <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 14, color: COLORS.textPrimary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {row.title}
-                </span>
-                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: COLORS.textMuted, letterSpacing: "0.04em" }}>{row.date}</span>
-                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: 14, color: vc }}>{row.top_score}%</span>
-                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: vc, letterSpacing: "0.06em", fontWeight: 600 }}>{row.verdict}</span>
-              </button>
-            );
-          })
-        )}
       </div>
     </div>
   );

@@ -20,6 +20,7 @@ single ``error`` event.  That is the whole design - there is no point at which a
 partial result can be assembled and sent.
 """
 
+from functools import lru_cache
 from typing import Iterator, Optional
 
 from langgraph.graph import END, START, StateGraph
@@ -49,8 +50,20 @@ def _route_after_validate(state: GraphState) -> str:
     return "rank" if state["candidates"] else END
 
 
+@lru_cache(maxsize=1)
 def build_graph():
-    """Compile the novelty-search StateGraph."""
+    """Compile the novelty-search StateGraph.
+
+    Cached: the topology is a constant, so recompiling it per request was pure
+    per-request work with an identical result. The compiled graph holds no
+    request state - all of that lives in the ``GraphState`` passed to
+    ``stream()`` - so one instance is safely shared across concurrent requests.
+
+    Nodes are referenced by function object, and each node resolves its
+    collaborators (``understand_invention``, ``search_all_providers_strict``, …)
+    from module globals at call time, so ``unittest.mock.patch`` on those names
+    still takes effect against a graph compiled before the patch.
+    """
     builder = StateGraph(GraphState)
     builder.add_node("understand", understand_node)
     builder.add_node("expand_queries", expand_queries_node)
@@ -144,10 +157,10 @@ def build_result_event(state: GraphState) -> dict[str, object]:
 def run_graph_pipeline(
     description: str, claims: Optional[str]
 ) -> Iterator[dict[str, object]]:
-    """Run the graph, yielding the same SSE event sequence as ``_run_pipeline``.
+    """Run the graph, yielding the SSE event sequence ``server.py`` frames.
 
-    Signature-compatible with the legacy generator so ``server.py`` can select
-    between them on the ``PIPELINE`` flag alone.
+    The only pipeline: the legacy generator this was once signature-compatible
+    with, and the ``PIPELINE`` flag that chose between them, are both gone.
     """
     graph = build_graph()
     final_state: GraphState = {}

@@ -4,15 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Keeping this file current
 
-This project is mid-migration from the linear pipeline described below to the LangGraph
-multi-agent architecture proposed in `docs/LangGraph-Multi-Agent-Architecture-Plan.docx`
-(diagrams in `docs/assets/`). **When you implement any part of that plan** — a
-`backend/graph/` package, `backend/embeddings.py`, `backend/search/vector_store.py`, the
-`PIPELINE` flag going live, PostgreSQL persistence, etc. — update the Architecture
-section below in the same edit so it describes what the code actually does, not the
-pre-migration pipeline. More generally: if you add or remove a major dependency, data
-source, or persistence layer, or change the SSE event contract, reflect it here before
-you finish the task, not as an afterthought.
+The LangGraph migration described in `docs/LangGraph-Multi-Agent-Architecture-Plan.docx`
+(diagrams in `docs/assets/`) is **complete**, and the linear pipeline it replaced has been
+deleted. Keep the Architecture section below describing what the code actually does: if
+you add or remove a major dependency, data source, or persistence layer, or change the SSE
+event contract, reflect it here before you finish the task, not as an afterthought.
+
+**Verify against the source before trusting a paragraph here.** This file has gone stale
+against the code more than once (see the SSE contract note below for one that survived a
+full cycle). Where this file and the code disagree, the code wins and this file is the bug.
 
 ## What this project is
 
@@ -27,9 +27,8 @@ and a Vite/React frontend — with no shared tooling; each is run and developed 
 **Backend** (from `backend/`):
 - Install deps: `pip install -r requirements.txt`
 - Run the API: `python server.py` — serves on `http://127.0.0.1:8001` (hardcoded host/port in `server.py`'s `__main__` block)
-- Apply Postgres migrations: `python migrate.py` (needs `docker compose up -d --wait` from the repo root first; safe to re-run, no-ops if already applied). Only matters if you're running `PIPELINE=legacy` — see below.
-- Run the tests: `python -m pytest` from `backend/` (config in `backend/pytest.ini`, which sets `pythonpath = .` because the modules import each other flat, e.g. `from config import settings`). The suite is `backend/tests/`. `backend/tests/conftest.py` stubs embeddings, Qdrant, and (as of ticket P2.2) Postgres (all autouse, every test) alongside the existing `_llm_chat`/`SOURCES` stubs — `compare.py`'s ranking, the semantic-search path, and the legacy pipeline's new `connect()` call are all on the happy path now, not just their own tickets' tests, so the suite still needs no credentials, no network calls, and no running database. `tests/fakes.py`'s `FakePostgresDB` recognizes exactly the SQL `cache.py`/`reports.py` issue, the same narrow-scope approach `FakeQdrantClient` already used. `test_pipeline_parity.py` covers legacy↔LangGraph parity (no longer byte-identical on the happy path — see below); `test_phase3_agents.py` covers Semantic Search, Fusion, and Validation individually; `test_search_cache.py` covers the P2.2 cache (a repeat query must not call a provider twice, and a later enrichment write must not be clobbered by an earlier, pre-enrichment cache write for the same patent). This is not yet the full P3.8 failure-path matrix (LLM failure, single-provider failure, Qdrant/embeddings outage, zero-similarity are covered for the parts that existed pre-Phase-3; a dedicated outage-injection suite for the new agents is still open).
-- Still no lint config and no `pyproject.toml`. `pytest-asyncio` remains unused — the tests are all synchronous.
+- Run the tests: `python -m pytest` from `backend/` (config in `backend/pytest.ini`, which sets `pythonpath = .` because the modules import each other flat, e.g. `from config import settings`). The suite is `backend/tests/`. `backend/tests/conftest.py` stubs embeddings and Qdrant (autouse, every test) alongside the per-module `_llm_chat`/`SOURCES` stubs — `compare.py`'s ranking and the semantic-search path are unconditionally on the happy path, so the suite needs no credentials, no network calls, and no running services. `test_pipeline_contract.py` covers the SSE phase vocabulary, the terminal payload shape, and the zero-tolerance failure behaviors; `test_sse_transport.py` covers the same contract as real `data:` frames through `server.py`; `test_phase3_agents.py` covers Semantic Search, Fusion, and Validation individually. Still open: a dedicated outage-injection suite for the Phase 3 agents (the old P3.8 matrix).
+- Still no lint config and no `pyproject.toml`.
 
 **Frontend** (from `frontend/`):
 - Install deps: `npm install`
@@ -38,108 +37,106 @@ and a Vite/React frontend — with no shared tooling; each is run and developed 
 - No lint, test, or typecheck script is defined, and there is no `tsconfig.json` — `npm run build` (Vite) is the closest thing to a correctness check today.
 
 **Local infrastructure** (from the repo root): `docker compose up -d --wait` starts
-PostgreSQL 17.10 (`127.0.0.1:5432`) and Qdrant 1.18.3 (`127.0.0.1:6333` HTTP, `6334`
-gRPC), both with persisted named volumes and healthchecks, so `--wait` returns only once
-both are actually serving. **PostgreSQL is read by the legacy pipeline only, as of ticket
-P2.2** — `_run_pipeline` opens a connection as its first action and fails the request
-cleanly if it's unreachable, so `PIPELINE=legacy` now requires a running, migrated
-Postgres; `PIPELINE=langgraph` (the default) does not touch Postgres at all. **Qdrant runs
-the other way round**: it's read/written by the graph's `keyword_search`/`semantic_search`
-nodes (`backend/search/vector_store.py`), so it's `PIPELINE=langgraph` — the default — that
-requires a Qdrant-reachable environment to run at all, not just for local development
-convenience; legacy doesn't touch Qdrant. The backend and frontend are not containerized.
+Qdrant 1.18.3 (`127.0.0.1:6333` HTTP, `6334` gRPC) with a persisted named volume and a
+healthcheck, so `--wait` returns only once it is actually serving. **Qdrant is required to
+run the backend at all**, not just for local convenience: the graph's `semantic_search`
+node reads it and `index_patents` writes it, and neither has a fallback path. The corpus
+it holds is the only persistent state this project keeps.
+
+PostgreSQL used to be the second service here, backing the legacy pipeline's patent
+cache, query cache, and stored reports. **Both PostgreSQL and the legacy pipeline have
+been removed** — along with `cache.py`, `reports.py`, `db.py`, `migrate.py`,
+`migrations/`, the `PIPELINE` flag, and `GET /api/history`. There is one pipeline now and
+no relational database. If you are adding caching back, it is a fresh design decision, not
+a restoration; the deleted code is in git history.
 
 Keep the Qdrant image version in step with `qdrant-client` in `requirements.txt` — the
 client warns when the server is more than a minor version away.
 
-**Running the app**: start both processes manually in separate terminals. There is no
-root script that runs them together, and no README. The frontend calls the backend at a
-hardcoded absolute URL (`http://127.0.0.1:8001`), so the backend must be running on that
-exact host/port. The Docker services are not required to run the app as it exists today.
+**Qdrant capacity.** Vectors live in RAM (1024-dim float32 = 4 KB/point): ~0.04 GB per
+10k patents, ~0.4 GB per 100k, ~3.8 GB per 1M. The container is capped at `mem_limit: 2g`
+so a runaway corpus fails in one place instead of taking the host down. **Disk is the
+faster-growing number**: `on_disk_payload` is true and the payload stores each patent's
+*full* text (~273 KB average) even though only the first 600 words are embedded — roughly
+2.7 GB of disk per 10k patents. Growth is bounded by *distinct* patents, since
+`store_patents` keys on `uuid5(patent.id)` and re-indexing overwrites rather than
+duplicating.
+
+**Running the app**: start both processes manually in separate terminals, with Qdrant up.
+There is no root script that runs them together, and no README. The frontend calls the
+backend at a hardcoded absolute URL (`http://127.0.0.1:8001`), so the backend must be
+running on that exact host/port.
 
 **Env vars** (backend, via `backend/.env` — see `backend/.env.example`): `HF_TOKEN`
-(HuggingFace router auth, required for all LLM calls), `SERPAPI_KEY` (Google Patents),
-`EPO_CONSUMER_KEY` / `EPO_CONSUMER_SECRET` (EPO OPS OAuth2), `QDRANT_URL` /
-`QDRANT_API_KEY` (required for `PIPELINE=langgraph`, the default), and `DATABASE_URL`
-(required for `PIPELINE=legacy` only, as of ticket P2.2). Optional: `LLM_API_URL`,
-`LLM_MODEL`, `EMBEDDING_MODEL`. All the service URLs default to values matching the local
-Compose services.
-
-`PIPELINE` selects which pipeline serves requests. **It defaults to `langgraph` as of
-ticket P1.5** — the LangGraph graph is what serves a request unless you say otherwise.
-`backend/config.py` raises `ConfigError` at import time unless the value is exactly
-`legacy` or `langgraph`, so a typo fails at startup instead of silently running the wrong
-pipeline. `server.py` resolves `_active_pipeline` once at import from that value, and
-`backend/graph/` is imported only when `langgraph` is selected, so `PIPELINE=legacy`
-remains a working escape hatch even if the `langgraph` install is broken.
+(HuggingFace router auth, required — backs both the LLM calls and the embedding calls),
+`SERPAPI_KEY` (Google Patents, required — it is the only enabled provider), and
+`QDRANT_URL` / `QDRANT_API_KEY`. `EPO_CONSUMER_KEY` / `EPO_CONSUMER_SECRET` are read but
+currently unused (the EPO provider is commented out — see below). Optional:
+`LLM_API_URL`, `LLM_MODEL`, `EMBEDDING_MODEL`, and `TRACE=0` to silence the per-step trace
+`backend/tracing.py` prints to stdout on every request (it is **on by default**).
 `PATENTSVIEW_API_KEY`/`uspto_api_key` remains dead code — see the USPTO note below.
 
 ## Architecture
 
-### Backend: two pipelines, selected by the `PIPELINE` flag
+### Backend: one pipeline
 
-`psycopg[binary]`, `yoyo-migrations`, and `rank_bm25` sit in `backend/requirements.txt` but
-are **imported nowhere** — they are pre-staged for Phase 2. `sentence-transformers` is
-listed but also unused *by design*: `backend/embeddings.py` calls a HuggingFace-**hosted**
-model over the network (see below), not a local `sentence-transformers` model — do not
-"fix" this by importing it. `langgraph` and `qdrant-client` are live and load-bearing.
-`scikit-learn` was removed from `requirements.txt` — `compare.py`'s TF-IDF fallback (the
-only thing that used it) is gone.
+`sentence-transformers`, `psycopg[binary]`, `yoyo-migrations`, `rank_bm25`, and
+`pytest-asyncio` have all been **removed from `backend/requirements.txt`** — the first was
+unused by design (`backend/embeddings.py` calls a HuggingFace-*hosted* model over the
+network, not a local one), the next three went with Postgres, and the last was never used
+because the tests are synchronous. Do not add `sentence-transformers` back to "fix"
+`embeddings.py`; it is deliberately a network call. `scikit-learn` was removed earlier —
+`compare.py`'s TF-IDF fallback, the only thing that used it, is gone. `langgraph` and
+`qdrant-client` are live and load-bearing.
 
-**`backend/graph/` serves requests now**; the legacy generator below runs only under
-`PIPELINE=legacy`. Legacy is nonetheless unchanged and must stay that way — it is the
-parity reference `backend/tests/` diffs the graph against, and the escape hatch if the
-graph misbehaves in production. Retiring it is a team decision, not a cleanup. The legacy
-flow is a single generator, `_run_pipeline` in `backend/server.py`, reached through
-`_active_pipeline` by both `POST /api/analyze/stream` (SSE) and `POST /api/analyze`
-(drains the same generator, returns only the final JSON). It runs, in strict sequence:
+**`backend/graph/` is the whole backend.** `backend/server.py` is pure transport: it owns
+the HTTP surface and the SSE framing and nothing else, calling `run_graph_pipeline`
+directly. The legacy `_run_pipeline` generator, the `_active_pipeline` indirection, and
+the `PIPELINE` flag that chose between them are gone; `backend/config.py` no longer has a
+`pipeline` or `database_url` setting and no longer raises `ConfigError` (the class remains
+for future use).
 
-1. `understand_invention` (`backend/llm.py`) — one Llama call that returns concepts, keywords, and exactly 5 search queries (the prompt also asks for synonyms; nothing downstream reads them).
-2. `search_patents` (`backend/search/search.py`) — fans every query out across all providers in `SOURCES` (currently Google Patents + EPO only; USPTO was evaluated and is intentionally **out of scope** — no API access), isolates per-provider failures, dedupes by uppercased patent ID.
-3. `enrich_with_full_text` (`backend/search/google.py`) — fetches full description + claims text for Google-sourced results via the Details API (records with no `serpapi_id`, i.e. non-Google sources, are left with an empty `full_text` and downstream code falls back to the abstract). Feeds richer input to step 4 than an abstract alone.
-4. `compare_invention_to_patents` (`backend/compare.py`) — embedding-based cosine similarity (chunked, via `backend/embeddings.py`). Raises on failure; there is no TF-IDF fallback.
-5. `analyze_all_matches` (`backend/llm.py`) — one batched Llama call producing a rationale per patent plus shared recommendations (batched deliberately, to stay friendly to provider rate limits).
-
-Each stage `yield`s a progress event before/after it runs; `server.py` wraps these as
-`data: <json>\n\n` SSE frames.
-
-**The SSE contract spans `backend/server.py` and `frontend/src/app/App.tsx` again, for
-real this time.** An earlier version of this section said the frontend didn't consume the
-SSE stream at all and just faked progress with a `setInterval` timer — that was true once,
-but a prior edit here went stale against the code (per this file's own "verify against the
-source" rule) and nobody caught it. As of the current `App.tsx`: `streamAnalysis()` reads
-`POST /api/analyze/stream`'s real body via `fetch` + `getReader()` (not `EventSource`,
-which can't carry a POST body), and `PHASE_ORDER` (top of the file) is a real, maintained
-mirror of `backend/graph/events.py`'s `PHASES` tuple — the comment directly above it says
-so. If you find this paragraph disagreeing with `App.tsx` again, trust `App.tsx` and fix
-this file, not the other way around. Every event has a `type` of `progress` | `result` |
-`error`. `progress.phase` is one of the values in `PHASES` (nine now — see below); an
-unrecognized phase does not error client-side, it just never advances `phaseIdx` past it
-(`App.tsx`'s `indexOf` returns -1, silently ignored) — so a phase-vocabulary change with no
-matching frontend update is still a silent bug, not a loud one. The stream must end with
-exactly one `result` event (data shape: `patents[].{num,title,pct,risk,rationale,source}`
-plus `title`, `date`, `concepts`, `top_score`, `verdict`, `recommendations`, `query_count`)
-or a client reading the stream would throw.
+**The SSE contract spans `backend/server.py` and `frontend/src/app/App.tsx`.** An earlier
+version of this section said the frontend didn't consume the SSE stream at all and just
+faked progress with a `setInterval` timer — that was true once, but a prior edit here went
+stale against the code (per this file's own "verify against the source" rule) and nobody
+caught it. As of the current `App.tsx`: `streamAnalysis()` reads `POST /api/analyze/stream`'s
+real body via `fetch` + `getReader()` (not `EventSource`, which can't carry a POST body),
+and `PHASE_ORDER` (top of the file) is a real, maintained mirror of
+`backend/graph/events.py`'s `PHASES` tuple — the comment directly above it says so. If you
+find this paragraph disagreeing with `App.tsx` again, trust `App.tsx` and fix this file,
+not the other way around. Every event has a `type` of `progress` | `result` | `error`.
+`progress.phase` is one of the nine values in `PHASES`; an unrecognized phase does not
+error client-side, it just never advances `phaseIdx` past it (`App.tsx`'s `indexOf`
+returns -1, silently ignored) — so a phase-vocabulary change with no matching frontend
+update is a silent bug, not a loud one. The stream must end with exactly one `result`
+event (data shape: `patents[].{num,title,pct,risk,rationale,source}` plus `title`, `date`,
+`concepts`, `top_score`, `verdict`, `recommendations`, `query_count`) or a client reading
+the stream would throw.
 
 ### `backend/graph/` — the LangGraph pipeline
 
-**This is the default pipeline** — it serves every request unless `PIPELINE=legacy` says
-otherwise. As of Phase 3 it genuinely branches and does more than legacy on the happy
-path, so it is **no longer byte-identical to legacy's SSE stream** the way Phase 1 left
-it — see the divergence table below. `keyword_search` and `semantic_search` both run off
-`search_orchestrator` and converge at `index_patents`, which feeds `fuse`, then
-`validate`, then `rank`.
+**This is the only pipeline** — it serves every request. `keyword_search` and
+`semantic_search` both run off `search_orchestrator` and converge at `index_patents`,
+which feeds `fuse`, then `validate`, then `rank`. `build_graph()` is `lru_cache`d: the
+topology is a constant and the compiled graph holds no request state, so it is compiled
+once and shared.
 
 **The two search branches are not isolated from each other — do not assume they are.**
-LangGraph runs a superstep's sync nodes *sequentially*, and `keyword_search` always runs
-first (verified directly; it is not registration-order dependent). Any side effect one
-branch performs is visible to the other. That is why Qdrant indexing lives in its own
+LangGraph runs a superstep's sync nodes *sequentially*, so whichever branch runs first has
+its side effects visible to the other. That is why Qdrant indexing lives in its own
 `index_patents` node behind the join instead of at the end of `keyword_search`, where it
 used to be: with the write inside `keyword_search`, semantic search retrieved the patents
 keyword search had just indexed, so on a cold or small corpus the semantic branch was a
 pure echo of the keyword branch, and RRF then credited those echoes from *both* branches
 and ranked them above patents only one branch found. If you add a node that writes shared
 external state, put the write behind the join too.
+
+**Do not depend on which branch runs first.** An earlier version of this section asserted
+`keyword_search` always does, "verified directly" — a timed run of the real pipeline showed
+the opposite (semantic completed at 4.7s, keyword not until 18.1s). It does not matter,
+and that is exactly the point of putting the write behind the join: the guarantee comes
+from the graph's topology, not from the scheduler.
 
 - `state.py` — `GraphState`, the `TypedDict` every node reads and writes. It carries the
   `backend/models.py` dataclasses rather than re-flattening them. `semantic_patents`,
@@ -156,10 +153,13 @@ external state, put the write behind the join too.
 
 - `understanding.py` — Query Understanding + Query Expansion (P1.2), over `llm.py`
   unchanged. Contains no `except`: a failed or malformed LLM response fails the request.
-- `searching.py` — Search Orchestrator, Keyword Search, and Semantic Search. Keyword search
-  keeps its one deliberate behavior change from legacy: one provider failing fails the
-  whole request, via `search_all_providers_strict` in `backend/search/search.py` (added
-  alongside `search_patents`, which is unchanged and still backs legacy). It also enriches
+- `searching.py` — Search Orchestrator, Keyword Search, and Semantic Search. One provider
+  failing fails the whole request, via `search_all_providers_strict` in
+  `backend/search/search.py`. That function dispatches its (query, provider) calls
+  **concurrently** but collects results in query order — `merge_patents` keeps the first
+  record it sees for an id, so collecting in completion order would let network timing
+  decide which copy of a duplicate survives. It returns a `KeywordSearchResults`
+  named tuple, **not a list** — see the corpus-growth note below. It also enriches
   results with full text (`enrich_with_full_text`, skipped entirely when nothing was
   found) — no `except`, so a failure there fails the whole request. Indexing into Qdrant
   (`store_patents`) is **not** part of keyword search; it is `index_patents_node`, which
@@ -190,28 +190,24 @@ external state, put the write behind the join too.
   `verdict_for`, which build the `patents[]` entries and the novelty verdict.
 
 - `pipeline.py` — graph assembly, the terminal `result` event, and `run_graph_pipeline`,
-  the generator `server.py` consumes. Signature-compatible with `_run_pipeline` so the
-  flag can swap them. **It catches nothing**: a raising node propagates out to
-  `server.py`'s existing wrapper, which emits one `error` event. There is deliberately no
-  point at which a partial result could be assembled and sent. The single "found anything?"
-  routing check now runs after `validate` (not right after `keyword_search`, since both
-  search branches and validation can each reduce the candidate set to zero).
+  the generator `server.py` consumes. **It catches nothing**: a raising node propagates out
+  to `server.py`'s wrapper, which emits one `error` event. There is deliberately no point
+  at which a partial result could be assembled and sent. The single "found anything?"
+  routing check runs after `validate` (not right after `keyword_search`, since both search
+  branches and validation can each reduce the candidate set to zero).
 
 Nodes emit progress through LangGraph's custom stream writer, which preserves call
-ordering — the same interleaving the legacy generator got from `yield`.
+ordering.
 
-**Where the two pipelines diverge.** Since LangGraph is now the default, the right-hand
-column is what users actually get — the left is what `PIPELINE=legacy` falls back to:
+**How each failure behaves:**
 
-| Condition | Legacy | LangGraph |
-|---|---|---|
-| One search provider fails | narrows the corpus, returns a confident verdict | `PatentSearchError` |
-| All providers fail | one `error` event with a friendly message | `PatentSearchError`, wrapper emits `error` |
-| Zero keyword results | canned recommendation | identical report, but `recommendations: []` |
-| Qdrant unreachable | n/a — legacy has no semantic search | raises, request fails |
-| LLM call fails (understand/analyze) | raises (already) | raises |
-| Validation LLM call fails | n/a — legacy has no validation step | raises, request fails |
-| **Happy path** | keyword-only corpus, TF-IDF-free embedding score against it | broader corpus (keyword + semantic, fused, LLM-filtered), same scorer — **result contents can differ, this is intentional** |
+| Condition | Behavior |
+|---|---|
+| Any search provider fails | `PatentSearchError`, wrapper emits one `error` event |
+| Zero keyword results | honest report with `recommendations: []` |
+| Qdrant unreachable | raises, request fails |
+| LLM call fails (understand / validate / analyze) | raises, request fails |
+| Embedding call fails | raises, request fails |
 
 Zero results is **not** an error — reaching every provider and finding nothing is a
 genuine answer, and so is validation filtering the fused set down to nothing. The graph
@@ -220,11 +216,9 @@ skips ranking and explanation in either case (running them would emit
 with real `concepts` and `query_count`, a measured `top_score` of 0, and an **empty**
 recommendation list.
 
-The Phase 1 parity tests that asserted the two streams were byte-identical on the happy
-path (`test_pipeline_parity.py`) were rewritten for this: they now assert the graph emits
-every phase legacy does, plus exactly `semantic_search`/`fuse`/`validate`, and that the
-terminal payload's *shape* still matches — not its values, which are now allowed to
-differ by design.
+`test_pipeline_contract.py` (formerly `test_pipeline_parity.py`, which diffed this
+pipeline against legacy) asserts these directly now rather than as a diff: the phase
+vocabulary and ordering, the terminal payload's full key set, and each failure row above.
 
 ### LLM: Llama via HuggingFace Router, not a local model
 
@@ -238,6 +232,35 @@ briefly deleted `analyze_all_matches` and replaced it with a silent-fallback
 `rationale_for_match`/`recommendations_for` pair — if you find yourself reintroducing
 either of those, stop), and `validate_relevance` (Phase 3's Validation agent, same
 batched-call-with-no-`except` shape as `analyze_all_matches`).
+
+**All three go through `_llm_json`, not `_llm_chat` directly, and none of them parse JSON
+themselves.** Two production failures traced to one cause worth understanding before
+touching this file:
+
+- **`finish_reason == "length"` now raises `LLMTruncatedError`.** The provider reports
+  truncation and the old code discarded that field, so a response cut off at `max_tokens`
+  surfaced as a baffling `JSONDecodeError` pointing at a syntax problem in the middle of
+  the document. Worse, when the cut happened to land after a complete element, the old
+  greedy `\{.*\}` regex matched to the *last* closing brace and **parsed it successfully** —
+  verified live at `max_tokens=120`. `understand_invention` would have returned two search
+  queries instead of five and reported success. That regex is gone; the whole cleaned
+  response is parsed. Truncation is deliberately **not retried** — the same prompt at the
+  same ceiling truncates again.
+- **`max_tokens` scales with the workload.** `analyze_all_matches` used a flat 3200 while
+  asking for 3-5 sentences per patent plus ten-plus recommendations; at the `MAX_RESULTS`
+  cap of 15 that genuinely needs ~2700, close enough that normal variation truncated it.
+  It observably did, on a real 14-match run. Now `1200 + 250 * count`; `validate_relevance`
+  scales the same way.
+
+Also: requests set `response_format: {"type": "json_object"}` (verified accepted by the HF
+Router + Novita endpoint — turn it off with `json_object=False` if you point `LLM_API_URL`
+at a provider that rejects it), and a malformed-but-complete response is **re-asked** once
+at a nudged temperature, never repaired. Repairing would mean inventing content no model
+produced. `tests/test_llm_json_robustness.py` pins all of it.
+
+The `understand_invention` prompt no longer asks for `synonyms`. Nothing has ever read that
+field, and being the largest and most deeply nested part of the response it was the most
+likely thing to push it over the limit.
 
 ### Embeddings and Qdrant: hosted, not local, corpus grows from live traffic
 
@@ -261,6 +284,40 @@ go through `client.query_points(...).points` — **not** `client.search(...)`, w
 version, so a fresh install always gets current `qdrant-client`; if you see
 `'QdrantClient' object has no attribute 'search'`, that's why.
 
+**The corpus grows from the free surplus, not just from what the report shows.** SerpAPI
+bills per *call*, not per result, and its Google Patents engine returns 10 for the price
+of one — `search_google` was requesting 10 and discarding all but `RESULTS_PER_QUERY`
+(4), throwing away ~30 already-paid-for patents per search. `search_all_providers_strict`
+now splits them (`FETCH_PER_QUERY = 10`):
+
+- **`candidates`** — top 4 *per query*, taken per-call rather than off the head of the
+  flattened list, so one query cannot monopolize the set and silently drop the
+  perspectives the other four generated queries exist to cover. These get enriched
+  (a paid Details credit each), fused, validated, ranked, and shown.
+- **`index_only`** — the remaining ~30. Never enriched, never ranked, never displayed;
+  written straight to Qdrant so a *later* search can find them semantically. Corpus
+  growth per search goes from ~20 to ~50 patents at **zero extra provider cost**.
+
+`index_patents_node` filters `index_only` through `vector_store.known_ids` first. That is
+not just an embedding-cost saving: `index_only` records are abstract-only, and a patent
+stored with enriched full text by an earlier request would otherwise have its richer
+vector overwritten by a poorer one every time it reappeared as a cheap extra — the corpus
+would degrade the more the tool was used. Enriched `keyword_patents` are always rewritten,
+since that copy can only improve what is stored.
+
+**Retrieval is asymmetric, deliberately.** `semantic_search` embeds the query with
+`QUERY_INSTRUCTION` (`"Represent this sentence for searching relevant passages: "`)
+prepended; `store_patents` embeds documents with no prefix. That is what
+BAAI/bge-large-en-v1.5 was trained for — the prefix is a retrieval instruction to the
+model, not content. Do not "make these consistent" by prefixing documents too: the shared
+prefix would pull every stored vector toward the same region and flatten the very gap
+`MIN_SIMILARITY_SCORE` has to cut through. `tests/test_phase3_agents.py` pins both halves.
+The prefix is applied to queries only and does **not** require re-indexing an existing
+collection, since document vectors are unchanged by it. Note `tests/fakes.py`'s
+`fake_embed_texts` strips the prefix before hashing — a bag-of-words double would score
+its five content words as ordinary query terms and dilute the real ones, an artifact of
+the stub that production doesn't have (same reasoning as that module's `_STOPWORDS`).
+
 The query also passes `score_threshold=MIN_SIMILARITY_SCORE` (0.6 — see the
 constant's docstring for the live-Qdrant probe it's based on: unrelated
 queries scored 0.51-0.56, related ones 0.68-0.76, against this project's own
@@ -282,24 +339,60 @@ call — no caching) both normalize into the `PatentRecord` dataclass in `backen
 Add new sources by writing a `(query: str, size: int) -> list[PatentRecord]` function and
 registering it in the `SOURCES` tuple in `backend/search/search.py`.
 
-That module has two orchestrators over the same `SOURCES` and `merge_patents`:
-`search_patents` (legacy, succeeds if any provider works) and
-`search_all_providers_strict` (LangGraph, any failure fails the request). They coexist
-until the team retires the legacy path; the strict one is the intended behavior.
+**EPO is currently commented out of `SOURCES`** — its OPS auth is being throttled — so
+Google Patents is the only live provider and `search_all_providers_strict` is effectively
+strict over one source. `search/epo.py` is intact and the credentials are still read from
+the environment; re-enabling it is uncommenting one line. Note its no-token-caching
+behavior will cost an extra OAuth round trip per call when it comes back.
+
+Enrichment (`enrich_with_full_text` in `search/google.py`) costs **two** outbound HTTP
+calls per patent: the Details API does not inline descriptions, only a `description_link`
+to a separate hosted HTML page. It runs 8-wide in a `ThreadPoolExecutor`; passing
+`include_description=False` halves the call count at the cost of claims-only text.
+
+**Never call `response.raise_for_status()` on a SerpAPI response.** SerpAPI authenticates
+by query parameter, and `requests`' `HTTPError` message embeds the full request URL —
+which `search_all_providers_strict` interpolates into `PatentSearchError` and `server.py`
+forwards verbatim to the browser as the SSE `error` detail. A plain 429 therefore printed
+a live API key into the user's devtools console; this was observed for real on an
+exhausted free-tier quota, not theorized. Use `search/google.py`'s `_raise_for_status`
+instead, and see `tests/test_secrets_do_not_leak.py`, which pins both the fix and the
+reason it is needed.
+
+SerpAPI's free plan allows **250 searches/month**, and one novelty search spends roughly
+25 of them (~5 searches + ~20 Details calls). That is about ten searches a month before
+the key stops working — worth knowing before running anything in a loop against it.
+
+### Both external quotas are small — check them before iterating
+
+This project runs on two metered free tiers and a full novelty search is expensive against
+both. Neither degrades gracefully, by design: an exhausted quota fails the request.
+
+- **SerpAPI** — 250 searches/month, ~25 per novelty search. `GET https://serpapi.com/account?api_key=...`
+  reports `plan_searches_left`. Exhaustion returns HTTP 429.
+- **HuggingFace Router** — a monthly included-credit allowance shared by *both* the LLM
+  calls and the embedding calls, so running out stops the pipeline at `understand`, well
+  before search. Exhaustion returns HTTP 402 with
+  `"You have depleted your monthly included credits"` at every request size, not just large
+  ones — so a sudden 402 is a billing state, not something a smaller `max_tokens` will fix.
+
+Check both before any benchmarking or repeated live runs; it is very easy to spend a
+month's allowance in an afternoon of testing.
 
 ### Frontend: one file, and most of its dependencies are unused
 
-`frontend/src/app/App.tsx` (~800 lines) is the entire application — all screens, state,
-API calls, and styling (hand-rolled inline styles). It imports `useState` and, as of
-ticket P2.3, `useEffect` (loads history on mount).
+`frontend/src/app/App.tsx` (~700 lines) is the entire application — all screens, state,
+API calls, and styling (hand-rolled inline styles). It imports `useState` only.
 **`frontend/src/app/components/ui/` (the shadcn/Radix component library) and most of
 `package.json`'s dependencies (MUI, recharts, react-dnd, react-router, etc.) are unused
 Figma-scaffolding leftovers** — don't assume they reflect the real UI or extend them
-without checking whether `App.tsx` actually uses them first. History (the fourth screen)
-is backed by `GET /api/history` (ticket P2.3 — see the PostgreSQL persistence section
-below) and survives a backend restart; `App.tsx`'s `history` state is populated by
-`refreshHistory()` on mount and again after each completed search, not accumulated
-client-side. Note `buildReport` (defined near the top of the file) is dead code as of the
+without checking whether `App.tsx` actually uses them first.
+
+There are **three** screens — `submit`, `running`, `report`. The History screen was
+removed along with `GET /api/history` and the Postgres layer behind it; it had never shown
+anything on the default path, since only the retired legacy pipeline ever wrote a run.
+Nothing persists client-side either, so a completed report is gone once you start another
+search. Note `buildReport` (defined near the top of the file) is dead code as of the
 Phase 3 frontend rework — `startRunning` builds the report inline instead — don't assume
 it's still on the call path.
 
@@ -312,100 +405,80 @@ three are gone — the empty case now says so plainly. Two lesser defaults remai
 for a patent with no id or title); they are reachable only if a provider returns a record
 the backend's `PatentRecord` normalization left blank.
 
-### PostgreSQL persistence: patent cache, query cache, and stored reports (Phase 2, legacy-path only)
+### Performance: where a request's time actually goes
 
-`backend/migrations/` holds yoyo-migrations SQL migrations (with matching `.rollback.sql`
-files). Apply them with `python backend/migrate.py` (rewrites `DATABASE_URL`'s
-`postgresql://` scheme to `postgresql+psycopg://` so yoyo selects the psycopg3 backend
-already pinned in `requirements.txt` — yoyo's default scheme resolves to psycopg2, which
-isn't installed). Four tables:
+Measured end-to-end on a live request (13 candidates, 20 keyword hits), **123.5s before
+the current round of fixes**. The progress events are emitted *before* their work, so
+reading the SSE timestamps naively misattributes every phase — the real breakdown was:
 
-- `patents` — a cache of `PatentRecord`, keyed by `id` normalized exactly as
-  `merge_patents()` dedupes (`patent.id.strip().upper()`). Carries `full_text`/
-  `serpapi_id` too, mirroring Phase 3's enrichment fields — a cached patent is exactly as
-  useful to `compare.py`'s embedding ranking as a freshly-fetched one, not a downgrade
-  back to title+abstract. `fetched_at` backs a 30-day TTL (`backend/cache.py`'s
-  `PATENT_TTL`).
-- `query_cache` — added in P2.2, not anticipated by P2.1: `search_google`/`search_epo`
-  have no ID-only lookup, only search-by-query, so an ID-keyed cache alone cannot skip a
-  live provider call. Maps a `.strip()`ped query string to the patent IDs it returned, 7-day
-  TTL (`QUERY_TTL`, shorter than `PATENT_TTL` since which patents match a query changes as
-  new ones publish). An exact repeat query hits this table and skips both the search
-  provider **and** `enrich_with_full_text`'s Details API calls (the latter via a
-  `not patent.full_text` guard in `search/google.py`) — measured directly: a repeat query
-  went from 4.68s live to 0.00s cached, identical patent IDs.
-- `search_runs` / `search_run_matches` — one row per completed `_run_pipeline` run and its
-  ranked matches, enough to rebuild the `result` SSE payload. Written by
-  `backend/reports.py`'s `save_report`, called from `_run_pipeline` **before** the `result`
-  event — a write failure raises, so the caller's exception handler emits `error` instead
-  of a `result` the report never actually backed. `search_run_matches.patent_id`
-  foreign-keys to `patents.id`; caching runs before every match, so the FK never dangles.
+| Work | Before | After (measured) |
+|---|---:|---:|
+| `compare.py` chunked embeddings | 55.6s | **12.8s** (small concurrent batches) |
+| `store_patents` → Qdrant indexing | 21.8s | **8.1s** (documents truncated) |
+| `enrich_with_full_text` (2 HTTP calls/patent, 8 workers) | 13.8s | 15-20s (unchanged; varies with provider) |
+| Keyword search (5 queries) | 13.4s | **2.5-3.6s** (queries concurrent) |
+| `analyze_all_matches` LLM | 10.3s | 9.5-12.3s (unchanged) |
+| `validate_relevance` LLM | 4.0s | 2.8s (unchanged) |
+| `understand_invention` LLM | 3.1s | 2.9s (unchanged) |
+| Semantic search | 1.6s | 1.9s (unchanged) |
+| **End to end** | **123.5s** | **~62s** |
 
-**This only covers the legacy pipeline.** `search_patents(conn, ...)` (legacy) gained the
-cache; `search_all_providers_strict` (LangGraph's `keyword_search_node`) did not, and
-`graph/pipeline.py`'s `run_graph_pipeline` opens no Postgres connection at all. Since
-`PIPELINE` defaults to `langgraph`, **out of the box this persistence layer does nothing
-for a real request** — `PIPELINE=legacy` is required to exercise it. Wiring caching and
-report persistence into the LangGraph path is unstarted, deliberately: it touches
-`graph/state.py` (the P1.1 schema) and `graph/searching.py`, both squarely in the "say so
-explicitly, schema owner reviews it" territory the team's own workflow calls out. Whoever
-picks that up should also know Qdrant's `patents` collection (see above) is a **separate**
-corpus from this one — Phase 3's semantic search does not read from or write to Postgres,
-so this cache is not what "grows" Qdrant.
+Three things worth knowing before optimizing further:
 
-Zero-tolerance applies here specifically: a cache **miss** is normal and falls through to
-a live call; a **database error** (connection failure, broken query) is never treated as a
-miss — it propagates and fails the whole request. Verified directly: stopping Postgres
-mid-session turned every request into a clean `error`/`502`, not a degraded live-only
-result, and requests recovered automatically once Postgres came back.
+- **`store_patents` was uploading ~99.3% waste.** Indexed patents average 273,000
+  characters and bge-large caps at 512 tokens, so a 20-patent batch shipped ~5.5 MB to
+  compute vectors reflecting each document's first ~2,000 characters. `MAX_INDEX_WORDS`
+  in `search/vector_store.py` now truncates above the model's own cap, which leaves the
+  resulting vectors unchanged. See that constant's docstring.
+- **Embedding concurrency needs small batches, and the two settings are coupled.** The
+  first attempt used `BATCH_SIZE=32` with 4 workers and came out *slower than serial*,
+  because a 32-text request under concurrency exceeded `_embed_batch`'s 30s read timeout
+  and each timeout burned 30s before retrying. `BATCH_SIZE=8` / 8 workers / 60s timeout
+  is benchmarked, not guessed — the numbers are in `embeddings.py`'s `BATCH_SIZE`
+  docstring. Raising the batch size without raising the timeout reintroduces the bug, and
+  it presents as "parallelism made things slower."
+- **Indexing is on the critical path and buys the current user nothing** — it grows the
+  corpus for *later* requests. Moving it behind the `result` event was considered and
+  rejected: truncation already took it from 21.8s to ~8s, which does not justify a
+  zero-tolerance exception for a write whose failure nobody would see.
+- **There is no caching of any kind.** Repeat the identical search and it costs the full
+  pipeline again: ~5 SerpAPI searches, ~20 Details calls, ~20 description-page fetches,
+  4 LLM calls, and several embedding round trips. This is the single largest remaining
+  source of avoidable work, and it is a deliberate open question rather than an oversight
+  (the Postgres layer that used to do it was removed on purpose).
 
-`GET /api/history` (`reports.py`'s `list_history`) returns the 50 most recent runs, most
-recent first, each with its full `patents[]` array already joined in — full reports, not
-summaries, so the frontend's History screen can select a row and show it with no second
-fetch. `id`/`created_at` (real values) stand in for the SSE payload's placeholder
-`title`/`date`; the frontend derives its own display title/date from the raw description,
-same as it already does for a live result.
+### Migration status and standing constraints (see `docs/`)
 
-**Description-level report cache.** `_run_pipeline` checks `reports.py`'s
-`find_recent_report` before doing anything else: an exact resubmission of the same
-`description`+`claims` within 24h (`REPORT_TTL`) returns the stored report directly — zero
-LLM calls, zero provider calls, zero embedding calls. This exists because the pipeline is
-*not* actually deterministic even at `temperature=0.0` (query understanding) — observed
-directly, the same description produced different generated queries on two separate live
-runs — so without this, "search the same invention twice" could silently return a
-different verdict each time, which is a strange thing for a user to hit and undermines
-trust in the tool. `patents[]` entries reconstructed this way carry only
-`num/title/pct/risk/rationale/source` (`CORE_PATENT_FIELDS` in `test_pipeline_parity.py`)
-— the debug-only `full_text_chars` field a live run's entries also carry isn't persisted,
-so it's absent on a cache hit; harmless, since nothing reads it. Same legacy-only
-limitation as everything else in this section: `PIPELINE=langgraph` (the default) doesn't
-call `_run_pipeline` at all, so this cache is inactive unless `PIPELINE=legacy` is set.
+**The migration is done.** Phase 1 (the `StateGraph` and the graph steps as nodes) and
+Phase 3 (Semantic Search, Result Fusion, and Validation as live nodes, plus embedding-based
+ranking with no TF-IDF fallback, and the frontend consuming the real SSE stream) both
+landed. Phase 2's Postgres persistence landed for the legacy pipeline and was then
+**deleted along with it** — the project deliberately has no relational database and no
+caching now.
 
-### Remaining migration (see `docs/`)
+Note the `docs/` phase prompts describe a world with two pipelines, a `PIPELINE` flag, and
+a Postgres layer. They are a historical record of how the migration was planned, not a
+description of the current code. Where they disagree with this file or the source, they
+are out of date.
 
-**Phases 1 and 3 have landed; Phase 2 has landed for the legacy pipeline only** (see above
-— the LangGraph path has no persistence yet). Phase 1: the `StateGraph`, the graph steps
-as nodes, and the `PIPELINE` flag that switches between them. Phase 3: Semantic Search,
-Result Fusion, and Validation as live graph nodes, plus embedding-based ranking with no
-TF-IDF fallback (P3.1–P3.6), **and P3.7** — the frontend now consumes the real SSE stream
-(`frontend/src/app/App.tsx`'s `PHASE_ORDER`, kept in lockstep with `graph/events.py`'s
-`PHASES`) instead of a simulated timer; an earlier version of this file said otherwise and
-was wrong by the time it was read — the source (`App.tsx`) is the authority, not this
-paragraph, if the two ever disagree again. **Still open**: the full P3.8 failure-path test
-matrix (a handful of focused tests exist per new agent; a dedicated outage-injection suite
-does not), and wiring Phase 2 persistence into the LangGraph path (see above). Two
-constraints govern all of it:
+**Still open:**
+- A dedicated outage-injection test suite for the Phase 3 agents (the old P3.8 matrix).
+  Focused per-agent tests and the failure table above exist; systematic fault injection
+  does not.
+- Caching, in some form. Every request currently redoes all provider, LLM, and embedding
+  work from scratch. Whatever replaces it is a fresh design decision.
+- Chunk-and-average for indexed vectors, so a Qdrant entry represents a whole patent
+  rather than its first page (see `MAX_INDEX_WORDS`). This is a retrieval-quality change
+  with a corpus re-index attached.
+
+Two constraints govern all of it:
 
 - **Zero-tolerance failure policy**: no fallback, ever. If a step can't produce a genuine
   result, it must fail the request with a clear `error` event — never substitute
-  fabricated or placeholder output. Commit `e96edfac` already removed the fabricated
-  score in `_format_and_rank` and the `_fallback_rationale` / `_fallback_recommendations`
-  pair in `backend/llm.py`; do not go looking for them. Two fallbacks remain **in the
-  legacy path only** — the LangGraph path already drops both, and they are the reason to
-  finish retiring legacy:
-  - `search_patents`'s "succeed if any provider works" (`backend/search/search.py`) —
-    a provider outage silently narrows the corpus and still reports success.
-  - the canned `"No reference targets found…"` recommendation `_run_pipeline` emits when
-    search returns zero patents (`backend/server.py`) — drafting advice presented as
-    analysis output that no LLM produced.
+  fabricated or placeholder output. Commit `e96edfac` removed a fabricated score and the
+  `_fallback_rationale` / `_fallback_recommendations` pair in `backend/llm.py`; do not go
+  looking for them. The two fallbacks that outlived it — "succeed if any provider works"
+  and the canned `"No reference targets found…"` recommendation — lived in the legacy path
+  and went with it. **There are now no fallbacks anywhere in the backend.** Adding one back
+  is the single most consequential way to break this project's contract with its users.
 - **USPTO is out of scope** — no API access is available. Don't add a USPTO provider.

@@ -16,7 +16,9 @@ from graph.validation import validate_node
 from models import InventionAnalysis, MatchAnalysis, PatentRecord
 from ranking import reciprocal_rank_fusion
 from search.retrieve import retrieve_similar_patents
-from search.vector_store import store_patents
+from search.search import KeywordSearchResults
+from search.vector_store import QUERY_INSTRUCTION, store_patents
+from tests.fakes import fake_embed_texts
 
 # --------------------------------------------------------------------------
 # P3.3 - Semantic Search
@@ -66,6 +68,34 @@ def test_semantic_search_drops_weak_matches_instead_of_returning_the_least_bad_o
     assert hits == []
 
 
+def test_query_is_instruction_prefixed_and_documents_are_not():
+    """bge-large-en-v1.5 is asymmetric: the instruction goes on the query side
+    only.
+
+    Prefixing documents too would undo the benefit - the shared prefix pulls
+    every stored vector toward the same region, flattening the gap between a
+    relevant hit and an unrelated one that ``MIN_SIMILARITY_SCORE`` has to cut
+    through. Since ``store_patents`` and ``semantic_search`` call the same
+    ``embed_texts``, that mistake is a one-line edit away and would show up only
+    as quietly worse ranking, so it is pinned here rather than left to review.
+    """
+    seen: list[list[str]] = []
+
+    def spy_embed(texts: list[str]) -> list[list[float]]:
+        seen.append(texts)
+        return fake_embed_texts(texts)
+
+    with patch("search.vector_store.embed_texts", side_effect=spy_embed):
+        store_patents([PatentRecord(id="US1000002A", title="UV water sterilizer")])
+        document_texts = seen.pop()
+
+        retrieve_similar_patents("UV water sterilizer bottle")
+        query_texts = seen.pop()
+
+    assert not any(text.startswith(QUERY_INSTRUCTION) for text in document_texts)
+    assert query_texts == [QUERY_INSTRUCTION + "UV water sterilizer bottle"]
+
+
 def test_semantic_search_node_sets_semantic_patents():
     found = [PatentRecord(id="US5", title="Found")]
     with patch("graph.searching.emit_progress"), \
@@ -108,7 +138,10 @@ def test_semantic_search_does_not_retrieve_this_requests_own_keyword_hits():
         return hits
 
     with patch("graph.understanding.understand_invention", return_value=analysis), \
-         patch("graph.searching.search_all_providers_strict", return_value=keyword_hits), \
+         patch(
+             "graph.searching.search_all_providers_strict",
+             return_value=KeywordSearchResults(candidates=keyword_hits, index_only=[]),
+         ), \
          patch("graph.searching.enrich_with_full_text", side_effect=lambda patents: patents), \
          patch("graph.searching.retrieve_similar_patents", side_effect=spy_retrieve), \
          patch("graph.validation.validate_relevance", side_effect=lambda text, c: [True] * len(c)), \

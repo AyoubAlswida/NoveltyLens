@@ -1,20 +1,20 @@
-"""Parity between the legacy pipeline and the LangGraph pipeline.
+"""The pipeline's externally-visible contract: SSE phases, terminal payload
+shape, and the failure behaviors the zero-tolerance policy requires.
 
-This is the gate that turned ``PIPELINE=langgraph`` on.  Phase 1 could demand
-byte-identical SSE streams; Phase 3 cannot, because the graph searches a broader
-corpus than legacy can see (see ``test_graph_covers_every_legacy_phase_plus_the_new_agents``).
-What is asserted now is that the graph emits every phase legacy does plus exactly
-the new agents' phases, and that the terminal payload's *shape* still matches -
-its values are allowed to differ, by design.  Where they differ, they differ
-because a ticket decided they should.
+This was ``test_pipeline_parity.py``, which diffed the LangGraph pipeline
+against the legacy generator. Legacy has been retired along with Postgres, so
+there is nothing left to diff against and the assertions now stand on their own:
+they describe what the pipeline must do, rather than that two implementations
+agreed. The tests that only existed to pin a legacy divergence (the ``PIPELINE``
+flag, "legacy pads an empty search with a canned recommendation") went with it;
+the ones that pin *this* pipeline's behavior are all still here.
 
 **The network boundaries are stubbed, the logic between them is not**: the HTTP
 call inside ``_llm_chat`` and the search providers in ``SOURCES`` here, plus
-embeddings, Qdrant and Postgres in ``tests/conftest.py``.  Everything between
-them - prompt construction, JSON parsing, deduplication, chunking, cosine
-scoring, score formatting, verdict thresholds - runs for real in both pipelines.
-Stubbing ``understand_invention`` or ``compare_invention_to_patents`` instead
-would prove far less, because those are exactly the layers that could drift apart.
+embeddings and Qdrant in ``tests/conftest.py``. Everything between them - prompt
+construction, JSON parsing, deduplication, chunking, cosine scoring, score
+formatting, verdict thresholds - runs for real. Stubbing ``understand_invention``
+or ``compare_invention_to_patents`` instead would prove far less.
 """
 
 import json
@@ -28,7 +28,6 @@ from graph.pipeline import run_graph_pipeline
 
 from models import PatentRecord
 from search.search import PatentSearchError
-from server import _run_pipeline
 
 DESCRIPTION = (
     "A portable, refillable drinking-water bottle that automatically sterilizes its "
@@ -60,13 +59,19 @@ CORPUS = [
                  source="Google Patents"),
 ]
 
+RESULT_KEYS = {
+    "title", "date", "concepts", "patents",
+    "top_score", "verdict", "query_count", "recommendations",
+}
+"""Every key ``graph/pipeline.py``'s ``_result_envelope`` promises the frontend."""
+
+CORE_PATENT_FIELDS = {"num", "title", "pct", "risk", "rationale", "source"}
+"""What the frontend actually reads off each patents[] entry (App.tsx's
+BackendPatent)."""
+
 
 def _fake_llm_chat(prompt: str, **kwargs: object) -> str:
-    """Stand in for the HTTP call in ``_llm_chat``, keyed off the real prompts.
-
-    Both pipelines call the same ``llm.py`` functions, so this single stub serves
-    both and neither can drift onto a different prompt without the other.
-    """
+    """Stand in for the HTTP call in ``_llm_chat``, keyed off the real prompts."""
     if "PatentScout AI" in prompt:
         return json.dumps({"concepts": CONCEPTS, "keywords": KEYWORDS, "queries": QUERIES})
 
@@ -117,87 +122,28 @@ def deterministic():
         yield
 
 
-def _drain(pipeline) -> list[dict]:
+def _drain(pipeline=run_graph_pipeline) -> list[dict]:
     return list(pipeline(DESCRIPTION, CLAIMS))
 
 
 # --------------------------------------------------------------------------
-# The flag
+# The SSE contract
 # --------------------------------------------------------------------------
 
-def test_langgraph_is_the_default_pipeline(monkeypatch):
-    """P1.5 flips the default. Asserted so it cannot drift back silently."""
-    monkeypatch.delenv("PIPELINE", raising=False)
-    import importlib
+def test_every_agent_reports_a_phase_in_the_expected_order(deterministic):
+    """Each agent announces itself, and the ordering the graph's topology
+    implies is the ordering the client actually observes."""
+    phases = [e["phase"] for e in _drain() if e["type"] == "progress"]
 
-    import config
-
-    reloaded = importlib.reload(config)
-    try:
-        assert reloaded.Settings().pipeline == "langgraph"
-    finally:
-        # Leave the module as the rest of the session expects to find it.
-        importlib.reload(config)
-
-
-def test_invalid_pipeline_value_is_rejected():
-    """A typo must fail loudly rather than coerce to a working pipeline.
-
-    Constructed directly rather than through a reload: reloading rebinds
-    ``ConfigError`` to a new class object, so the raised instance would no
-    longer match the reference this test captured.
-    """
-    import config
-
-    with pytest.raises(config.ConfigError, match="langraph"):
-        config.Settings(pipeline="langraph")
-
-
-# --------------------------------------------------------------------------
-# The gate
-# --------------------------------------------------------------------------
-
-def test_graph_covers_every_legacy_phase_plus_the_new_agents(deterministic):
-    """Phase 3 makes the graph do genuinely more than legacy on the happy path -
-    three new agents (semantic search, fusion, validation) legacy has no
-    concept of - so the two streams are no longer byte-identical by design, only
-    by accident before Phase 3 landed. What must still hold: every phase legacy
-    emits, the graph emits too, and the graph's *only* extra phases are exactly
-    the three new agents, in the expected relative order."""
-    legacy_phases = [e["phase"] for e in _drain(_run_pipeline) if e["type"] == "progress"]
-    graph_phases = [e["phase"] for e in _drain(run_graph_pipeline) if e["type"] == "progress"]
-
-    assert set(legacy_phases) <= set(graph_phases)
-    assert set(graph_phases) - set(legacy_phases) == {"semantic_search", "fuse", "validate"}
-    assert graph_phases.index("fuse") < graph_phases.index("validate") < graph_phases.index("compare")
-    assert graph_phases.index("compare") < graph_phases.index("analyze")
-
-
-CORE_PATENT_FIELDS = {"num", "title", "pct", "risk", "rationale", "source"}
-"""What the frontend actually reads off each patents[] entry (App.tsx's
-BackendPatent). Legacy's `_format_and_rank` (server.py) also carries a
-`full_text_chars` debug field the graph's `format_matches` never had - a
-pre-existing, Phase-3-unrelated divergence, not something to pin key-for-key."""
-
-
-def test_result_shape_matches(deterministic):
-    """Phase 3 lets the graph consider more candidates than legacy ever could
-    (semantic-only hits) and drop some via validation, so *values* are allowed
-    to diverge now - but the payload's shape, the contract the frontend depends
-    on, must not."""
-    legacy = _drain(_run_pipeline)[-1]
-    graph = _drain(run_graph_pipeline)[-1]
-
-    assert legacy["type"] == graph["type"] == "result"
-    assert legacy["data"].keys() == graph["data"].keys()
-    if legacy["data"]["patents"] and graph["data"]["patents"]:
-        assert CORE_PATENT_FIELDS <= legacy["data"]["patents"][0].keys()
-        assert CORE_PATENT_FIELDS <= graph["data"]["patents"][0].keys()
+    assert {"understand", "queries", "search", "enrich",
+            "semantic_search", "fuse", "validate", "compare", "analyze"} <= set(phases)
+    assert phases.index("fuse") < phases.index("validate") < phases.index("compare")
+    assert phases.index("compare") < phases.index("analyze")
 
 
 def test_stream_ends_with_exactly_one_result(deterministic):
     """The frontend throws without one, and breaks with more than one."""
-    events = _drain(run_graph_pipeline)
+    events = _drain()
     assert [e["type"] for e in events].count("result") == 1
     assert events[-1]["type"] == "result"
     assert not any(e["type"] == "error" for e in events)
@@ -206,18 +152,30 @@ def test_stream_ends_with_exactly_one_result(deterministic):
 def test_every_phase_is_in_the_frontend_vocabulary(deterministic):
     """An unknown phase does not raise in the UI - it silently renders as the
     first checklist item. Assert here instead, where it is visible."""
-    for event in _drain(run_graph_pipeline):
+    for event in _drain():
         if event["type"] == "progress":
             assert event["phase"] in PHASES
 
 
+def test_result_payload_carries_the_whole_contract(deterministic):
+    """The frontend reads every one of these; a missing key is a blank panel,
+    not an error, so it has to be caught here."""
+    result = _drain()[-1]
+
+    assert result["type"] == "result"
+    assert result["data"].keys() == RESULT_KEYS
+    assert result["data"]["patents"], "expected the deterministic corpus to produce matches"
+    assert CORE_PATENT_FIELDS <= result["data"]["patents"][0].keys()
+
+
 # --------------------------------------------------------------------------
-# Divergences that are intentional. These assert the Phase 1 behavior changes
-# actually happened; P3.8 extends this into full failure-path coverage.
+# Zero-tolerance failure behavior
 # --------------------------------------------------------------------------
 
-def test_one_provider_down_fails_the_graph_but_not_legacy():
-    """P1.3's behavior change, asserted from both sides."""
+def test_one_provider_down_fails_the_request():
+    """A provider outage silently narrows the corpus. Answering anyway would
+    report a confident novelty verdict computed against prior art that was
+    never retrieved, indistinguishable from a healthy run."""
     def broken(query: str, size: int) -> list[PatentRecord]:
         raise RuntimeError("EPO OPS 503")
 
@@ -225,13 +183,27 @@ def test_one_provider_down_fails_the_graph_but_not_legacy():
 
     with patch("llm._llm_chat", side_effect=_fake_llm_chat), \
          patch("search.search.SOURCES", half_down):
-        # Legacy silently narrows the corpus and still reports a verdict.
-        legacy = _drain(_run_pipeline)
-        assert legacy[-1]["type"] == "result"
-
-        # The graph refuses to answer from a corpus it knows is incomplete.
         with pytest.raises(PatentSearchError, match="European Patent Office"):
-            _drain(run_graph_pipeline)
+            _drain()
+
+
+def test_provider_failure_is_reported_in_query_order_not_completion_order():
+    """Providers are now called concurrently. Which failure gets reported must
+    still be decided by query order, or the same broken environment would blame
+    a different provider run to run and make the error useless to act on."""
+    def broken(name: str):
+        def search(query: str, size: int) -> list[PatentRecord]:
+            raise RuntimeError(f"{name} is down")
+        return search
+
+    # Both fail; "Google Patents" is first in SOURCES, so it must always be named.
+    both_down = (("Google Patents", broken("google")), ("European Patent Office", broken("epo")))
+
+    with patch("llm._llm_chat", side_effect=_fake_llm_chat), \
+         patch("search.search.SOURCES", both_down):
+        for _ in range(5):
+            with pytest.raises(PatentSearchError, match="Google Patents"):
+                _drain()
 
 
 CANNED_RECOMMENDATION = "No reference targets found. Focus claims on wide utility targets."
@@ -241,51 +213,22 @@ def test_empty_corpus_returns_an_honest_empty_report():
     """Finding nothing is a real answer, so it is reported, not raised.
 
     The one thing it must not do is fill the recommendation slot with advice no
-    model produced. Legacy does exactly that; the graph sends an empty list.
+    model produced.
     """
     empty = (("Google Patents", _provider("empty", [])),)
 
     with patch("llm._llm_chat", side_effect=_fake_llm_chat), \
          patch("search.search.SOURCES", empty):
-        legacy = _drain(_run_pipeline)
-        graph = _drain(run_graph_pipeline)
+        result = _drain()[-1]
 
-    assert legacy[-1]["data"]["recommendations"] == [CANNED_RECOMMENDATION]
-
-    data = graph[-1]["data"]
-    assert graph[-1]["type"] == "result"
+    data = result["data"]
+    assert result["type"] == "result"
     assert data["recommendations"] == [], "fabricated advice reintroduced"
     assert data["patents"] == []
     assert data["top_score"] == 0
     # Real values -- the LLM did run, so these are measured, not invented.
     assert data["concepts"] == CONCEPTS
     assert data["query_count"] == len(QUERIES)
-
-
-def test_empty_corpus_differs_from_legacy_only_in_recommendations():
-    """Pin the divergence to exactly one field of the terminal payload, so a
-    future change that quietly widens it fails here.
-
-    Progress events are allowed to differ here too, unlike before Phase 3:
-    keyword search finding nothing doesn't stop the graph's independent
-    semantic-search and fusion steps from running - a real, if empty, result -
-    and legacy has no concept of either."""
-    empty = (("Google Patents", _provider("empty", [])),)
-
-    with patch("llm._llm_chat", side_effect=_fake_llm_chat), \
-         patch("search.search.SOURCES", empty):
-        legacy = _drain(_run_pipeline)
-        graph = _drain(run_graph_pipeline)
-
-    legacy_phases = [e["phase"] for e in legacy if e["type"] == "progress"]
-    graph_phases = [e["phase"] for e in graph if e["type"] == "progress"]
-    assert set(graph_phases) - set(legacy_phases) <= {"semantic_search", "fuse", "validate"}
-
-    differing = {
-        key for key in legacy[-1]["data"]
-        if legacy[-1]["data"][key] != graph[-1]["data"][key]
-    }
-    assert differing == {"recommendations"}, f"unexpected divergence in {differing}"
 
 
 def test_canned_recommendation_appears_nowhere_in_the_graph_package():
@@ -310,7 +253,7 @@ def test_llm_failure_raises_rather_than_degrading():
     with patch("llm._llm_chat", side_effect=RuntimeError("LLM request failed")), \
          patch("search.search.SOURCES", FAKE_SOURCES):
         with pytest.raises(RuntimeError, match="LLM request failed"):
-            _drain(run_graph_pipeline)
+            _drain()
 
 
 def test_zero_similarity_is_reported_honestly(deterministic):
@@ -321,6 +264,6 @@ def test_zero_similarity_is_reported_honestly(deterministic):
                      source="Google Patents"),
     ])),)
     with patch("search.search.SOURCES", unrelated):
-        result = _drain(run_graph_pipeline)[-1]
+        result = _drain()[-1]
     scores = [p["pct"] for p in result["data"]["patents"]]
     assert min(scores) == 0, f"expected an honest zero, got {scores}"

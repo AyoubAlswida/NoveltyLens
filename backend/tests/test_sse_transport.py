@@ -1,6 +1,6 @@
 """The SSE frames as the browser actually receives them.
 
-``test_pipeline_parity`` compares the event dicts the generators yield.  This
+``test_pipeline_contract`` compares the event dicts the generator yields.  This
 compares what comes out the other side of ``server.py``'s wrapper: real
 ``data: {...}\\n\\n`` frames over a real request.  The two failure modes it
 covers that the generator-level tests cannot are a node exception escaping as
@@ -15,8 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import server
-from graph.pipeline import run_graph_pipeline
-from tests.test_pipeline_parity import (
+from tests.test_pipeline_contract import (
     CLAIMS,
     DESCRIPTION,
     FAKE_SOURCES,
@@ -35,10 +34,12 @@ def _frames(response) -> list[dict]:
 
 @pytest.fixture
 def langgraph_client():
-    """A client whose endpoints route to the graph, with both external
-    boundaries pinned."""
-    with patch.object(server, "_active_pipeline", run_graph_pipeline), \
-         patch("llm._llm_chat", side_effect=_fake_llm_chat), \
+    """A client with both external boundaries pinned.
+
+    No pipeline patching: there is one pipeline now, and ``server.py`` calls
+    ``run_graph_pipeline`` directly.
+    """
+    with patch("llm._llm_chat", side_effect=_fake_llm_chat), \
          patch("search.search.SOURCES", FAKE_SOURCES):
         yield TestClient(server.app)
 

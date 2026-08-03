@@ -11,9 +11,6 @@ from dotenv import load_dotenv
 # matter how many times the file is edited or the process restarted.
 load_dotenv(override=True)
 
-PIPELINES: tuple[str, ...] = ("legacy", "langgraph")
-
-
 class ConfigError(RuntimeError):
     """Raised at import time when the environment is configured incorrectly."""
 
@@ -27,27 +24,8 @@ class Settings:
     llm_api_url: str = os.getenv("LLM_API_URL", "https://router.huggingface.co/v1/chat/completions")
     llm_model: str = os.getenv("LLM_MODEL", "meta-llama/Llama-3.1-8B-Instruct:novita")
     uspto_api_key: str = os.getenv("PATENTSVIEW_API_KEY", "")
-    # LangGraph is the default as of P1.5, which proved byte-identical SSE
-    # parity with the legacy generator. Set PIPELINE=legacy to fall back.
-    pipeline: str = os.getenv("PIPELINE", "langgraph")
-    database_url: str = os.getenv(
-        "DATABASE_URL", "postgresql://agenticai:agenticai@127.0.0.1:5432/agenticai"
-    )
     qdrant_url: str = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
     qdrant_api_key: str = os.getenv("QDRANT_API_KEY", "")
-
-    def __post_init__(self) -> None:
-        """Reject an unusable environment loudly instead of coercing it to a default.
-
-        Silently treating ``PIPELINE=langraph`` as ``legacy`` would run the wrong
-        pipeline and report success, which is the class of behavior the migration's
-        zero-tolerance policy exists to prevent.
-        """
-        if self.pipeline not in PIPELINES:
-            raise ConfigError(
-                f"PIPELINE={self.pipeline!r} is not a valid pipeline. "
-                f"Expected one of: {', '.join(PIPELINES)}."
-            )
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-en-v1.5")
 
 

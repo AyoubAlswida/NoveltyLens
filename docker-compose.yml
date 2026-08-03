@@ -1,44 +1,22 @@
-# Local development infrastructure for the LangGraph migration (ticket P0.1).
+# Local development infrastructure.
 #
-# Brings up the two backing services the migration needs: PostgreSQL for Phase 2
-# persistence and Qdrant for Phase 3 semantic search. Neither is used by the code
-# yet — this file exists so Phase 2 and Phase 3 can start against a real service
-# instead of each developer improvising one.
+# Brings up Qdrant, the vector store backing the graph's semantic-search branch.
+# It is required to run the backend at all: `semantic_search` reads it and
+# `index_patents` writes it, and neither has a fallback path.
 #
-#   docker compose up -d --wait # from the repository root; returns once both are healthy
+#   docker compose up -d --wait # from the repository root; returns once healthy
 #   docker compose ps           # show status
 #   docker compose down         # stop, keep data
-#   docker compose down -v      # stop, wipe data
+#   docker compose down -v      # stop, wipe the indexed patent corpus
+#
+# PostgreSQL used to live here too, for the legacy pipeline's caches and stored
+# reports. Both the legacy pipeline and Postgres have been retired; the corpus in
+# Qdrant is now the only persistent state this project keeps.
 #
 # The backend and frontend are NOT containerized; keep running them with
 # `python server.py` and `npm run dev` as before.
-#
-# Credentials below are local-development only and deliberately committed. Real
-# credentials belong in backend/.env, which is gitignored.
 
 services:
-  postgres:
-    image: postgres:17.10-alpine
-    container_name: agenticai-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: agenticai
-      POSTGRES_PASSWORD: agenticai
-      POSTGRES_DB: agenticai
-    ports:
-      # Bound to loopback so the database is not exposed on the local network.
-      # If you already run PostgreSQL on 5432, change the host side to 5433 here
-      # and set DATABASE_URL in backend/.env to match.
-      - "127.0.0.1:5432:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U agenticai -d agenticai"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
-
   qdrant:
     # Keep this in step with the qdrant-client version in backend/requirements.txt.
     # The client warns (and can misbehave) when the server is more than a minor
@@ -51,6 +29,14 @@ services:
       - "127.0.0.1:6334:6334"  # gRPC
     volumes:
       - qdrant-data:/qdrant/storage
+    # Qdrant keeps vectors in RAM by default (1024-dim float32 = 4 KB/point, so
+    # ~0.4 GB per 100k patents) and the container was previously unbounded - a
+    # runaway corpus would have taken the host down with it rather than failing
+    # in one place. 2 GB leaves headroom for roughly 400k patents; raise it
+    # deliberately rather than removing it. Note payloads are on disk
+    # (`on_disk_payload`) and store full patent text at ~273 KB average, so disk
+    # grows much faster than memory - that is the number to watch.
+    mem_limit: 2g
     healthcheck:
       # The image ships no curl/wget/nc, but it does have bash, so probe /readyz
       # over bash's /dev/tcp. Must be CMD+bash, not CMD-SHELL: CMD-SHELL runs
@@ -62,5 +48,4 @@ services:
       start_period: 10s
 
 volumes:
-  postgres-data:
   qdrant-data:

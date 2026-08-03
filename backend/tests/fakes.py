@@ -1,12 +1,16 @@
-"""Deterministic stand-ins for the network-backed semantic layer (embeddings and
-Qdrant) and, as of ticket P2.2, Postgres -- shared by every test module so the
-suite keeps making zero real network/database calls even though ``compare.py``
-and semantic search are unconditionally on the happy path for both pipelines,
-and the legacy pipeline now opens a Postgres connection as its first action.
+"""Deterministic stand-ins for the network-backed semantic layer -- embeddings
+and Qdrant -- shared by every test module so the suite keeps making zero real
+network calls even though ``compare.py`` and semantic search are unconditionally
+on the pipeline's happy path.
+
+The Postgres doubles that used to live here went with the legacy pipeline and
+the Postgres layer itself; Qdrant is the only persistent state left to fake.
 """
 
 import hashlib
 import re
+
+from search.vector_store import QUERY_INSTRUCTION
 
 EMBED_DIM = 32
 
@@ -27,11 +31,20 @@ def fake_embed_texts(texts: list[str]) -> list[list[float]]:
 
     Texts sharing content words get overlapping, correlated vectors; texts
     sharing none get an exact zero dot product (barring a hash collision).
+
+    ``QUERY_INSTRUCTION`` is stripped first for the same reason ``_STOPWORDS``
+    exists: it makes this double behave like the model it stands in for. bge was
+    *trained* with that prefix on queries, so the real model reads it as a
+    retrieval instruction rather than as content. A bag-of-words double has no
+    such notion - it would score the prefix's five content words as ordinary
+    query terms, diluting the real ones and shrinking every similarity by
+    roughly the ratio of the vector norms. That artifact belongs to the stub,
+    not to production, so the stub does not simulate it.
     """
     vectors: list[list[float]] = []
     for text in texts:
         vector = [0.0] * EMBED_DIM
-        for word in re.findall(r"\w+", text.lower()):
+        for word in re.findall(r"\w+", text.removeprefix(QUERY_INSTRUCTION).lower()):
             if word in _STOPWORDS:
                 continue
             digest = int(hashlib.md5(word.encode()).hexdigest(), 16)
@@ -45,6 +58,14 @@ class _FakePoint:
     def __init__(self, payload: dict, score: float) -> None:
         self.payload = payload
         self.score = score
+
+
+class _FakeRetrievedPoint:
+    """What ``retrieve`` returns - an id and nothing else, since callers pass
+    ``with_payload=False``/``with_vectors=False``."""
+
+    def __init__(self, point_id: str) -> None:
+        self.id = point_id
 
 
 class _FakeCollection:
@@ -85,6 +106,18 @@ class FakeQdrantClient:
         for point in points:
             self._points[point.id] = (point.vector, point.payload)
 
+    def retrieve(
+        self,
+        collection_name: str,
+        ids: list[str],
+        with_payload: bool = True,
+        with_vectors: bool = True,
+        **kwargs: object,
+    ) -> list:
+        """Mirrors ``QdrantClient.retrieve``: returns only the ids that exist,
+        which is exactly what ``vector_store.known_ids`` reads it for."""
+        return [_FakeRetrievedPoint(point_id) for point_id in ids if point_id in self._points]
+
     def query_points(
         self,
         collection_name: str,
@@ -112,150 +145,3 @@ class FakeQdrantClient:
             scored = [point for point in scored if point.score >= score_threshold]
         scored.sort(key=lambda point: point.score, reverse=True)
         return _FakeQueryResponse(scored[:limit])
-
-
-class _FakeTransaction:
-    def __enter__(self) -> "_FakeTransaction":
-        return self
-
-    def __exit__(self, *exc_info: object) -> bool:
-        return False
-
-
-class _FakePGCursor:
-    """Recognizes exactly the statements cache.py/reports.py issue -- not a
-    general SQL engine, the same scope FakeQdrantClient uses above. Matching
-    is by substring on the normalized SQL text rather than full parsing,
-    since this module owns both sides (the fake and the real queries) and
-    can keep them in sync directly."""
-
-    def __init__(self, db: "FakePostgresDB") -> None:
-        self._db = db
-        self._result: list[tuple] = []
-
-    def __enter__(self) -> "_FakePGCursor":
-        return self
-
-    def __exit__(self, *exc_info: object) -> bool:
-        return False
-
-    def execute(self, sql: str, params: tuple = ()) -> None:
-        sql_norm = " ".join(sql.split())
-        self._result = []
-
-        if sql_norm.startswith("SELECT patent_ids FROM query_cache"):
-            row = self._db.query_cache.get(params[0])
-            self._result = [(row,)] if row is not None else []
-
-        elif sql_norm.startswith("SELECT id, title, abstract, inventors, assignee, publication_date, source, url, serpapi_id, full_text"):
-            self._result = [
-                (p["id"], p["title"], p["abstract"], p["inventors"], p["assignee"],
-                 p["publication_date"], p["source"], p["url"], p["serpapi_id"], p["full_text"])
-                for p in (self._db.patents.get(pid) for pid in params[0]) if p is not None
-            ]
-
-        elif sql_norm.startswith("INSERT INTO patents"):
-            (id_, title, abstract, inventors, assignee, publication_date,
-             source, url, serpapi_id, full_text) = params
-            existing = self._db.patents.get(id_, {})
-            self._db.patents[id_] = {
-                "id": id_, "title": title, "abstract": abstract, "inventors": inventors,
-                "assignee": assignee, "publication_date": publication_date, "source": source,
-                "url": url, "serpapi_id": serpapi_id,
-                "full_text": full_text or existing.get("full_text", ""),
-            }
-
-        elif sql_norm.startswith("INSERT INTO query_cache"):
-            query, patent_ids = params[0], params[1]
-            self._db.query_cache[query] = list(patent_ids)
-
-        elif sql_norm.startswith("INSERT INTO search_runs"):
-            description, claims, concepts, query_count, top_score, verdict, recommendations = params
-            run_id = f"fake-run-{len(self._db.search_runs)}"
-            self._db.search_runs.append({
-                "id": run_id, "description": description, "claims": claims, "concepts": concepts,
-                "query_count": query_count, "top_score": top_score, "verdict": verdict,
-                "recommendations": recommendations,
-            })
-            self._result = [(run_id,)]
-
-        elif sql_norm.startswith("INSERT INTO search_run_matches"):
-            run_id, rank, patent_id, pct, risk, rationale, source = params
-            self._db.search_run_matches.append({
-                "run_id": run_id, "rank": rank, "patent_id": patent_id, "pct": pct,
-                "risk": risk, "rationale": rationale, "source": source,
-            })
-
-        elif sql_norm.startswith("SELECT id, concepts, query_count, top_score, verdict, recommendations FROM search_runs"):
-            # find_recent_report: no notion of time in this fake, so every
-            # matching run is treated as within REPORT_TTL -- tests that need
-            # a miss use a different description/claims, not an expired one.
-            description, claims = params[0], params[1]
-            matches = [
-                run for run in reversed(self._db.search_runs)
-                if run["description"] == description and run["claims"] == claims
-            ]
-            if matches:
-                run = matches[0]
-                self._result = [(run["id"], run["concepts"], run["query_count"], run["top_score"], run["verdict"], run["recommendations"])]
-
-        elif sql_norm.startswith("SELECT p.title, srm.pct, srm.risk, srm.rationale, srm.source, srm.patent_id"):
-            run_id = params[0]
-            rows = sorted(
-                (m for m in self._db.search_run_matches if m["run_id"] == run_id),
-                key=lambda m: m["rank"],
-            )
-            self._result = [
-                (self._db.patents.get(m["patent_id"], {}).get("title", ""), m["pct"], m["risk"], m["rationale"], m["source"], m["patent_id"])
-                for m in rows
-            ]
-
-        elif sql_norm.startswith("SELECT id, description, concepts"):
-            self._result = []  # list_history: not exercised by pipeline tests today.
-
-        else:
-            raise AssertionError(f"FakePostgresDB got an unrecognized statement: {sql_norm[:100]!r}")
-
-    def fetchone(self) -> tuple | None:
-        return self._result[0] if self._result else None
-
-    def fetchall(self) -> list[tuple]:
-        return self._result
-
-
-class FakePostgresDB:
-    """In-memory stand-in for the schema ticket P2.1 introduced, scoped to
-    exactly the statements cache.py/reports.py issue.
-
-    A fresh instance is created per ``connect()`` call (see conftest.py),
-    matching that a cache miss/empty history is the correct default for
-    every existing test -- none of them test P2.2's cache behavior directly,
-    they just need `_run_pipeline`'s new persistence calls to not require a
-    real Postgres.
-    """
-
-    def __init__(self) -> None:
-        self.patents: dict[str, dict] = {}
-        self.query_cache: dict[str, list[str]] = {}
-        self.search_runs: list[dict] = []
-        self.search_run_matches: list[dict] = []
-
-    def cursor(self) -> _FakePGCursor:
-        return _FakePGCursor(self)
-
-    def transaction(self) -> _FakeTransaction:
-        return _FakeTransaction()
-
-    def __enter__(self) -> "FakePostgresDB":
-        return self
-
-    def __exit__(self, *exc_info: object) -> bool:
-        return False
-
-
-def fake_connect() -> FakePostgresDB:
-    """Stand-in for db.connect(), which is itself a context manager
-    (``@contextmanager``-decorated) -- FakePostgresDB implements
-    __enter__/__exit__ directly instead, so calling this plays the same role
-    without needing a generator wrapper."""
-    return FakePostgresDB()

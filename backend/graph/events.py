@@ -39,10 +39,9 @@ checklist off this stream rather than a simulated timer.  **Changing this tuple
 means changing both files in the same commit** - there is no longer a grace
 period where the backend can extend the vocabulary on its own.
 
-``enrich`` and ``semantic_search``/``fuse``/``validate`` were added to bring this
-package in line with two things that had drifted ahead of it: legacy's
-``_run_pipeline`` (``backend/server.py``) already emits ``enrich``, and Phase 3
-adds three new agents between Keyword Search and Ranking.
+``semantic_search``/``fuse``/``validate`` correspond to the three Phase 3 agents
+that sit between Keyword Search and Ranking; ``enrich`` covers the full-text
+fetch inside Keyword Search.
 
 Note this is the progress vocabulary, not the node list: ``index_patents``
 (``graph/searching.py``) deliberately emits nothing, because indexing for later
