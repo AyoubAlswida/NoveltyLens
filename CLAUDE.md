@@ -64,8 +64,11 @@ duplicating.
 
 **Running the app**: start both processes manually in separate terminals, with Qdrant up.
 There is no root script that runs them together, and no README. The frontend calls the
-backend at a hardcoded absolute URL (`http://127.0.0.1:8001`), so the backend must be
-running on that exact host/port.
+backend at an absolute URL — `import.meta.env.VITE_API_URL` if set, otherwise
+`http://127.0.0.1:8001` — and no `server.proxy` is configured, so by default the backend
+must be running on that exact host/port. `VITE_API_URL` is declared in
+`frontend/src/vite-env.d.ts`; setting it in `frontend/.env` is the supported way to point
+the UI at a backend somewhere else.
 
 **Env vars** (backend, via `backend/.env` — see `backend/.env.example`): `HF_TOKEN`
 (HuggingFace router auth, required — backs both the LLM calls and the embedding calls),
@@ -381,29 +384,85 @@ month's allowance in an afternoon of testing.
 
 ### Frontend: one file, and most of its dependencies are unused
 
-`frontend/src/app/App.tsx` (~700 lines) is the entire application — all screens, state,
-API calls, and styling (hand-rolled inline styles). It imports `useState` only.
-**`frontend/src/app/components/ui/` (the shadcn/Radix component library) and most of
-`package.json`'s dependencies (MUI, recharts, react-dnd, react-router, etc.) are unused
-Figma-scaffolding leftovers** — don't assume they reflect the real UI or extend them
-without checking whether `App.tsx` actually uses them first.
+`frontend/src/app/App.tsx` (~650 lines) is the entire application — all screens, state,
+and API calls. **Styling is no longer inline**: as of the Aramco-branded redesign, the
+visual layer lives in `frontend/src/styles/globals.css` (~1000 lines of hand-written CSS,
+imported last by `styles/index.css` after `fonts`/`tailwind`/`theme`), and `App.tsx`
+carries `className`s rather than style objects. Only one inline `style` remains, for the
+score-bar width. `App.tsx` imports `useState` plus icons from `lucide-react` — that one
+package is genuinely used; **`frontend/src/app/components/ui/` (the shadcn/Radix component
+library) and most of `package.json`'s other dependencies (MUI, recharts, react-dnd,
+react-router, etc.) are still unused Figma-scaffolding leftovers** — don't assume they
+reflect the real UI or extend them without checking whether `App.tsx` actually uses them
+first.
 
-There are **three** screens — `submit`, `running`, `report`. The History screen was
-removed along with `GET /api/history` and the Postgres layer behind it; it had never shown
-anything on the default path, since only the retired legacy pipeline ever wrote a run.
+`frontend/public/` holds the three brand assets the UI references by absolute path:
+`aramco-ai-logo.png` and `aramco-ai-mark.png` (from `App.tsx`) and
+`aramco-wave-background.jpg` (from `globals.css`). Vite copies `public/` to the build root
+verbatim, so those paths work in both dev and `dist/`. Note `index.html` no longer carries
+the inline `html, body, #root { height: 100% }` rule — `globals.css` owns it now, so
+dropping that import would collapse the layout.
+
+**Typography is Aramco Ghawar, served from `public/fonts/`, with no webfont CDN.**
+`styles/fonts.css` is the only place fonts are declared: nine `@font-face` blocks (Hairline
+100 through Black 900, OTF release `Ghawar 1.312-Beta 4.0`) plus `--font-sans`,
+`--font-display`, and `--font-mono`. All three variables resolve to Ghawar, and **every**
+`font-family` in `globals.css`, `theme.css`, and the PDF-export stylesheet inside `App.tsx`
+goes through one of them — do not hardcode a family anywhere, change the variable instead.
+The Google Fonts `@import` that used to sit at the top of this file is **gone**, along with
+IBM Plex Sans / Space Grotesk / JetBrains Mono; the fallback tail is now plain system fonts,
+so nothing this app renders touches an external host.
+
+Two properties of the font release are load-bearing and are documented at length in
+`frontend/public/fonts/README.md`:
+
+- **Each weight is its own internal family** (`Ghawar_1.312-Beta_4.0 Bold`, subfamily
+  `Regular`), not nine members of one family. The nine `@font-face` blocks are precisely
+  what collapse them into a single `Aramco Ghawar` family with real weight values, which is
+  why `font-weight: 600` resolves at all. Collapsing them into one rule breaks every weight.
+- **There are no italic files.** Italics in the UI are browser-synthesised obliques. Adding
+  `font-style: italic` faces is the fix if a release with true italics ever ships.
+
+The `local()` entry on each face embeds the font's versioned internal name, so a font update
+silently stops matching it and falls through to the `url()` — degraded to "an installed copy
+is no longer preferred", not a break. Note the vendor ships SemiBold misspelled as
+`SmeiBold`; the file here is renamed correctly but the `local()` string keeps the typo
+deliberately, because that is what is inside the font. The UI only ever requests four
+weights (400/500/600/700, ~165 KB), the rest are declared so a weight change just works.
+Ghawar is licensed rather than open source — see that README for the still-open question of
+whether the binaries belong in git.
+
+There are **four** screens — `submit`, `running`, `report`, and `error`. The History screen
+was removed along with `GET /api/history` and the Postgres layer behind it; it had never
+shown anything on the default path, since only the retired legacy pipeline ever wrote a run.
 Nothing persists client-side either, so a completed report is gone once you start another
-search. Note `buildReport` (defined near the top of the file) is dead code as of the
-Phase 3 frontend rework — `startRunning` builds the report inline instead — don't assume
-it's still on the call path.
+search. The `buildReport` helper that used to sit near the top of the file is **gone** as
+of the redesign (it had been dead code since the Phase 3 rework); `startRunning` builds
+the report inline from the `result` event.
+
+`error` is the newest of the four and the only screen not in the original design handoff.
+A failed run used to fire a native `alert()` and drop the user back on `submit`, which
+threw away everything the stream had already said. `ErrorScreen` now renders the backend's
+`error` detail **verbatim** in a mono block, names the phase it died in, and shows how many
+of the nine phases completed — `startRunning` tracks `lastPhase` in a local declared
+*outside* the `try` precisely so the `catch` can read it without waiting on a state update.
+It offers retry and back, and never renders a partial report. Keep it that way: the
+zero-tolerance policy makes the error path a first-class result, not an afterthought, and
+paraphrasing or prettifying the detail string would hide exactly the information (an HTTP
+429, a depleted-credits 402) that tells the user which quota ran out.
 
 **The zero-tolerance policy applies to this file too.** It used to invent content whenever
 the backend sent nothing: three hardcoded "recommendations" when the list was empty, a
 per-patent rationale reading *"Shares common vocabulary or systemic overlap with your
 primary description."*, and an `"Extracted Concept Cluster"` placeholder concept. All
-three are gone — the empty case now says so plainly. Two lesser defaults remain in
-`buildReport` for malformed provider data (`"US Unknown"` and `"Patent Prior Art Record"`
-for a patent with no id or title); they are reachable only if a provider returns a record
-the backend's `PatentRecord` normalization left blank.
+three are gone — the empty case now says so plainly. The redesign briefly reintroduced the
+same mistake in a new place, seeding the submit screen's concept chips with a hardcoded
+`["Water treatment", "Consumer hardware"]`; that was removed on merge, and the chip row now
+reads "Concepts appear once a search runs" until a real run returns some. Two lesser
+defaults survive in `startRunning`'s result mapping for malformed provider data
+(`"Unknown publication"` and `"Untitled patent record"` for a patent with no id or title,
+plus `"No detailed rationale was returned for this record."`); they are reachable only if a
+provider returns a record the backend's `PatentRecord` normalization left blank.
 
 ### Performance: where a request's time actually goes
 
