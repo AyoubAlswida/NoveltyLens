@@ -20,7 +20,7 @@ A patent novelty-search tool: a user describes an invention in natural language,
 backend generates search queries, retrieves candidate prior-art patents from live
 external APIs, ranks them by similarity, and returns an LLM-written rationale per match
 plus drafting recommendations. There are two independent processes — a FastAPI backend
-and a Vite/React frontend — with no shared tooling; each is run and developed separately.
+and an Angular frontend — with no shared tooling; each is run and developed separately.
 
 ## Commands
 
@@ -30,11 +30,12 @@ and a Vite/React frontend — with no shared tooling; each is run and developed 
 - Run the tests: `python -m pytest` from `backend/` (config in `backend/pytest.ini`, which sets `pythonpath = .` because the modules import each other flat, e.g. `from config import settings`). The suite is `backend/tests/`. `backend/tests/conftest.py` stubs embeddings and Qdrant (autouse, every test) alongside the per-module `_llm_chat`/`SOURCES` stubs — `compare.py`'s ranking and the semantic-search path are unconditionally on the happy path, so the suite needs no credentials, no network calls, and no running services. `test_pipeline_contract.py` covers the SSE phase vocabulary, the terminal payload shape, and the zero-tolerance failure behaviors; `test_sse_transport.py` covers the same contract as real `data:` frames through `server.py`; `test_phase3_agents.py` covers Semantic Search, Fusion, and Validation individually. Still open: a dedicated outage-injection suite for the Phase 3 agents (the old P3.8 matrix).
 - Still no lint config and no `pyproject.toml`.
 
-**Frontend** (from `frontend/`):
+**Frontend** (from `frontend/`) — **Angular 22**, standalone components, no NgModules:
 - Install deps: `npm install`
-- Dev server: `npm run dev` — Vite on its default port (`http://localhost:5173`); no `server.proxy` is configured
-- Build: `npm run build`
-- No lint, test, or typecheck script is defined, and there is no `tsconfig.json` — `npm run build` (Vite) is the closest thing to a correctness check today.
+- Dev server: `npm run dev` (alias of `npm start` / `ng serve`) — `http://localhost:4200`; no dev-server proxy is configured
+- Build: `npm run build` — output in `dist/novelty-lens/`
+- Typecheck: `npm run typecheck` (`tsc --noEmit`). Angular's build typechecks templates too, so a bad binding fails the build rather than failing silently at runtime — this is new; the React version had no `tsconfig.json` at all.
+- `npm test` exists from the Angular scaffold but there are **no frontend tests**; it will find no specs.
 
 **Local infrastructure** (from the repo root): `docker compose up -d --wait` starts
 Qdrant 1.18.3 (`127.0.0.1:6333` HTTP, `6334` gRPC) with a persisted named volume and a
@@ -64,11 +65,12 @@ duplicating.
 
 **Running the app**: start both processes manually in separate terminals, with Qdrant up.
 There is no root script that runs them together, and no README. The frontend calls the
-backend at an absolute URL — `import.meta.env.VITE_API_URL` if set, otherwise
-`http://127.0.0.1:8001` — and no `server.proxy` is configured, so by default the backend
-must be running on that exact host/port. `VITE_API_URL` is declared in
-`frontend/src/vite-env.d.ts`; setting it in `frontend/.env` is the supported way to point
-the UI at a backend somewhere else.
+backend at an absolute URL — `window.NOVELTY_LENS_API_URL` if set, otherwise
+`http://127.0.0.1:8001` — and no dev-server proxy is configured, so by default the backend
+must be running on that exact host/port. That constant lives in `frontend/src/app/config.ts`
+and replaces the React build's `import.meta.env.VITE_API_URL`. Setting the global before the
+bundle loads (a small script in `index.html`, or devtools) points the UI at another backend
+**without a rebuild**, which is what the Playwright checks use to aim at a stub.
 
 **Env vars** (backend, via `backend/.env` — see `backend/.env.example`): `HF_TOKEN`
 (HuggingFace router auth, required — backs both the LLM calls and the embedding calls),
@@ -99,20 +101,28 @@ the `PIPELINE` flag that chose between them are gone; `backend/config.py` no lon
 `pipeline` or `database_url` setting and no longer raises `ConfigError` (the class remains
 for future use).
 
-**The SSE contract spans `backend/server.py` and `frontend/src/app/App.tsx`.** An earlier
+**The SSE contract spans `backend/server.py` and the frontend's `app.ts` / `services/analysis.ts`.** An earlier
 version of this section said the frontend didn't consume the SSE stream at all and just
 faked progress with a `setInterval` timer — that was true once, but a prior edit here went
 stale against the code (per this file's own "verify against the source" rule) and nobody
-caught it. As of the current `App.tsx`: `streamAnalysis()` reads `POST /api/analyze/stream`'s
-real body via `fetch` + `getReader()` (not `EventSource`, which can't carry a POST body),
-and `PHASE_ORDER` (top of the file) is a real, maintained mirror of
-`backend/graph/events.py`'s `PHASES` tuple — the comment directly above it says so. If you
-find this paragraph disagreeing with `App.tsx` again, trust `App.tsx` and fix this file,
-not the other way around. Every event has a `type` of `progress` | `result` | `error`.
-`progress.phase` is one of the nine values in `PHASES`; an unrecognized phase does not
-error client-side, it just never advances `phaseIdx` past it (`App.tsx`'s `indexOf`
-returns -1, silently ignored) — so a phase-vocabulary change with no matching frontend
-update is a silent bug, not a loud one. The stream must end with exactly one `result`
+caught it. As of the current code: `AnalysisService.stream()` in
+`frontend/src/app/services/analysis.ts` reads `POST /api/analyze/stream`'s real body via
+`fetch` + `getReader()`, and `PHASE_ORDER` in `frontend/src/app/models/report.ts` is a
+real, maintained mirror of `backend/graph/events.py`'s `PHASES` tuple. If you find this
+paragraph disagreeing with the source again, trust the source and fix this file, not the
+other way around.
+
+**Do not "Angularize" that reader into `HttpClient`.** It is raw `fetch` for two reasons
+that survive the framework change: `EventSource` cannot carry a POST body at all, and
+`HttpClient` buffers the whole response before emitting, so every progress event would
+arrive in one lump when the run finished. The UI would look fine in any test with a
+stubbed instant response and silently lose live progress on a real 60-second run. The
+comment in that file says so; leave it there.
+
+Every event has a `type` of `progress` | `result` | `error`. `progress.phase` is one of the
+nine values in `PHASES`; an unrecognized phase does not error client-side, it just never
+advances `phaseIdx` past it (`indexOf` returns -1, silently ignored) — so a
+phase-vocabulary change with no matching frontend update is a silent bug, not a loud one. The stream must end with exactly one `result`
 event (data shape: `patents[].{num,title,pct,risk,rationale,source}` plus `title`, `date`,
 `concepts`, `top_score`, `verdict`, `recommendations`, `query_count`) or a client reading
 the stream would throw.
@@ -382,35 +392,75 @@ both. Neither degrades gracefully, by design: an exhausted quota fails the reque
 Check both before any benchmarking or repeated live runs; it is very easy to spend a
 month's allowance in an afternoon of testing.
 
-### Frontend: one file, and most of its dependencies are unused
+### Frontend: Angular 22, standalone components, no leftover scaffolding
 
-`frontend/src/app/App.tsx` (~650 lines) is the entire application — all screens, state,
-and API calls. **Styling is no longer inline**: as of the Aramco-branded redesign, the
-visual layer lives in `frontend/src/styles/globals.css` (~1000 lines of hand-written CSS,
-imported last by `styles/index.css` after `fonts`/`tailwind`/`theme`), and `App.tsx`
-carries `className`s rather than style objects. Only one inline `style` remains, for the
-score-bar width. `App.tsx` imports `useState` plus icons from `lucide-react` — that one
-package is genuinely used; **`frontend/src/app/components/ui/` (the shadcn/Radix component
-library) and most of `package.json`'s other dependencies (MUI, recharts, react-dnd,
-react-router, etc.) are still unused Figma-scaffolding leftovers** — don't assume they
-reflect the real UI or extend them without checking whether `App.tsx` actually uses them
-first.
+**The frontend was migrated from React/Vite to Angular.** The React build is gone, not
+kept alongside — its last commit is `7726b66d` if you need to diff against it. Nothing
+about the backend changed: same endpoint, same SSE contract, same request shape.
+
+The migration was cheap for reasons worth knowing before any future framework change:
+roughly 1,900 lines of the old app were plain hand-written CSS and ~150 lines were pure
+TypeScript (the export logic), and **both ported verbatim**. Only ~560 lines were actually
+React-shaped, and that code used just four `useState`, two `useEffect` and one `useRef`,
+with no context, router, memo or state library to unpick.
+
+Layout of `frontend/src/app/`:
+
+- `app.ts` — the shell. Owns the rail, the theme toggle, the `screen` signal that selects
+  which of the four screens renders, and `startRunning()`, which drives the SSE run. State
+  is Angular signals; there is no router, because the app has never had URLs to restore
+  and adding routing would be new behaviour rather than a port.
+- `config.ts` — `API_BASE_URL`, replacing `import.meta.env.VITE_API_URL`. See the running
+  section above for the `window.NOVELTY_LENS_API_URL` override.
+- `models/report.ts` — `AnalysisReport`, `PHASE_ORDER`, `PHASE_LABELS`, `PHASE_ICONS`, and
+  the `StreamEvent` union. `PHASE_ORDER` is the mirror of `backend/graph/events.py`.
+- `services/analysis.ts` — the SSE reader. Raw `fetch`, deliberately; see the SSE section.
+- `services/export.ts` — PDF / Word / JSON. Ported verbatim from React, and
+  `buildReportHtml`'s template literal is byte-identical, so exported documents are
+  unchanged: the `.doc` and `.json` produced by the Angular build compare byte-for-byte
+  equal to the React build's output for the same report. Keep it that way when editing.
+- `screens/` — `submit-screen`, `running-screen`, `report-screen`, `error-screen`.
+- `shared/` — `chrome.ts` (brand header, page footer), `export-menu.ts`, `icon.ts`,
+  `icon-paths.ts`.
+
+**Icons are inlined, not a dependency.** `lucide-angular` peers on Angular 13–21 while
+this app is on 22, so `shared/icon-paths.ts` holds the 22 glyphs the UI uses, extracted
+verbatim from the `lucide-react` package the React build used — identical artwork, one
+fewer runtime dependency. It is generated data: to add an icon, take its markup from
+lucide rather than hand-drawing a path. `shared/icon.ts` renders them through
+`bypassSecurityTrustHtml`, which is safe *only* because `ICON_PATHS` is a compile-time
+constant in the repo and `name` can only index into it — do not extend that component to
+accept arbitrary markup.
+
+**All the Figma scaffolding is gone.** The React `package.json` carried MUI, recharts,
+react-dnd, react-router, tailwind and a whole shadcn/Radix component directory that the
+real UI never used. The Angular `package.json` has 8 runtime dependencies, all of them
+Angular framework packages. **Tailwind was verified unused before being dropped** — the
+one apparent utility class in the old markup turned out to be the custom class
+`report-grid`. Dropping it is most of why the shipped CSS fell from ~104 kB to ~28 kB, and
+the total bundle from ~277 kB to ~190 kB.
 
 `frontend/public/` holds the brand assets the UI references by absolute path:
-`aramco-ai-mark.png` (from `App.tsx`) and `aramco-wave-background.jpg` (from
-`globals.css`). `aramco-ai-logo.png` is the **retired** full lockup — it baked the
+`aramco-ai-mark.png` (from `app.ts` and `shared/chrome.ts`) and `aramco-wave-background.jpg`
+(from `globals.css`). `aramco-ai-logo.png` is the **retired** full lockup — it baked the
 wordmark into the image, so renaming the product meant rebuilding the lockup as the
-standalone mark plus live text (`BrandHeader`'s `.brand-wordmark`). The file is kept
-for reference; nothing loads it. Vite copies `public/` to the build root
-verbatim, so those paths work in both dev and `dist/`. Note `index.html` no longer carries
-the inline `html, body, #root { height: 100% }` rule — `globals.css` owns it now, so
-dropping that import would collapse the layout.
+standalone mark plus live text (`BrandHeader`'s `.brand-wordmark`). The file is kept for
+reference; nothing loads it. Angular copies `public/` to the build root verbatim, so those
+paths work in both dev and `dist/`.
+
+Styling is unchanged from the React build and is **global, not component-scoped**:
+`src/styles.css` imports `styles/fonts.css`, `styles/theme.css` and `styles/globals.css`
+in that order, and every component carries plain `class` attributes matching that CSS. The
+components deliberately declare no `styleUrls`. If you move a rule into a component's
+styles, Angular's view encapsulation will scope it and the rest of the app will stop
+matching it — that is the main way to break this stylesheet.
 
 **Typography is Aramco Ghawar, served from `public/fonts/`, with no webfont CDN.**
 `styles/fonts.css` is the only place fonts are declared: nine `@font-face` blocks (Hairline
 100 through Black 900, OTF release `Ghawar 1.312-Beta 4.0`) plus `--font-sans`,
 `--font-display`, and `--font-mono`. All three variables resolve to Ghawar, and **every**
-`font-family` in `globals.css`, `theme.css`, and the PDF-export stylesheet inside `App.tsx`
+`font-family` in `globals.css`, `theme.css`, and the PDF-export stylesheet inside
+`services/export.ts`
 goes through one of them — do not hardcode a family anywhere, change the variable instead.
 The Google Fonts `@import` that used to sit at the top of this file is **gone**, along with
 IBM Plex Sans / Space Grotesk / JetBrains Mono; the fallback tail is now plain system fonts,
@@ -435,7 +485,8 @@ weights (400/500/600/700, ~165 KB), the rest are declared so a weight change jus
 Ghawar is licensed rather than open source — see that README for the still-open question of
 whether the binaries belong in git.
 
-There are **four** screens — `submit`, `running`, `report`, and `error`. The History screen
+There are **four** screens — `submit`, `running`, `report`, and `error`, one component each
+under `src/app/screens/`. The History screen
 was removed along with `GET /api/history` and the Postgres layer behind it; it had never
 shown anything on the default path, since only the retired legacy pipeline ever wrote a run.
 Nothing persists client-side either, so a completed report is gone once you start another
@@ -448,7 +499,7 @@ A failed run used to fire a native `alert()` and drop the user back on `submit`,
 threw away everything the stream had already said. `ErrorScreen` now renders the backend's
 `error` detail **verbatim** in a mono block, names the phase it died in, and shows how many
 of the nine phases completed — `startRunning` tracks `lastPhase` in a local declared
-*outside* the `try` precisely so the `catch` can read it without waiting on a state update.
+*outside* the `try` precisely so the `catch` can read it without waiting on a signal update.
 It offers retry and back, and never renders a partial report. Keep it that way: the
 zero-tolerance policy makes the error path a first-class result, not an afterthought, and
 paraphrasing or prettifying the detail string would hide exactly the information (an HTTP
