@@ -396,9 +396,12 @@ react-router, etc.) are still unused Figma-scaffolding leftovers** — don't ass
 reflect the real UI or extend them without checking whether `App.tsx` actually uses them
 first.
 
-`frontend/public/` holds the three brand assets the UI references by absolute path:
-`aramco-ai-logo.png` and `aramco-ai-mark.png` (from `App.tsx`) and
-`aramco-wave-background.jpg` (from `globals.css`). Vite copies `public/` to the build root
+`frontend/public/` holds the brand assets the UI references by absolute path:
+`aramco-ai-mark.png` (from `App.tsx`) and `aramco-wave-background.jpg` (from
+`globals.css`). `aramco-ai-logo.png` is the **retired** full lockup — it baked the
+wordmark into the image, so renaming the product meant rebuilding the lockup as the
+standalone mark plus live text (`BrandHeader`'s `.brand-wordmark`). The file is kept
+for reference; nothing loads it. Vite copies `public/` to the build root
 verbatim, so those paths work in both dev and `dist/`. Note `index.html` no longer carries
 the inline `html, body, #root { height: 100% }` rule — `globals.css` owns it now, so
 dropping that import would collapse the layout.
@@ -457,8 +460,10 @@ per-patent rationale reading *"Shares common vocabulary or systemic overlap with
 primary description."*, and an `"Extracted Concept Cluster"` placeholder concept. All
 three are gone — the empty case now says so plainly. The redesign briefly reintroduced the
 same mistake in a new place, seeding the submit screen's concept chips with a hardcoded
-`["Water treatment", "Consumer hardware"]`; that was removed on merge, and the chip row now
-reads "Concepts appear once a search runs" until a real run returns some. Two lesser
+`["Water treatment", "Consumer hardware"]`; that was removed on merge, and the submit
+screen's chip row has since been deleted outright along with the optional Draft claims
+field (the report screen still renders real concepts). Note the request body still sends
+`claims: ""` — the backend accepts the field, nothing collects it any more. Two lesser
 defaults survive in `startRunning`'s result mapping for malformed provider data
 (`"Unknown publication"` and `"Untitled patent record"` for a patent with no id or title,
 plus `"No detailed rationale was returned for this record."`); they are reachable only if a

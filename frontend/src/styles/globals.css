@@ -58,23 +58,23 @@ button {
 .brand-rail {
   position: relative;
   z-index: 20;
-  width: 122px;
-  min-width: 122px;
+  width: 84px;
+  min-width: 84px;
   height: 100vh;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 28px 14px 24px;
+  padding: 20px 8px 18px;
   background: rgba(255, 255, 255, 0.96);
   border-right: 1px solid rgba(196, 212, 222, 0.72);
   box-shadow: 8px 0 28px rgba(25, 65, 98, 0.025);
 }
 
 .rail-brand {
-  width: 64px;
-  height: 64px;
+  width: 46px;
+  height: 46px;
   border: 0;
-  border-radius: 15px;
+  border-radius: 12px;
   display: grid;
   place-items: center;
   cursor: pointer;
@@ -83,15 +83,15 @@ button {
 }
 
 .rail-brand img {
-  width: 48px;
-  height: 48px;
+  width: 34px;
+  height: 34px;
   object-fit: contain;
   filter: brightness(0) invert(1);
 }
 
 .rail-nav {
   width: 100%;
-  margin-top: 90px;
+  margin-top: 44px;
 }
 
 .rail-item,
@@ -100,17 +100,17 @@ button {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 7px;
   color: #5a6c82;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 600;
   text-align: center;
 }
 
 .rail-item {
-  padding: 14px 6px;
+  padding: 10px 3px;
   border: 0;
-  border-radius: 14px;
+  border-radius: 11px;
   cursor: pointer;
   background: transparent;
   transition: background 160ms ease, color 160ms ease, transform 160ms ease;
@@ -130,8 +130,13 @@ button {
 }
 
 .rail-mode {
-  padding-top: 24px;
+  padding: 16px 3px 0;
+  border: 0;
   border-top: 1px solid #dfe8ee;
+  border-radius: 0;
+  cursor: pointer;
+  background: transparent;
+  transition: background 160ms ease, color 160ms ease;
 }
 
 .workspace {
@@ -165,18 +170,55 @@ button {
   border-radius: 999px;
 }
 
+/* The wordmark used to be baked into a single PNG. It is now the standalone
+   mark plus live text, so the product name is editable; the navy/teal split
+   reproduces what the original artwork did. */
 .brand-header {
   display: flex;
   justify-content: center;
   align-items: center;
+  gap: 16px;
   min-height: 112px;
 }
 
-.brand-logo {
-  width: min(370px, 52vw);
+.brand-mark {
+  width: clamp(46px, 6vw, 62px);
   height: auto;
   display: block;
   filter: drop-shadow(0 4px 10px rgba(13, 60, 105, 0.05));
+}
+
+.brand-wordmark {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.brand-name {
+  color: var(--navy);
+  font-family: var(--font-display);
+  font-size: clamp(26px, 3.1vw, 41px);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.brand-name-accent {
+  color: var(--teal);
+}
+
+.brand-sub {
+  color: #8496ad;
+  font-family: var(--font-display);
+  font-size: clamp(9px, 1.02vw, 13px);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.42em;
+  text-transform: uppercase;
+  /* Optically centres the tracked-out subtitle, which the trailing letter
+     space would otherwise push left of the name above it. */
+  text-indent: 0.42em;
 }
 
 .intro-copy {
@@ -209,25 +251,6 @@ button {
 .running-intro {
   margin-top: 2px;
   margin-bottom: 26px;
-}
-
-.working-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--green-dark);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-}
-
-.working-label span {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--green);
-  box-shadow: 0 0 0 5px rgba(8, 168, 115, 0.09);
 }
 
 .glass-card {
@@ -271,18 +294,13 @@ button {
   font-weight: 500;
 }
 
-.required-pill {
-  padding: 5px 11px;
-  border: 1px solid rgba(8, 168, 115, 0.2);
-  border-radius: 999px;
-  background: rgba(8, 168, 115, 0.08);
-  color: var(--green-dark);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.second-field {
-  margin-top: 26px;
+/* Replaces the old "Required" pill. It sits inside the label, so it has to
+   beat `.field-title label span` (0,1,2), which greys out nested spans -
+   hence the extra class rather than a bare `.required-star`. */
+.field-title label .required-star {
+  margin-left: 4px;
+  color: #cb3c49;
+  font-weight: 700;
 }
 
 .textarea-wrap {
@@ -347,13 +365,6 @@ button {
   color: var(--green-dark);
   font-size: 13px;
   font-weight: 600;
-}
-
-.concept-chip-outline {
-  border-style: dashed;
-  border-color: #c8d6e0;
-  background: rgba(255, 255, 255, 0.65);
-  color: #74849a;
 }
 
 .form-actions {
@@ -524,6 +535,11 @@ button {
 }
 
 .report-toolbar {
+  /* Lifted above the cards that follow it. Every .glass-card sets
+     backdrop-filter, which creates a stacking context, so without this the
+     export dropdown paints underneath the summary card below. */
+  position: relative;
+  z-index: 50;
   width: min(1120px, 100%);
   margin: 2px auto 22px;
   padding: 14px 16px;
@@ -907,13 +923,13 @@ button {
 
 @media (max-width: 980px) {
   .brand-rail {
-    width: 88px;
-    min-width: 88px;
+    width: 74px;
+    min-width: 74px;
   }
 
   .rail-brand {
-    width: 56px;
-    height: 56px;
+    width: 42px;
+    height: 42px;
   }
 
   .rail-item span,
@@ -999,10 +1015,6 @@ button {
 
   .brand-header {
     min-height: 90px;
-  }
-
-  .brand-logo {
-    width: min(310px, 78vw);
   }
 
   .desktop-break {
@@ -1201,4 +1213,334 @@ button {
   .error-actions .secondary-button {
     flex: 1 1 100%;
   }
+}
+
+/* Export dropdown. Replaces the old "View JSON" + "Export PDF" pair with one
+   menu; the anchor is position:relative so the panel hangs off the button. */
+.export-menu {
+  position: relative;
+}
+
+.export-caret {
+  transition: transform 160ms ease;
+}
+
+.export-caret.open {
+  transform: rotate(180deg);
+}
+
+.export-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  width: 232px;
+  padding: 6px;
+  border-radius: 14px;
+  /* Opaque on purpose: .glass-card's 0.91 alpha let the cards behind show
+     through the menu, which read as a rendering bug rather than as glass. */
+  background: #fff;
+  box-shadow: 0 16px 40px rgba(24, 62, 96, 0.16);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: export-pop 130ms ease-out;
+}
+
+@keyframes export-pop {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.export-option {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 10px 11px;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  background: transparent;
+  color: var(--green);
+  transition: background 140ms ease;
+}
+
+.export-option:hover,
+.export-option:focus-visible {
+  background: rgba(8, 168, 115, 0.09);
+}
+
+.export-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.export-option-text strong {
+  color: var(--navy);
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.export-option-text small {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+/* ==========================================================================
+   Dark theme. Applied by <html data-theme="dark">, toggled from the rail.
+
+   Written as an override layer rather than by refactoring the light palette
+   into tokens: only ~19 of the ~100 colour declarations already went through
+   variables, so remapping the rest carried more risk to the shipped light
+   design than it was worth. Light mode below this point is untouched.
+
+   The rail is true black and every other surface is a dark grey, so the
+   navigation reads as a distinct plane from the content.
+   ========================================================================== */
+:root[data-theme="dark"] {
+  --navy: #e9edf3;
+  --navy-soft: #b4bfcc;
+  --muted: #8a96a5;
+  --line: #2f353d;
+  --card: rgba(33, 37, 43, 0.92);
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.42);
+  /* Accents lift slightly; the light-mode greens go muddy on dark. */
+  --green: #16c98d;
+  --green-dark: #23d79a;
+  --teal: #2ad4cd;
+  color: var(--navy);
+  background: #16191d;
+}
+
+:root[data-theme="dark"] .app-shell {
+  background: #16191d;
+}
+
+/* Rail: black, per the brief. */
+:root[data-theme="dark"] .brand-rail {
+  background: #000;
+  border-right-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 8px 0 28px rgba(0, 0, 0, 0.5);
+}
+
+:root[data-theme="dark"] .rail-item,
+:root[data-theme="dark"] .rail-mode {
+  color: #9aa6b5;
+}
+
+:root[data-theme="dark"] .rail-item:hover,
+:root[data-theme="dark"] .rail-mode:hover {
+  background: rgba(22, 201, 141, 0.12);
+}
+
+:root[data-theme="dark"] .rail-mode {
+  border-top-color: rgba(255, 255, 255, 0.1);
+}
+
+/* The wave photograph stays, dimmed hard so it reads as texture not image. */
+:root[data-theme="dark"] .screen {
+  background:
+    linear-gradient(rgba(26, 30, 35, 0.93), rgba(26, 30, 35, 0.93)),
+    url("/aramco-wave-background.jpg") center / cover no-repeat fixed;
+}
+
+:root[data-theme="dark"] .screen-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+:root[data-theme="dark"] .glass-card {
+  border-color: rgba(255, 255, 255, 0.09);
+}
+
+:root[data-theme="dark"] .brand-sub {
+  color: #7d8b9c;
+}
+
+/* Inputs */
+:root[data-theme="dark"] .textarea-wrap textarea {
+  border-color: #39414a;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--navy);
+}
+
+:root[data-theme="dark"] .textarea-wrap textarea:hover,
+:root[data-theme="dark"] .textarea-wrap textarea:focus {
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: 0 0 0 4px rgba(22, 201, 141, 0.1);
+}
+
+:root[data-theme="dark"] .textarea-wrap textarea::placeholder {
+  color: #6d7987;
+}
+
+:root[data-theme="dark"] .character-count,
+:root[data-theme="dark"] .time-note,
+:root[data-theme="dark"] .page-footer,
+:root[data-theme="dark"] .phase-label,
+:root[data-theme="dark"] .eyebrow,
+:root[data-theme="dark"] .report-title-block p,
+:root[data-theme="dark"] .patent-meta,
+:root[data-theme="dark"] .empty-state,
+:root[data-theme="dark"] .score-ring span,
+:root[data-theme="dark"] .field-title label span {
+  color: #8d99a8;
+}
+
+:root[data-theme="dark"] .summary-copy > p:not(.eyebrow),
+:root[data-theme="dark"] .patent-main p,
+:root[data-theme="dark"] .recommendation-list p,
+:root[data-theme="dark"] .progress-step.complete .phase-label {
+  color: #a7b3c1;
+}
+
+/* Progress list */
+:root[data-theme="dark"] .progress-step {
+  border-bottom-color: rgba(255, 255, 255, 0.07);
+}
+
+:root[data-theme="dark"] .phase-icon {
+  color: #8d99a8;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+:root[data-theme="dark"] .phase-line {
+  border-left-color: #3a424c;
+}
+
+/* Buttons */
+:root[data-theme="dark"] .secondary-button {
+  color: #c4cedb;
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+:root[data-theme="dark"] .secondary-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+}
+
+/* Report surfaces */
+:root[data-theme="dark"] .score-track {
+  stroke: #333b45;
+}
+
+:root[data-theme="dark"] .section-heading {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+:root[data-theme="dark"] .patent-row {
+  border-bottom-color: rgba(255, 255, 255, 0.07);
+}
+
+:root[data-theme="dark"] .patent-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+:root[data-theme="dark"] .patent-score span {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+:root[data-theme="dark"] .score-bar {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+:root[data-theme="dark"] .recommendations-card {
+  background: rgba(20, 44, 38, 0.85);
+  border-color: rgba(22, 201, 141, 0.26);
+}
+
+:root[data-theme="dark"] .recommendations-card .section-heading {
+  border-color: rgba(22, 201, 141, 0.2);
+}
+
+:root[data-theme="dark"] .concept-chip {
+  border-color: rgba(22, 201, 141, 0.3);
+  background: rgba(22, 201, 141, 0.12);
+}
+
+:root[data-theme="dark"] .result-count,
+:root[data-theme="dark"] .verdict-strong {
+  background: rgba(22, 201, 141, 0.16);
+}
+
+:root[data-theme="dark"] .verdict-moderate {
+  background: rgba(214, 148, 36, 0.18);
+}
+
+:root[data-theme="dark"] .verdict-weak {
+  background: rgba(226, 82, 96, 0.18);
+}
+
+/* Risk accents need lifting to stay legible on dark. */
+:root[data-theme="dark"] .verdict-weak,
+:root[data-theme="dark"] .score-ring.risk-high strong,
+:root[data-theme="dark"] .patent-score.risk-high strong,
+:root[data-theme="dark"] .patent-score.risk-high span {
+  color: #ef7683;
+}
+
+:root[data-theme="dark"] .verdict-moderate,
+:root[data-theme="dark"] .score-ring.risk-medium strong,
+:root[data-theme="dark"] .patent-score.risk-medium strong,
+:root[data-theme="dark"] .patent-score.risk-medium span {
+  color: #e0a63c;
+}
+
+/* Export menu */
+:root[data-theme="dark"] .export-dropdown {
+  background: #23272e;
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+}
+
+:root[data-theme="dark"] .export-option:hover,
+:root[data-theme="dark"] .export-option:focus-visible {
+  background: rgba(22, 201, 141, 0.14);
+}
+
+/* Error screen */
+:root[data-theme="dark"] .error-card {
+  border-color: rgba(226, 82, 96, 0.3);
+}
+
+:root[data-theme="dark"] .error-icon {
+  color: #ef7683;
+  background: rgba(226, 82, 96, 0.16);
+}
+
+:root[data-theme="dark"] .error-detail {
+  border-color: rgba(226, 82, 96, 0.28);
+  background: rgba(226, 82, 96, 0.1);
+  color: #f0929c;
+}
+
+:root[data-theme="dark"] .failed-label {
+  color: #ef7683;
+}
+
+:root[data-theme="dark"] .error-actions .secondary-button {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+:root[data-theme="dark"] .error-hint code {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+:root[data-theme="dark"] .error-pip {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* The rule above is (0,3,0) and would otherwise beat `.error-pip.done` /
+   `.error-pip.failed` at (0,2,0), flattening every phase pip to the same grey
+   and losing the completed-vs-failed distinction entirely. */
+:root[data-theme="dark"] .error-pip.done {
+  background: var(--green);
+}
+
+:root[data-theme="dark"] .error-pip.failed {
+  background: #ef7683;
 }
