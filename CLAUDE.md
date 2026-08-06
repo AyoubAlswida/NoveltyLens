@@ -420,7 +420,7 @@ Layout of `frontend/src/app/`:
   unchanged: the `.doc` and `.json` produced by the Angular build compare byte-for-byte
   equal to the React build's output for the same report. Keep it that way when editing.
 - `screens/` — `submit-screen`, `running-screen`, `report-screen`, `error-screen`.
-- `shared/` — `chrome.ts` (brand header, page footer), `export-menu.ts`, `icon.ts`,
+- `shared/` — `chrome.ts` (brand header only; the page footer was removed), `export-menu.ts`, `icon.ts`,
   `icon-paths.ts`.
 
 **Icons are inlined, not a dependency.** `lucide-angular` peers on Angular 13–21 while
@@ -440,13 +440,59 @@ one apparent utility class in the old markup turned out to be the custom class
 `report-grid`. Dropping it is most of why the shipped CSS fell from ~104 kB to ~28 kB, and
 the total bundle from ~277 kB to ~190 kB.
 
-`frontend/public/` holds the brand assets the UI references by absolute path:
-`aramco-ai-mark.png` (from `app.ts` and `shared/chrome.ts`) and `aramco-wave-background.jpg`
-(from `globals.css`). `aramco-ai-logo.png` is the **retired** full lockup — it baked the
-wordmark into the image, so renaming the product meant rebuilding the lockup as the
-standalone mark plus live text (`BrandHeader`'s `.brand-wordmark`). The file is kept for
-reference; nothing loads it. Angular copies `public/` to the build root verbatim, so those
-paths work in both dev and `dist/`.
+`frontend/public/` holds the brand assets the UI references by absolute path.
+Angular copies `public/` to the build root verbatim, so those paths work in both dev and
+`dist/`.
+
+**The product has its own mark now — `novelty-lens-mark.svg` — and it ships in three
+cuts.** It is not the Aramco AI mark; it borrows that mark's palette (the
+blue→teal→green gradient already in `theme.css`) and nothing else. The drawing is a lens
+ring holding a weighted cluster of prior art, with the invention as a green ring outside
+the glass; the gap between them is the novelty score, which is the one thing the product
+actually measures. All three cuts are hand-written SVG on a 64-unit grid, optically
+centred on 32,32, and each carries a comment explaining what it is for:
+
+- `novelty-lens-mark.svg` — the colour cut, used by `shared/chrome.ts` (`.brand-mark`).
+- `novelty-lens-mark-white.svg` — a **drawn** reversed cut for the rail tile in `app.ts`.
+  It is not the colour cut with a filter over it. `globals.css`'s `.rail-brand img` used
+  to carry `filter: brightness(0) invert(1)`, which knocks everything to a single white
+  value and loses the cluster's opacity weighting against the tile's mid-tone gradient;
+  the reversed cut lifts those opacities (0.44–0.72 → 0.60–0.86) instead. The filter is
+  gone — do not put it back, and do not point that `<img>` at the colour cut.
+- `novelty-lens-favicon.svg` — the small-size cut for `<link rel="icon">` in
+  `src/index.html`, with the cluster cut from seven dots to three and every stroke
+  thickened. Below ~32px the full cluster fills in to a smudge. Use the full mark above
+  that size.
+
+The two `aramco-ai-*.png` files are both **retired** and nothing loads either one.
+`aramco-ai-logo.png` was the full lockup, which baked the wordmark into the image;
+`aramco-ai-mark.png` was the standalone mark that stood in until the product had its own,
+and it was also the favicon. `aramco-wave-background.jpg` is still live, from
+`globals.css`.
+
+**Buttons follow the Aramco Pixel component spec**, not the old house style. Contained is
+a flat solid blue, Outlined is a blue border and blue text on no fill, and disabled is flat
+grey — the previous blue-to-green gradient, the lifting hover and the 45%-opacity disabled
+state are all deliberately gone. Every value is a token in `:root`: `--btn-blue`,
+`--btn-blue-hover`, `--btn-blue-active`, `--btn-disabled-bg`, `--btn-disabled-fg`,
+`--btn-radius`, plus `--btn-blue-dark` / `--btn-blue-dark-hover` for dark mode. **Those
+colours and the 8px radius were matched by eye from a photo of the Pixel Components page,
+not taken from a spec** — if you get the real values, changing those tokens updates every
+button, and nothing else needs touching.
+
+The light theme is **plain white** (`:root`, `.app-shell` and `.screen` all `#fff`). The
+wave photograph is dark-mode only now, in the `[data-theme="dark"] .screen` rule. The
+"Typical result in under 60 seconds" note and the page footer were removed from all four
+screens, along with their CSS and the `Clock3` / `LockKeyhole` icons.
+
+**A specificity trap has now bitten three times in this stylesheet, so assume it will
+again.** The dark rules are written `:root[data-theme="dark"] .foo`, which is specificity
+(0,3,0) — exactly the same as a state rule like `.progress-step.complete .phase-icon` — and
+the dark block sits later in the file, so it silently wins and erases the state. It flattened
+the required asterisk to grey, then every error-screen phase pip, then every completed and
+in-progress step in the run list. Each now has an explicit dark counterpart. **Any state
+class you add needs one too**, and the symptom is never an error: it is a state that renders
+identically to its neutral.
 
 Styling is unchanged from the React build and is **global, not component-scoped**:
 `src/styles.css` imports `styles/fonts.css`, `styles/theme.css` and `styles/globals.css`

@@ -3,8 +3,8 @@ import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { ICON_PATHS } from './icon-paths';
 
 /**
- * Mirrors the React `<Home size={21} strokeWidth={1.8} />` call shape as
- * `<app-icon name="Home" [size]="21" [strokeWidth]="1.8" />`.
+ * Mirrors the React `<Plus size={21} strokeWidth={2} />` call shape as
+ * `<app-icon name="Plus" [size]="21" [strokeWidth]="2" />`.
  *
  * The inner SVG is bypassed through the sanitizer because Angular strips
  * unknown SVG children from [innerHTML] otherwise. That is safe here and only

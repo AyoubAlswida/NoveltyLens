@@ -1,7 +1,7 @@
 :root {
   font-family: var(--font-sans);
   color: #11264d;
-  background: #f8fbff;
+  background: #fff;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --navy: #10264f;
@@ -14,6 +14,17 @@
   --blue: #155bd7;
   --card: rgba(255, 255, 255, 0.91);
   --shadow: 0 18px 50px rgba(32, 72, 105, 0.09);
+  /* Aramco Pixel button palette. The exact hex should come from the brand
+     portal's Colors page -- these were matched by eye to the Components
+     screenshot, so swap the four values below and every button follows. */
+  --btn-blue: #1179c4;
+  --btn-blue-hover: #0e67a8;
+  --btn-blue-active: #0b5789;
+  --btn-disabled-bg: #d0d5db;
+  --btn-disabled-fg: #8d949d;
+  --btn-radius: 8px;
+  --btn-blue-dark: #54acf0;
+  --btn-blue-dark-hover: #7cc0f5;
 }
 
 * {
@@ -52,7 +63,7 @@ button {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background: #f8fbff;
+  background: #fff;
 }
 
 .brand-rail {
@@ -82,11 +93,13 @@ button {
   box-shadow: 0 10px 26px rgba(21, 91, 215, 0.24);
 }
 
+/* The mark here is novelty-lens-mark-white.svg, a drawn reversed cut — no filter.
+   brightness(0) invert(1) used to knock the colour mark out to white, but it flattens
+   every dot in the cluster to the same value and the faint ones vanish on the tile. */
 .rail-brand img {
   width: 34px;
   height: 34px;
   object-fit: contain;
-  filter: brightness(0) invert(1);
 }
 
 .rail-nav {
@@ -151,9 +164,9 @@ button {
   width: 100%;
   min-height: 100%;
   padding: 22px 44px 24px;
-  background:
-    linear-gradient(rgba(248, 251, 255, 0.62), rgba(248, 251, 255, 0.62)),
-    url("/aramco-wave-background.jpg") center / cover no-repeat fixed;
+  /* Plain white in light mode. The wave photograph is dark-mode only now --
+     see the [data-theme="dark"] .screen rule further down. */
+  background: #fff;
 }
 
 .screen-scroll {
@@ -374,10 +387,15 @@ button {
   margin-top: 24px;
 }
 
+/* Buttons follow the Aramco Pixel component spec: a solid Contained button, an
+   Outlined button, and a flat grey disabled state. The previous blue-to-green
+   gradient, lifting hover and 12px radius were the old house style and are
+   deliberately gone -- the spec's buttons are flat, square-ish and change only
+   in fill. */
 .primary-action,
 .secondary-button {
-  border: 0;
-  border-radius: 12px;
+  border: 1px solid transparent;
+  border-radius: var(--btn-radius);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -385,55 +403,66 @@ button {
   cursor: pointer;
   font-family: var(--font-display);
   font-weight: 700;
-  transition: transform 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
 }
 
+.primary-action:focus-visible,
+.secondary-button:focus-visible {
+  outline: 2px solid var(--btn-blue);
+  outline-offset: 2px;
+}
+
+/* Contained */
 .primary-action {
-  min-height: 54px;
-  padding: 0 26px;
+  min-height: 48px;
+  padding: 0 24px;
   color: #fff;
-  background: linear-gradient(100deg, var(--blue) 0%, #0f7fc8 45%, #16b35e 100%);
-  box-shadow: 0 12px 28px rgba(17, 106, 181, 0.2);
+  background: var(--btn-blue);
 }
 
 .primary-action:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 0 16px 32px rgba(17, 106, 181, 0.25);
+  background: var(--btn-blue-hover);
+}
+
+.primary-action:active:not(:disabled) {
+  background: var(--btn-blue-active);
 }
 
 .primary-action:disabled {
   cursor: not-allowed;
-  opacity: 0.45;
+  color: var(--btn-disabled-fg);
+  background: var(--btn-disabled-bg);
 }
 
 .primary-action.compact {
-  min-height: 42px;
+  min-height: 40px;
   padding: 0 18px;
   font-size: 13px;
 }
 
-.time-note {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: #697b92;
+/* Outlined */
+.secondary-button {
+  min-height: 40px;
+  padding: 0 18px;
   font-size: 13px;
-  font-weight: 500;
+  color: var(--btn-blue);
+  background: transparent;
+  border-color: var(--btn-blue);
 }
 
-.page-footer {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 9px;
-  margin: 28px auto 0;
-  color: #667991;
-  font-size: 13px;
+.secondary-button:hover:not(:disabled) {
+  background: rgba(17, 121, 196, 0.08);
 }
 
-.page-footer svg,
-.page-footer strong {
-  color: var(--green);
+.secondary-button:active:not(:disabled) {
+  background: rgba(17, 121, 196, 0.16);
+}
+
+.secondary-button:disabled {
+  cursor: not-allowed;
+  color: var(--btn-disabled-fg);
+  border-color: var(--btn-disabled-bg);
+  background: transparent;
 }
 
 .progress-card {
@@ -553,20 +582,6 @@ button {
   width: 42px;
   height: 42px;
   padding: 0;
-}
-
-.secondary-button {
-  min-height: 42px;
-  padding: 0 16px;
-  color: #53657d;
-  background: rgba(255, 255, 255, 0.82);
-  border: 1px solid #d7e2e9;
-  font-size: 13px;
-}
-
-.secondary-button:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 8px 18px rgba(34, 72, 100, 0.08);
 }
 
 .report-title-block {
@@ -1039,10 +1054,6 @@ button {
     width: 100%;
   }
 
-  .time-note {
-    justify-content: center;
-  }
-
   .report-toolbar {
     gap: 10px;
   }
@@ -1378,8 +1389,6 @@ button {
 }
 
 :root[data-theme="dark"] .character-count,
-:root[data-theme="dark"] .time-note,
-:root[data-theme="dark"] .page-footer,
 :root[data-theme="dark"] .phase-label,
 :root[data-theme="dark"] .eyebrow,
 :root[data-theme="dark"] .report-title-block p,
@@ -1407,20 +1416,56 @@ button {
   background: rgba(255, 255, 255, 0.06);
 }
 
+/* The rule above is (0,3,0), the same specificity as `.progress-step.complete
+   .phase-icon` and `.progress-step.active .phase-icon` in the light block --
+   and it comes later, so without these it silently flattened every completed
+   and in-progress step to the same grey as a pending one. Third time this
+   specificity trap has bitten in this stylesheet; assume any state class needs
+   an explicit dark counterpart. */
+:root[data-theme="dark"] .progress-step.active .phase-icon {
+  color: var(--green-dark);
+  background: rgba(22, 201, 141, 0.16);
+  box-shadow: 0 0 0 7px rgba(22, 201, 141, 0.07);
+}
+
+:root[data-theme="dark"] .progress-step.complete .phase-icon {
+  /* Dark glyph on the lifted green: white on #16c98d is only ~2:1. */
+  color: #0d1f19;
+  background: var(--green);
+}
+
+:root[data-theme="dark"] .progress-step.complete .phase-line {
+  border-color: rgba(22, 201, 141, 0.5);
+}
+
 :root[data-theme="dark"] .phase-line {
   border-left-color: #3a424c;
 }
 
 /* Buttons */
-:root[data-theme="dark"] .secondary-button {
-  color: #c4cedb;
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.12);
+/* The Outlined button keeps its blue on dark, lifted for contrast rather than
+   flattened to grey -- otherwise it stops reading as the Pixel outlined variant. */
+:root[data-theme="dark"] .primary-action {
+  background: var(--btn-blue-dark);
 }
 
-:root[data-theme="dark"] .secondary-button:hover {
-  background: rgba(255, 255, 255, 0.1);
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+:root[data-theme="dark"] .primary-action:hover:not(:disabled) {
+  background: var(--btn-blue-dark-hover);
+}
+
+:root[data-theme="dark"] .primary-action:disabled {
+  color: #7c848d;
+  background: #3a4048;
+}
+
+:root[data-theme="dark"] .secondary-button {
+  color: var(--btn-blue-dark);
+  background: transparent;
+  border-color: var(--btn-blue-dark);
+}
+
+:root[data-theme="dark"] .secondary-button:hover:not(:disabled) {
+  background: rgba(84, 172, 240, 0.14);
 }
 
 /* Report surfaces */

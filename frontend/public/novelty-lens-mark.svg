@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"
+     role="img" aria-label="Novelty Lens">
+  <title>Novelty Lens</title>
+  <!--
+    Direction C1. The lens ring is the field of view: the weighted cluster inside it is
+    prior art, sized by how closely each patent scored. The green ring outside the glass
+    is the invention under test — novel by the distance separating it from the cluster.
+    Drawn on a 64-unit grid; every coordinate is optically centred on 32,32.
+  -->
+  <defs>
+    <linearGradient id="nlGrad" gradientUnits="userSpaceOnUse" x1="10" y1="8" x2="54" y2="56">
+      <stop offset="0" stop-color="#155BD7"/>
+      <stop offset="0.55" stop-color="#12B8B2"/>
+      <stop offset="1" stop-color="#08A873"/>
+    </linearGradient>
+  </defs>
+
+  <circle cx="27" cy="36.5" r="19" fill="none" stroke="url(#nlGrad)" stroke-width="4.2"/>
+
+  <g fill="url(#nlGrad)">
+    <circle cx="19" cy="29.5" r="3" opacity="0.68"/>
+    <circle cx="30" cy="27.5" r="2.3" opacity="0.52"/>
+    <circle cx="16" cy="39.5" r="2.5" opacity="0.48"/>
+    <circle cx="25" cy="37.5" r="4.2"/>
+    <circle cx="34" cy="36.5" r="2.7" opacity="0.72"/>
+    <circle cx="21" cy="46.5" r="2.8" opacity="0.58"/>
+    <circle cx="32" cy="45.5" r="2.1" opacity="0.44"/>
+  </g>
+
+  <circle cx="50" cy="14.5" r="6.4" fill="none" stroke="#08A873" stroke-width="3.4"/>
+</svg>

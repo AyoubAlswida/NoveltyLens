@@ -1,13 +1,13 @@
 import { Component, ChangeDetectionStrategy, input, output, computed } from '@angular/core';
 import { Icon } from '../shared/icon';
-import { BrandHeader, PageFooter } from '../shared/chrome';
+import { BrandHeader } from '../shared/chrome';
 import { Phase, PHASE_ORDER, PHASE_LABELS } from '../models/report';
 import { API_BASE_URL } from '../config';
 
 @Component({
   selector: 'app-error-screen',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Icon, BrandHeader, PageFooter],
+  imports: [Icon, BrandHeader],
   template: `
     <div class="screen screen-scroll">
       <app-brand-header />
@@ -61,7 +61,6 @@ import { API_BASE_URL } from '../config';
         </p>
       </section>
 
-      <app-page-footer />
     </div>
   `,
 })

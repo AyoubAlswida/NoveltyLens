@@ -1,12 +1,12 @@
 import { Component, ChangeDetectionStrategy, input, computed } from '@angular/core';
 import { Icon } from '../shared/icon';
-import { BrandHeader, PageFooter } from '../shared/chrome';
+import { BrandHeader } from '../shared/chrome';
 import { Phase, PHASE_ORDER, PHASE_LABELS, PHASE_ICONS } from '../models/report';
 
 @Component({
   selector: 'app-running-screen',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Icon, BrandHeader, PageFooter],
+  imports: [Icon, BrandHeader],
   template: `
     <div class="screen screen-scroll">
       <app-brand-header />
@@ -38,7 +38,6 @@ import { Phase, PHASE_ORDER, PHASE_LABELS, PHASE_ICONS } from '../models/report'
         }
       </section>
 
-      <app-page-footer />
     </div>
   `,
 })

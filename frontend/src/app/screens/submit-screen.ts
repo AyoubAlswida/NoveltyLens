@@ -1,11 +1,11 @@
 import { Component, ChangeDetectionStrategy, input, output } from '@angular/core';
 import { Icon } from '../shared/icon';
-import { BrandHeader, PageFooter } from '../shared/chrome';
+import { BrandHeader } from '../shared/chrome';
 
 @Component({
   selector: 'app-submit-screen',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Icon, BrandHeader, PageFooter],
+  imports: [Icon, BrandHeader],
   template: `
     <div class="screen screen-scroll">
       <app-brand-header />
@@ -47,14 +47,9 @@ import { BrandHeader, PageFooter } from '../shared/chrome';
             <span>Run Novelty Lens</span>
             <span aria-hidden="true">&rarr;</span>
           </button>
-          <div class="time-note">
-            <app-icon name="Clock3" [size]="22" />
-            <span>Typical result in about 60 seconds</span>
-          </div>
         </div>
       </section>
 
-      <app-page-footer />
     </div>
   `,
 })

@@ -20,7 +20,7 @@ const EXAMPLE_DESC =
     <div class="app-shell">
       <aside class="brand-rail" aria-label="Primary navigation">
         <button class="rail-brand" aria-label="Novelty Lens home" (click)="goHome()">
-          <img src="/aramco-ai-mark.png" alt="" />
+          <img src="/novelty-lens-mark-white.svg" alt="" />
         </button>
 
         <nav class="rail-nav">
@@ -29,7 +29,7 @@ const EXAMPLE_DESC =
             (click)="startNewSearch()"
             aria-label="Start a new search, clearing the current description and report"
           >
-            <app-icon name="Home" [size]="21" [strokeWidth]="1.8" />
+            <app-icon name="Plus" [size]="21" [strokeWidth]="2" />
             <span>New Search</span>
           </button>
         </nav>

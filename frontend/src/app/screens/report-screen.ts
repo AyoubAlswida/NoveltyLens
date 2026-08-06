@@ -1,13 +1,13 @@
 import { Component, ChangeDetectionStrategy, input, output, computed } from '@angular/core';
 import { Icon } from '../shared/icon';
-import { BrandHeader, PageFooter } from '../shared/chrome';
+import { BrandHeader } from '../shared/chrome';
 import { ExportMenu } from '../shared/export-menu';
 import { AnalysisReport, Risk } from '../models/report';
 
 @Component({
   selector: 'app-report-screen',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Icon, BrandHeader, PageFooter, ExportMenu],
+  imports: [Icon, BrandHeader, ExportMenu],
   template: `
     <div class="screen screen-scroll report-screen">
       <app-brand-header />
@@ -137,7 +137,6 @@ import { AnalysisReport, Risk } from '../models/report';
         }
       </section>
 
-      <app-page-footer />
     </div>
   `,
 })
