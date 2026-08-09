@@ -14,9 +14,15 @@ from ranking import reciprocal_rank_fusion
 
 
 def fuse_node(state: GraphState) -> dict:
-    """Fuse the keyword and semantic result sets into one candidate list."""
+    """Fuse the keyword and semantic result sets into one candidate list.
+
+    ``semantic_patents`` defaults to empty: with semantic_search temporarily
+    disabled in ``graph/pipeline.py``, no node ever writes that key, and
+    ``GraphState`` is ``total=False`` - a plain ``state["semantic_patents"]``
+    would raise ``KeyError`` instead of degrading to keyword-only fusion.
+    """
     keyword_patents = state["keyword_patents"]
-    semantic_patents = state["semantic_patents"]
+    semantic_patents = state.get("semantic_patents", [])
 
     fused = reciprocal_rank_fusion([keyword_patents, semantic_patents])
 

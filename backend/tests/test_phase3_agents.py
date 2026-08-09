@@ -9,13 +9,136 @@ Qdrant for every test here, same as the rest of the suite.
 from unittest.mock import patch
 
 import pytest
+import requests
 
-from graph.searching import semantic_search_node
+from compare import rank_by_title_abstract
+from graph.searching import keyword_search_node, semantic_search_node
 from graph.validation import validate_node
 from models import PatentRecord
 from ranking import reciprocal_rank_fusion
+from search.epo import search_epo
 from search.retrieve import retrieve_similar_patents
 from search.vector_store import store_patents
+
+# --------------------------------------------------------------------------
+# Keyword search: drop candidates with no full text
+# --------------------------------------------------------------------------
+
+
+def test_keyword_search_node_drops_candidates_with_no_full_text():
+    """A candidate that comes out of enrichment with no full text at all is
+    dropped, not silently left to fall back to scoring against its abstract."""
+    has_text = PatentRecord(id="US1", title="Has text", abstract="abstract", source="Google Patents")
+    no_text = PatentRecord(id="US2", title="No text", abstract="abstract", source="Google Patents")
+
+    def fake_enrich(patents):
+        for patent in patents:
+            if patent.id == "US1":
+                patent.full_text = "real full text"
+        return patents
+
+    with patch("graph.searching.emit_progress"), \
+         patch("graph.searching.search_all_providers_strict", return_value=[has_text, no_text]), \
+         patch("graph.searching.rank_by_title_abstract", side_effect=lambda text, patents, top_n: patents), \
+         patch("graph.searching.enrich_with_full_text", side_effect=fake_enrich), \
+         patch("graph.searching.enrich_epo_full_text", side_effect=lambda patents: patents):
+        result = keyword_search_node({"queries": ["q"], "invention_text": "an invention"})
+
+    assert [p.id for p in result["keyword_patents"]] == ["US1"]
+    assert result["candidates"] == result["keyword_patents"]
+
+
+# --------------------------------------------------------------------------
+# Title/abstract relevance pre-filter
+# --------------------------------------------------------------------------
+
+
+def test_rank_by_title_abstract_keeps_the_closer_matches():
+    """The filter that runs before full-text enrichment: ranks by title +
+    abstract similarity alone and truncates to top_n."""
+    related = PatentRecord(id="US1", title="UV water bottle sterilizer", abstract="Sterilizes water with UV-C light in a portable bottle.")
+    unrelated = PatentRecord(id="US2", title="Tractor gearbox", abstract="A mechanical gearbox assembly for tractor power take-off.")
+
+    kept = rank_by_title_abstract("A portable UV-C water bottle sterilizer", [related, unrelated], top_n=1)
+
+    assert [p.id for p in kept] == ["US1"]
+
+
+def test_rank_by_title_abstract_returns_empty_for_no_candidates():
+    assert rank_by_title_abstract("anything", [], top_n=20) == []
+
+
+def test_epo_search_builds_kind_free_epodoc_id():
+    """The id must be country+doc-number with NO kind suffix - EPO OPS's
+    full-text endpoints 404 on a kind-suffixed id (verified against the live
+    API during development)."""
+    fake_xml = b"""<?xml version="1.0"?>
+    <ops:world-patent-data xmlns:ops="http://ops.epo.org" xmlns="http://www.epo.org/exchange">
+      <exchange-documents>
+        <exchange-document country="EP" doc-number="1234567" kind="A1">
+          <bibliographic-data>
+            <invention-title lang="en">Test Invention</invention-title>
+            <abstract><p>Test abstract text.</p></abstract>
+          </bibliographic-data>
+        </exchange-document>
+      </exchange-documents>
+    </ops:world-patent-data>"""
+
+    class _FakeResponse:
+        status_code = 200
+        content = fake_xml
+
+        def raise_for_status(self):
+            pass
+
+    with patch("search.epo.get_access_token", return_value="fake-token"), \
+         patch("search.epo.requests.get", return_value=_FakeResponse()):
+        patents = search_epo("test query", size=10)
+
+    assert len(patents) == 1
+    assert patents[0].id == "EP1234567"
+
+
+def test_epo_search_returns_empty_on_zero_results_fault():
+    """EPO OPS uses HTTP 404 with a SERVER.EntityNotFound fault to mean
+    'zero matches for this query' - a genuine empty result, not a provider
+    failure. Confirmed against the live API: a query that legitimately
+    matches nothing returns exactly this shape."""
+    fault_xml = b"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    <fault xmlns="http://ops.epo.org">
+        <code>SERVER.EntityNotFound</code>
+        <message>No results found</message>
+    </fault>"""
+
+    class _FakeNotFoundResponse:
+        status_code = 404
+        content = fault_xml
+
+        def raise_for_status(self):
+            raise AssertionError("should not be called for a zero-results fault")
+
+    with patch("search.epo.get_access_token", return_value="fake-token"), \
+         patch("search.epo.requests.get", return_value=_FakeNotFoundResponse()):
+        patents = search_epo("a query that matches nothing", size=10)
+
+    assert patents == []
+
+
+def test_epo_search_raises_on_a_genuine_404_that_is_not_the_zero_results_fault():
+    """A 404 whose body isn't the SERVER.EntityNotFound shape is a real
+    failure and must still raise - the zero-results carve-out is narrow."""
+    class _FakeUnexpectedResponse:
+        status_code = 404
+        content = b"<html>not the fault shape we expect</html>"
+
+        def raise_for_status(self):
+            raise requests.HTTPError("404 Client Error")
+
+    with patch("search.epo.get_access_token", return_value="fake-token"), \
+         patch("search.epo.requests.get", return_value=_FakeUnexpectedResponse()):
+        with pytest.raises(requests.HTTPError):
+            search_epo("some query", size=10)
+
 
 # --------------------------------------------------------------------------
 # P3.3 - Semantic Search

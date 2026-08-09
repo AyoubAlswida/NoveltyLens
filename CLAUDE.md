@@ -27,7 +27,7 @@ and a Vite/React frontend — with no shared tooling; each is run and developed 
 **Backend** (from `backend/`):
 - Install deps: `pip install -r requirements.txt`
 - Run the API: `python server.py` — serves on `http://127.0.0.1:8001` (hardcoded host/port in `server.py`'s `__main__` block)
-- Run the tests: `python -m pytest` from `backend/` (config in `backend/pytest.ini`, which sets `pythonpath = .` because the modules import each other flat, e.g. `from config import settings`). The suite is `backend/tests/`. `backend/tests/conftest.py` now stubs embeddings and Qdrant (autouse, for every test) alongside the existing `_llm_chat`/`SOURCES` stubs — `compare.py`'s ranking and the semantic-search path are on the happy path for both pipelines now, not just Phase-3-specific tests, so the suite still needs no credentials and makes no network calls. `test_pipeline_parity.py` covers legacy↔LangGraph parity (no longer byte-identical on the happy path — see below); `test_phase3_agents.py` covers Semantic Search, Fusion, and Validation individually. This is not yet the full P3.8 failure-path matrix (LLM failure, single-provider failure, Qdrant/embeddings outage, zero-similarity are covered for the parts that existed pre-Phase-3; a dedicated outage-injection suite for the new agents is still open).
+- Run the tests: `python -m pytest` from `backend/` (config in `backend/pytest.ini`, which sets `pythonpath = .` because the modules import each other flat, e.g. `from config import settings`). The suite is `backend/tests/`. `backend/tests/conftest.py` stubs embeddings, Qdrant, and EPO's full-text enrichment (autouse, for every test) alongside the existing `_llm_chat`/`SOURCES` stubs — EPO's real enrichment keys off `source`/`id` alone, both of which test fixtures set, unlike Google's (gated on `serpapi_id`, which test fixtures never set and so skip naturally) — without the stub it would make real calls to EPO's auth and full-text endpoints during the suite. `compare.py`'s ranking is on the happy path for both pipelines now, not just Phase-3-specific tests, so the suite still needs no credentials and makes no network calls. `test_pipeline_parity.py` covers legacy↔LangGraph parity (no longer byte-identical on the happy path — see below); `test_phase3_agents.py` covers the title/abstract filter, Semantic Search, Fusion, and Validation individually (Semantic Search's own tests exercise `search/vector_store.py` and `search/retrieve.py` directly, independent of the node being wired into the graph or not). This is not yet the full P3.8 failure-path matrix (LLM failure, single-provider failure, Qdrant/embeddings outage, zero-similarity are covered for the parts that existed pre-Phase-3; a dedicated outage-injection suite for the new agents is still open).
 - Still no lint config and no `pyproject.toml`. `pytest-asyncio` remains unused — the tests are all synchronous.
 
 **Frontend** (from `frontend/`):
@@ -99,58 +99,76 @@ flow is a single generator, `_run_pipeline` in `backend/server.py`, reached thro
 Each stage `yield`s a progress event before/after it runs; `server.py` wraps these as
 `data: <json>\n\n` SSE frames.
 
-**The SSE contract used to be described as spanning `backend/server.py` and
-`frontend/src/app/App.tsx` — that is no longer true, and this section previously said
-otherwise.** The frontend does not consume the SSE stream at all: `App.tsx` calls the
-non-streaming `POST /api/analyze` and fakes progress with a hardcoded `STEPS` array driven
-by a `setInterval` timer, unrelated to `progress.phase`. There is no `PHASES` array in the
-frontend today. The SSE contract (`POST /api/analyze/stream`) is real, tested
-(`backend/tests/test_sse_transport.py`), and worth keeping correct for the day the frontend
-is wired to it — but changing it cannot currently break the running app. Every event has a
+**The SSE contract genuinely does span `backend/server.py` and `frontend/src/app/App.tsx`
+now** — this section used to say the frontend didn't consume the stream at all (calling the
+non-streaming `POST /api/analyze` and faking progress with a `setInterval` timer); that has
+since been rewired. `App.tsx` now `fetch`es `POST /api/analyze/stream` directly and reads
+the response body as a stream (`streamAnalysis`, parsing `data: {...}\n\n` frames by hand —
+native `EventSource` can't be used since it only supports GET with no body, and this
+endpoint is a POST carrying the description/claims). `App.tsx`'s `PHASE_ORDER` constant
+must stay identical to `backend/graph/events.py`'s `PHASES` tuple; the UI then collapses
+that into 5 higher-level `DISPLAY_STAGES` for the checklist rather than showing raw phase
+names, but the underlying progress tracking is real, not simulated. Every event has a
 `type` of `progress` | `result` | `error`. `progress.phase` is one of the values in
-`backend/graph/events.py`'s `PHASES` tuple (nine now — see below). The stream must end with
-exactly one `result` event (data shape: `patents[].{num,title,pct,risk,rationale,source}`
-plus `title`, `date`, `concepts`, `top_score`, `verdict`, `recommendations`, `query_count`)
-or a client reading the stream would throw.
+`PHASES` (ten now — see below). The stream must end with exactly one `result` event (data
+shape: `patents[].{num,title,pct,risk,rationale,source}` plus `title`, `date`, `concepts`,
+`top_score`, `verdict`, `recommendations`, `query_count`) or the frontend throws.
 
 ### `backend/graph/` — the LangGraph pipeline
 
 **This is the default pipeline** — it serves every request unless `PIPELINE=legacy` says
 otherwise. As of Phase 3 it genuinely branches and does more than legacy on the happy
 path, so it is **no longer byte-identical to legacy's SSE stream** the way Phase 1 left
-it — see the divergence table below. `keyword_search` and `semantic_search` both run off
-`search_orchestrator` and converge at `fuse`, which feeds `validate`, which feeds `rank`.
+it — see the divergence table below. `keyword_search` feeds `fuse` (semantic search would
+be the other input, see below), which feeds `validate`, which feeds `rank`.
+
+**Semantic Search / Qdrant is temporarily disabled** — commented out of the graph wiring
+in `pipeline.py` and the Qdrant-write side effect in `searching.py`, not deleted, same
+pattern EPO used while it was disabled earlier. `semantic_search_node`, `fusion.py`, and
+`validation.py` are all fully intact and still run (fusion over an empty semantic list is a
+harmless no-op reordering; validation still checks keyword-only candidates) — only the
+Qdrant read/write side is switched off. Re-enable by restoring the commented import, node,
+and two edges in `pipeline.py`.
 
 - `state.py` — `GraphState`, the `TypedDict` every node reads and writes. It carries the
   `backend/models.py` dataclasses rather than re-flattening them. `semantic_patents`,
   `fused_patents`, and `validated_patents` are no longer reserved-for-later fields — every
-  one is written by a live node (see below). `total=False`, so later tickets can still add
-  keys additively. **It has no error field on purpose** — under the zero-tolerance policy a
-  node that cannot produce a genuine result raises, and an error slot would invite nodes to
-  record a problem and continue to a degraded answer.
+  one is written by a live node when semantic search is enabled (see above for its current
+  disabled state). `total=False`, so later tickets can still add keys additively. **It has
+  no error field on purpose** — under the zero-tolerance policy a node that cannot produce
+  a genuine result raises, and an error slot would invite nodes to record a problem and
+  continue to a degraded answer.
 - `events.py` — `PHASES` plus `emit_progress`, which **raises `SSEContractError` on an
-  unknown phase name**. `PHASES` now has nine entries: `understand`, `queries`, `search`,
-  `enrich`, `semantic_search`, `fuse`, `validate`, `compare`, `analyze`. There is no
-  frontend `PHASES` array to keep this in lockstep with today (see the SSE contract note
-  above) — extending this tuple is backend-only and safe until that changes.
+  unknown phase name**. `PHASES` now has ten entries: `understand`, `queries`, `search`,
+  `filter`, `enrich`, `semantic_search`, `fuse`, `validate`, `compare`, `analyze`.
+  `semantic_search` stays in the tuple even while its node is disabled — `emit_progress`
+  validates against this vocabulary, not against which nodes currently run, and the phase
+  name needs to still be valid the moment the node is re-enabled. The frontend now
+  consumes this over the real SSE stream and collapses it into 5 display stages (see the
+  SSE contract note below) rather than showing raw phase names.
 
 - `understanding.py` — Query Understanding + Query Expansion (P1.2), over `llm.py`
   unchanged. Contains no `except`: a failed or malformed LLM response fails the request.
-- `searching.py` — Search Orchestrator, Keyword Search, and Semantic Search. Keyword search
-  keeps its one deliberate behavior change from legacy: one provider failing fails the
-  whole request, via `search_all_providers_strict` in `backend/search/search.py` (added
-  alongside `search_patents`, which is unchanged and still backs legacy). It also enriches
-  results with full text (`enrich_with_full_text`, skipped entirely when nothing was
-  found) and indexes them into Qdrant (`store_patents`) — no `except` around either, so an
-  unreachable Qdrant fails the whole request rather than silently shipping a keyword-only
-  result. Semantic Search (`semantic_search_node`) runs in parallel and queries whatever
-  Qdrant already holds from *earlier* requests — not this request's own keyword hits, which
-  aren't indexed yet when it runs. A Qdrant collection that simply doesn't exist yet (cold
-  start) returns an empty list rather than raising (`search/vector_store.py`); an
-  unreachable Qdrant still raises.
+- `searching.py` — Search Orchestrator and Keyword Search (Semantic Search's node is
+  defined here too but not wired in — see above). Keyword search keeps its one deliberate
+  behavior change from legacy: one provider failing fails the whole request, via
+  `search_all_providers_strict` in `backend/search/search.py` (added alongside
+  `search_patents`, which is unchanged and still backs legacy). `RESULTS_PER_QUERY` is 10
+  (both providers already fetch at least that many per call regardless, so this costs
+  nothing extra — see `search/google.py`). After the raw fan-out, keyword search runs a
+  **title/abstract relevance pre-filter** (`compare.rank_by_title_abstract`, capped at
+  `FILTER_TOP_N = 20`) *before* fetching full text — full-text enrichment is the single
+  biggest source of outbound API calls in the pipeline (one call per surviving candidate,
+  per provider), so filtering first on fields already in hand from the search response
+  bounds that cost regardless of how many raw results the fan-out produced. Only the
+  survivors get enriched: `search.google.enrich_with_full_text` and
+  `search.epo.enrich_with_full_text` both run on the same mixed list and each internally
+  skips records from the other provider (matched by `patent.source`), so calling both in
+  sequence is safe. None of search, filter, or enrichment is wrapped in `except`.
 - `fusion.py` — Result Fusion. Reciprocal Rank Fusion (`backend/ranking.py`,
   `reciprocal_rank_fusion`, pure and unit-tested directly) over the keyword and semantic
-  result sets, deduped by patent ID.
+  result sets (currently keyword-only while semantic search is disabled), deduped by
+  patent ID.
 - `validation.py` — Validation. One batched LLM call (`llm.validate_relevance`) judges
   relevance over the top of the fused set (capped at `MAX_CANDIDATES = 30` candidates, to
   keep the prompt bounded). No `except`: a missing or malformed verdict for any candidate
@@ -181,10 +199,10 @@ column is what users actually get — the left is what `PIPELINE=legacy` falls b
 | One search provider fails | narrows the corpus, returns a confident verdict | `PatentSearchError` |
 | All providers fail | one `error` event with a friendly message | `PatentSearchError`, wrapper emits `error` |
 | Zero keyword results | canned recommendation | identical report, but `recommendations: []` |
-| Qdrant unreachable | n/a — legacy has no semantic search | raises, request fails |
+| Qdrant unreachable | n/a — legacy has no semantic search | n/a while semantic search is disabled (see above); raises when re-enabled |
 | LLM call fails (understand/analyze) | raises (already) | raises |
 | Validation LLM call fails | n/a — legacy has no validation step | raises, request fails |
-| **Happy path** | keyword-only corpus, TF-IDF-free embedding score against it | broader corpus (keyword + semantic, fused, LLM-filtered), same scorer — **result contents can differ, this is intentional** |
+| **Happy path** | keyword-only corpus (Google + EPO), TF-IDF-free embedding score against it, no pre-filter or full-text for EPO | title/abstract-filtered corpus (Google + EPO, both with full text), LLM-validated, same scorer — **result contents can differ, this is intentional** |
 
 Zero results is **not** an error — reaching every provider and finding nothing is a
 genuine answer, and so is validation filtering the fused set down to nothing. The graph
@@ -195,9 +213,9 @@ recommendation list.
 
 The Phase 1 parity tests that asserted the two streams were byte-identical on the happy
 path (`test_pipeline_parity.py`) were rewritten for this: they now assert the graph emits
-every phase legacy does, plus exactly `semantic_search`/`fuse`/`validate`, and that the
-terminal payload's *shape* still matches — not its values, which are now allowed to
-differ by design.
+every phase legacy does, plus exactly `filter`/`fuse`/`validate` (currently — would add
+`semantic_search` back once that's re-enabled), and that the terminal payload's *shape*
+still matches — not its values, which are now allowed to differ by design.
 
 ### LLM: Llama via HuggingFace Router, not a local model
 
@@ -255,6 +273,29 @@ call — no caching) both normalize into the `PatentRecord` dataclass in `backen
 Add new sources by writing a `(query: str, size: int) -> list[PatentRecord]` function and
 registering it in the `SOURCES` tuple in `backend/search/search.py`.
 
+Both providers can also fetch full text, each with its own `enrich_with_full_text(patents)`
+function that mutates `patent.full_text` in place and internally skips records from the
+other provider (matched by `patent.source`), so both are safe to call on the same mixed
+list — see `graph/searching.py`'s `keyword_search_node`. EPO's uses the `epodoc` published-
+data endpoints (`.../publication/epodoc/{id}/description` and `.../claims`); the `id` EPO's
+`search_epo` builds is deliberately **country + doc-number with no kind code**
+(e.g. `"EP4778509"`, not `"EP4778509A1"`) — the full-text endpoints 404 on the kind-suffixed
+form, confirmed against the live API. EPO's full-text service only actually holds text for
+EP/WO-family documents — a US/CN/DE/KR-only filing that shows up in EPO's *search* results
+(a worldwide bibliographic index) legitimately has no full text EPO can serve, and
+`keyword_search_node` **drops** any candidate, from either provider, that comes out of
+enrichment with no full text at all, rather than silently falling back to scoring it
+against just the abstract.
+
+**EPO's search endpoint uses HTTP 404 to mean "zero results," not "not found."** A query
+that legitimately matches nothing in EPO's index returns 404 with a
+`<fault><code>SERVER.EntityNotFound</code></fault>` body (confirmed against the live API).
+`search_epo` checks for exactly that fault code and returns `[]` — a genuine empty result,
+the same as Google returning no `organic_results` — rather than raising and failing the
+whole request over one query that simply didn't match anything. Any other 404 (or any
+other error) still raises normally; the carve-out is narrow and checks the fault code, not
+just the status.
+
 That module has two orchestrators over the same `SOURCES` and `merge_patents`:
 `search_patents` (legacy, succeeds if any provider works) and
 `search_all_providers_strict` (LangGraph, any failure fails the request). They coexist
@@ -291,15 +332,15 @@ P2.2 the cache.
 
 ### Remaining migration (see `docs/`)
 
-**Phases 1 and 3 have landed.** The `StateGraph`, the graph steps as nodes, and the
-`PIPELINE` flag that switches between them (Phase 1); Semantic Search, Result Fusion, and
-Validation as live graph nodes, plus embedding-based ranking with no TF-IDF fallback
-(Phase 3, P3.1–P3.6). **Still open within Phase 3**: P3.7 (the frontend does not consume
-the SSE stream at all today, so there is no `PHASES` array to extend in lockstep — see the
-SSE contract note earlier in this file) and the full P3.8 failure-path test matrix (a
-handful of focused tests exist per new agent; a dedicated outage-injection suite does
-not). Phase 2 (PostgreSQL caching and persisted history) has not started. Two constraints
-govern all of it:
+**Phases 1 and 3 have landed, including P3.7.** The `StateGraph`, the graph steps as nodes,
+and the `PIPELINE` flag that switches between them (Phase 1); Semantic Search, Result
+Fusion, and Validation as graph nodes (Semantic Search currently disabled, not removed —
+see the Architecture section above), embedding-based ranking with no TF-IDF fallback, and
+the frontend now genuinely consuming the SSE stream with its own `PHASE_ORDER` kept in
+lockstep with the backend's `PHASES` (Phase 3, P3.1–P3.7). **Still open**: the full P3.8
+failure-path test matrix (a handful of focused tests exist per new agent; a dedicated
+outage-injection suite does not), and Phase 2 (PostgreSQL caching and persisted history),
+which has not started. Two constraints govern all of it:
 
 - **Zero-tolerance failure policy**: no fallback, ever. If a step can't produce a genuine
   result, it must fail the request with a clear `error` event — never substitute

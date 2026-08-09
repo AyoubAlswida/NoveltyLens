@@ -111,6 +111,44 @@ def _compare_semantic(invention_text: str, patents: list[PatentRecord]) -> list[
 
     return ranked
 
+def rank_by_title_abstract(
+    invention_text: str, patents: list[PatentRecord], top_n: int
+) -> list[PatentRecord]:
+    """Cheap relevance pre-filter: rank candidates by embedding similarity of
+    title + abstract alone (no chunking, no full text) against the invention,
+    and keep the top ``top_n``.
+
+    Exists to cut the candidate set *before* the expensive step of fetching
+    full text for each one - full-text enrichment is the single biggest
+    source of outbound API calls in the pipeline, so filtering first on the
+    cheap fields (already in hand from the search response, no extra call)
+    bounds how many of those expensive calls get made.
+    """
+    if not patents:
+        return []
+
+    texts = [invention_text] + [f"{patent.title} {patent.abstract}".strip() for patent in patents]
+    vectors = embed_texts(texts)
+    invention_vector = vectors[0]
+    invention_norm = _norm(invention_vector)
+
+    scored = sorted(
+        (
+            (_cosine(invention_vector, vector, invention_norm), patent)
+            for vector, patent in zip(vectors[1:], patents, strict=True)
+        ),
+        key=lambda pair: pair[0],
+        reverse=True,
+    )
+
+    trace(
+        "compare.title_abstract_filter",
+        candidate_count=len(patents),
+        kept=min(top_n, len(patents)),
+    )
+    return [patent for _, patent in scored[:top_n]]
+
+
 def compare_invention_to_patents(
     invention_text: str, patents: list[PatentRecord]
 ) -> list[ComparisonResult]:

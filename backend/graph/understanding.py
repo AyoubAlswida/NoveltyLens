@@ -54,5 +54,5 @@ def expand_queries_node(state: GraphState) -> dict:
     non-empty, so there is nothing left to validate here.
     """
     queries = state["analysis"].queries
-    emit_progress("queries", f"Generated {len(queries)} AI search queries", count=len(queries))
+    emit_progress("queries", f"Generated {len(queries)} AI search queries", count=len(queries), queries=queries)
     return {"queries": queries}

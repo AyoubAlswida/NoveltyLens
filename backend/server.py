@@ -14,7 +14,7 @@ load_dotenv()
 
 from compare import compare_invention_to_patents
 from config import settings
-from llm import analyze_all_matches, understand_invention
+from llm import analyze_all_matches, understand_invention, validate_relevance
 from models import ComparisonResult
 from search.search import PatentSearchError, enrich_with_full_text, search_patents
 
@@ -99,6 +99,10 @@ def _run_pipeline(description: str, claims: Optional[str]) -> Iterator[dict[str,
 
     yield {"type": "progress", "phase": "compare", "message": f"Scoring {len(patents)} candidates for similarity…"}
     formatted = _format_and_rank(compare_invention_to_patents(full_text, patents)[:MAX_RESULTS], analysis.concepts)
+
+    verdicts = validate_relevance(description, [item["_patent"] for item in formatted])
+    formatted = [item for item, relevant in zip(formatted, verdicts, strict=True) if relevant]
+
     top_score = int(formatted[0]["pct"]) if formatted else 0
     verdict = "Weak" if top_score >= 75 else "Moderate" if top_score >= 25 else "Strong"
 

@@ -24,20 +24,24 @@ const PHASE_ORDER = [
   "analyze",
 ] as const;
 
-// Fallback label shown for a phase before any real progress message has
-// arrived for it. Once a message arrives, the real backend text replaces
-// this (see PHASE_LABELS usage in RunningScreen).
-const PHASE_LABELS: Record<(typeof PHASE_ORDER)[number], string> = {
-  understand: "Extracting technical concepts…",
-  queries: "Expanding into search queries…",
-  search: "Searching patent databases…",
-  enrich: "Fetching full patent text…",
-  semantic_search: "Searching indexed patents by meaning…",
-  fuse: "Combining keyword and semantic results…",
-  validate: "Checking relevance of candidates…",
-  compare: "Scoring patent similarities…",
-  analyze: "Writing detailed analysis…",
-};
+// The checklist shown to the user groups the 9 real backend phases into 5
+// high-level stages - still driven by real progress (which of the 9 phases
+// has actually been reached), just not exposing the internal step names,
+// which read as too granular/technical for a running-status screen.
+const DISPLAY_STAGES: { label: string; phases: (typeof PHASE_ORDER)[number][] }[] = [
+  { label: "Understanding your invention", phases: ["understand", "queries"] },
+  { label: "Searching for prior art", phases: ["search", "enrich", "semantic_search", "fuse"] },
+  { label: "Checking relevance", phases: ["validate"] },
+  { label: "Scoring similarity", phases: ["compare"] },
+  { label: "Writing the analysis", phases: ["analyze"] },
+];
+
+const PHASE_TO_STAGE: Partial<Record<(typeof PHASE_ORDER)[number], number>> = {};
+DISPLAY_STAGES.forEach((stage, stageIdx) => {
+  stage.phases.forEach((phase) => {
+    PHASE_TO_STAGE[phase] = stageIdx;
+  });
+});
 
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8001";
 
@@ -86,6 +90,21 @@ interface AnalysisReport {
   verdict: "Strong" | "Moderate" | "Weak";
   recommendations: string[];
   query_count: number;
+  // The actual query strings, not just the count. Captured client-side from
+  // the "queries" progress event during the run - the backend's terminal
+  // result payload only ever carried query_count, and extending that shared
+  // shape would also mean touching legacy's frozen _run_pipeline, so this
+  // stays a frontend-only addition sourced from the SSE stream instead.
+  queries: string[];
+  // Pipeline funnel counts, same sourcing story as `queries` above - each
+  // captured from its own progress event's extra fields as the run streams
+  // in. Undefined (not 0) for a phase that either never emitted (e.g. no
+  // patents found at all, so filter/enrich are skipped) or predates the
+  // frontend rewiring, so a stale History entry doesn't render "0 found".
+  foundCount?: number;
+  filteredCount?: number;
+  fullTextCount?: number;
+  droppedCount?: number;
 }
 
 interface BackendPatent {
@@ -154,6 +173,7 @@ function buildReport(backendData: any, desc: string): AnalysisReport {
     verdict: finalVerdict,
     query_count: backendData.query_count,
     recommendations: backendData.recommendations || [],
+    queries: backendData.queries || [],
   };
 }
 
@@ -291,11 +311,21 @@ export default function App() {
   const [claims, setClaims] = useState("");
 
   // Real progress state, driven by SSE events - not a simulated timer.
-  // phaseIdx is the furthest-along index into PHASE_ORDER seen so far;
-  // phaseMessages holds the actual backend message text per phase, so the
-  // checklist shows what the pipeline is really reporting.
+  // phaseIdx is the furthest-along index into PHASE_ORDER seen so far; the
+  // checklist (see DISPLAY_STAGES) collapses that into 5 high-level stages.
   const [phaseIdx, setPhaseIdx] = useState(-1);
-  const [phaseMessages, setPhaseMessages] = useState<Partial<Record<(typeof PHASE_ORDER)[number], string>>>({});
+  // Live pipeline funnel numbers, updated as each phase's real progress event
+  // arrives - shown on RunningScreen while the request is still in flight,
+  // not just after the fact. A field stays undefined until its phase has
+  // actually reported it (e.g. "filtered" has no value until the filter
+  // phase runs), so the display only ever shows measured numbers.
+  const [liveStats, setLiveStats] = useState<{
+    queries?: string[];
+    found?: number;
+    filtered?: number;
+    fullText?: number;
+    dropped?: number;
+  }>({});
 
   const [reportData, setReportData] = useState<AnalysisReport | null>(null);
   const [history, setHistory] = useState<AnalysisReport[]>([]);
@@ -304,18 +334,42 @@ export default function App() {
     console.log("🚀 Starting analysis request loop...");
     setScreen("running");
     setPhaseIdx(-1);
-    setPhaseMessages({});
+    setLiveStats({});
     setReportData(null);
 
     try {
       let finalReport: AnalysisReport | null = null;
+      let capturedQueries: string[] = [];
+      // Same numbers as liveStats above, captured into plain variables too
+      // so building finalReport below doesn't depend on React state having
+      // flushed yet - these are the values actually used for the report.
+      let capturedFoundCount: number | undefined;
+      let capturedFilteredCount: number | undefined;
+      let capturedFullTextCount: number | undefined;
+      let capturedDroppedCount: number | undefined;
 
       await streamAnalysis({ description: desc, claims: claims }, (event) => {
         if (event.type === "progress") {
           const idx = (PHASE_ORDER as readonly string[]).indexOf(event.phase);
           if (idx >= 0) {
             setPhaseIdx((prev) => Math.max(prev, idx));
-            setPhaseMessages((prev) => ({ ...prev, [event.phase]: event.message }));
+          }
+          if (event.phase === "queries" && Array.isArray(event.queries)) {
+            capturedQueries = event.queries;
+            setLiveStats((prev) => ({ ...prev, queries: event.queries }));
+          }
+          if (event.phase === "search" && typeof event.found === "number") {
+            capturedFoundCount = event.found;
+            setLiveStats((prev) => ({ ...prev, found: event.found }));
+          }
+          if (event.phase === "filter" && typeof event.kept === "number") {
+            capturedFilteredCount = event.kept;
+            setLiveStats((prev) => ({ ...prev, filtered: event.kept }));
+          }
+          if (event.phase === "enrich" && typeof event.enriched === "number") {
+            capturedFullTextCount = event.enriched;
+            capturedDroppedCount = typeof event.dropped === "number" ? event.dropped : undefined;
+            setLiveStats((prev) => ({ ...prev, fullText: event.enriched, dropped: event.dropped }));
           }
         } else if (event.type === "error") {
           throw new Error(event.detail || "Backend query failed");
@@ -342,6 +396,11 @@ export default function App() {
             verdict: backendData.verdict ?? "Strong",
             recommendations: backendData.recommendations ?? [],
             query_count: backendData.query_count ?? 0,
+            queries: capturedQueries,
+            foundCount: capturedFoundCount,
+            filteredCount: capturedFilteredCount,
+            fullTextCount: capturedFullTextCount,
+            droppedCount: capturedDroppedCount,
           };
         }
       });
@@ -420,7 +479,7 @@ export default function App() {
         {screen === "submit" && (
           <SubmitScreen desc={desc} setDesc={setDesc} claims={claims} setClaims={setClaims} concepts={reportData?.concepts || ["Water treatment", "Consumer hardware"]} onRun={startRunning} />
         )}
-        {screen === "running" && <RunningScreen phaseIdx={phaseIdx} phaseMessages={phaseMessages} />}
+        {screen === "running" && <RunningScreen phaseIdx={phaseIdx} liveStats={liveStats} />}
         {screen === "report" && (
           <ReportScreen onBack={() => setScreen("submit")} data={reportData} />
         )}
@@ -540,11 +599,27 @@ function SubmitScreen({ desc, setDesc, claims, setClaims, concepts, onRun }: { d
 
 function RunningScreen({
   phaseIdx,
-  phaseMessages,
+  liveStats,
 }: {
   phaseIdx: number;
-  phaseMessages: Partial<Record<(typeof PHASE_ORDER)[number], string>>;
+  liveStats: { queries?: string[]; found?: number; filtered?: number; fullText?: number; dropped?: number };
 }) {
+  // Map the real furthest-reached backend phase onto its high-level display
+  // stage. -1 (nothing reported yet) stays -1, so every stage starts pending.
+  const stageIdx = phaseIdx >= 0 ? (PHASE_TO_STAGE[PHASE_ORDER[phaseIdx]] ?? -1) : -1;
+
+  // Real pipeline numbers, appearing one at a time as their phase actually
+  // reports them - this is the transparency layer the 5-stage checklist
+  // above deliberately doesn't show (it's high-level on purpose; this row is
+  // where the real backend counts are visible while the run is in flight).
+  const funnel = [
+    { label: "Queries", value: liveStats.queries?.length },
+    { label: "Found", value: liveStats.found },
+    { label: "Filtered", value: liveStats.filtered },
+    { label: "Full text", value: liveStats.fullText },
+    { label: "Dropped", value: liveStats.dropped },
+  ].filter((stat) => stat.value !== undefined);
+
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 48 }}>
       <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: COLORS.brand, letterSpacing: "0.14em", marginBottom: 16, display: "flex", alignItems: "center", gap: 6 }}>
@@ -558,24 +633,34 @@ function RunningScreen({
       </p>
 
       <div style={{ width: "100%", maxWidth: 520, background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: "20px 24px", boxShadow: "0 1px 2px rgba(16,24,25,0.04)" }}>
-        {PHASE_ORDER.map((phase, i) => {
-          const done = i < phaseIdx;
-          const active = i === phaseIdx;
-          // Real backend message once this phase has actually reported progress;
-          // the static label is only a preview for a phase not reached yet.
-          const label = phaseMessages[phase] ?? PHASE_LABELS[phase];
+        {DISPLAY_STAGES.map((stage, i) => {
+          const done = i < stageIdx;
+          const active = i === stageIdx;
           return (
-            <div key={phase} style={{ display: "flex", alignItems: "center", gap: 12, padding: "7px 0", borderBottom: i < PHASE_ORDER.length - 1 ? `1px solid ${COLORS.border}` : "none" }}>
+            <div key={stage.label} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: i < DISPLAY_STAGES.length - 1 ? `1px solid ${COLORS.border}` : "none" }}>
               <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, color: done ? COLORS.brand : active ? COLORS.textPrimary : COLORS.textMuted, width: 16, flexShrink: 0 }}>
                 {done ? "✔" : active ? "▸" : "·"}
               </span>
-              <span style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, color: done ? COLORS.brand : active ? COLORS.textPrimary : COLORS.textMuted }}>
-                {label}
+              <span style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 14, color: done ? COLORS.brand : active ? COLORS.textPrimary : COLORS.textMuted }}>
+                {stage.label}
               </span>
             </div>
           );
         })}
       </div>
+
+      {funnel.length > 0 && (
+        <div style={{ width: "100%", maxWidth: 520, marginTop: 20, display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 28 }}>
+          {funnel.map((stat) => (
+            <div key={stat.label} style={{ textAlign: "center" }}>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: 20, color: COLORS.brand, lineHeight: 1.2 }}>
+                {stat.value}
+              </div>
+              <div style={{ fontSize: 11, color: COLORS.textMuted }}>{stat.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -660,6 +745,24 @@ function ReportScreen({ onBack, data }: { onBack: () => void; data: AnalysisRepo
                     <span key={concept} style={{ padding: "4px 12px", borderRadius: 20, background: COLORS.brandTint, border: `1px solid ${COLORS.brandTintBorder}`, color: COLORS.brand, fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 12 }}>
                       {concept}
                     </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {data.queries.length > 0 && (
+              <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 16, marginBottom: 16 }}>
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: COLORS.textMuted, letterSpacing: "0.1em", marginBottom: 10 }}>
+                  SEARCH QUERIES USED ({data.queries.length})
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                  {data.queries.map((query, i) => (
+                    <div key={i} style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                      <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: COLORS.textMuted, flexShrink: 0 }}>
+                        {String(i + 1).padStart(2, "0")}
+                      </span>
+                      <span style={{ fontSize: 12.5, color: COLORS.textSecondary }}>{query}</span>
+                    </div>
                   ))}
                 </div>
               </div>

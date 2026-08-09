@@ -21,6 +21,38 @@ rarely land on an exact zero for any two pieces of English text); this stub
 optimizes for test determinism, not for simulating production model output."""
 
 
+def fake_epo_enrich_with_full_text(patents: list) -> list:
+    """Deterministic stand-in for ``search.epo.enrich_with_full_text``.
+
+    Unlike Google's enrichment (naturally skipped in tests because synthetic
+    ``PatentRecord``s never carry a ``serpapi_id``), EPO's real function keys
+    off ``source`` + ``id`` alone - both of which test fixtures do set, so
+    without this stub it would make real calls to EPO's auth and full-text
+    endpoints during the test suite.
+    """
+    for patent in patents:
+        if patent.source == "European Patent Office" and not patent.full_text:
+            patent.full_text = f"{patent.title}. {patent.abstract}".strip()
+    return patents
+
+
+def fake_google_enrich_with_full_text(patents: list) -> list:
+    """Deterministic stand-in for Google's ``enrich_with_full_text``.
+
+    The real function is naturally a no-op in tests (it only touches records
+    with a ``serpapi_id``, which synthetic ``PatentRecord`` fixtures never
+    set) - but ``keyword_search_node`` now drops any candidate that comes out
+    of enrichment with no full text at all, which would silently gut every
+    Google-sourced test fixture that was never meant to model real
+    ``serpapi_id`` gating. This stub sets full text the same way the EPO one
+    does, so test corpora survive the drop like real enriched data would.
+    """
+    for patent in patents:
+        if patent.source == "Google Patents" and not patent.full_text:
+            patent.full_text = f"{patent.title}. {patent.abstract}".strip()
+    return patents
+
+
 def fake_embed_texts(texts: list[str]) -> list[list[float]]:
     """A deterministic hashing-trick embedding.
 

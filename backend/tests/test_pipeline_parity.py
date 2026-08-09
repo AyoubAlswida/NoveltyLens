@@ -154,18 +154,22 @@ def test_invalid_pipeline_value_is_rejected():
 
 def test_graph_covers_every_legacy_phase_plus_the_new_agents(deterministic):
     """Phase 3 makes the graph do genuinely more than legacy on the happy path -
-    three new agents (semantic search, fusion, validation) legacy has no
+    new agents (title/abstract filtering, fusion, validation) legacy has no
     concept of - so the two streams are no longer byte-identical by design, only
     by accident before Phase 3 landed. What must still hold: every phase legacy
     emits, the graph emits too, and the graph's *only* extra phases are exactly
-    the three new agents, in the expected relative order."""
+    the new ones, in the expected relative order.
+
+    ``semantic_search`` is temporarily disabled (see ``graph/pipeline.py``), so
+    it is not in this set even though it remains a valid phase name in
+    ``PHASES`` - it just never gets emitted while the node isn't wired in."""
     legacy_phases = [e["phase"] for e in _drain(_run_pipeline) if e["type"] == "progress"]
     graph_phases = [e["phase"] for e in _drain(run_graph_pipeline) if e["type"] == "progress"]
 
     assert set(legacy_phases) <= set(graph_phases)
-    assert set(graph_phases) - set(legacy_phases) == {"semantic_search", "fuse", "validate"}
-    assert graph_phases.index("fuse") < graph_phases.index("validate") < graph_phases.index("compare")
-    assert graph_phases.index("compare") < graph_phases.index("analyze")
+    assert set(graph_phases) - set(legacy_phases) == {"filter", "fuse", "validate"}
+    assert graph_phases.index("filter") < graph_phases.index("fuse") < graph_phases.index("validate")
+    assert graph_phases.index("validate") < graph_phases.index("compare") < graph_phases.index("analyze")
 
 
 CORE_PATENT_FIELDS = {"num", "title", "pct", "risk", "rationale", "source"}
@@ -274,7 +278,7 @@ def test_empty_corpus_differs_from_legacy_only_in_recommendations():
 
     legacy_phases = [e["phase"] for e in legacy if e["type"] == "progress"]
     graph_phases = [e["phase"] for e in graph if e["type"] == "progress"]
-    assert set(graph_phases) - set(legacy_phases) <= {"semantic_search", "fuse", "validate"}
+    assert set(graph_phases) - set(legacy_phases) <= {"filter", "semantic_search", "fuse", "validate"}
 
     differing = {
         key for key in legacy[-1]["data"]

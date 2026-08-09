@@ -1,11 +1,14 @@
 """Graph assembly and the SSE generator ``server.py`` consumes.
 
-The graph branches: ``keyword_search`` and ``semantic_search`` both run off
-``search_orchestrator`` and converge at ``fuse``, which feeds ``validate``, which
-feeds ``rank``.  Semantic search reads whatever Qdrant already holds from
-*earlier* requests - keyword search indexes its own results as a side effect,
-but only after this request's semantic branch has already read, so the two
-cannot race on the same data (see ``graph/searching.py``).
+**TEMP: semantic_search is disabled** (Qdrant not wired in) - commented out
+below rather than removed, same pattern as EPO was earlier in
+``search/search.py``'s ``SOURCES`` (now re-enabled). ``keyword_search`` feeds
+``fuse`` directly; ``fuse`` still runs (over an empty semantic list) so
+``validate``/``rank``/``explain`` don't need special-casing. Re-enable by
+restoring the commented import, node, and two edges below. When enabled, the
+graph branches: ``keyword_search`` and ``semantic_search`` both run off
+``search_orchestrator`` and converge at ``fuse``, which feeds ``validate``,
+which feeds ``rank``.
 
 Progress events reach the client through LangGraph's custom stream writer, which
 preserves the order nodes wrote them in.  The final ``result`` event is built
@@ -27,7 +30,7 @@ from graph.ranking import explain_node, format_matches, rank_node, verdict_for
 from graph.searching import (
     keyword_search_node,
     search_orchestrator_node,
-    semantic_search_node,
+    # semantic_search_node,  # TEMP: disabled - see module docstring above
 )
 from graph.state import GraphState
 from graph.understanding import expand_queries_node, understand_node
@@ -53,7 +56,7 @@ def build_graph():
     builder.add_node("expand_queries", expand_queries_node)
     builder.add_node("search_orchestrator", search_orchestrator_node)
     builder.add_node("keyword_search", keyword_search_node)
-    builder.add_node("semantic_search", semantic_search_node)
+    # builder.add_node("semantic_search", semantic_search_node)  # TEMP: disabled
     builder.add_node("fuse", fuse_node)
     builder.add_node("validate", validate_node)
     builder.add_node("rank", rank_node)
@@ -63,9 +66,9 @@ def build_graph():
     builder.add_edge("understand", "expand_queries")
     builder.add_edge("expand_queries", "search_orchestrator")
     builder.add_edge("search_orchestrator", "keyword_search")
-    builder.add_edge("search_orchestrator", "semantic_search")
+    # builder.add_edge("search_orchestrator", "semantic_search")  # TEMP: disabled
     builder.add_edge("keyword_search", "fuse")
-    builder.add_edge("semantic_search", "fuse")
+    # builder.add_edge("semantic_search", "fuse")  # TEMP: disabled
     builder.add_edge("fuse", "validate")
     builder.add_conditional_edges(
         "validate", _route_after_validate, {"rank": "rank", END: END}

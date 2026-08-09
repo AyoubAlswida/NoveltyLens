@@ -12,7 +12,11 @@ logger = logging.getLogger(__name__)
 Provider = Callable[[str, int], list[PatentRecord]]
 SOURCES: tuple[tuple[str, Provider], ...] = (
     ("Google Patents", search_google),
-    # ("European Patent Office", search_epo),  # TEMP: EPO OPS auth is being throttled - re-enable once resolved.
+    # ("European Patent Office", search_epo),  # TEMP: disabled - EPO's search casts a
+    # wide net across every national office, but its full-text service only covers
+    # EP/WO-family documents, so most EPO finds get dropped by keyword_search_node's
+    # "no full text = drop" rule anyway, wasting filter slots. Not removed - see
+    # search/epo.py, which is untouched and fully functional.
 )
 
 

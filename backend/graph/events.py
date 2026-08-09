@@ -23,6 +23,7 @@ PHASES: tuple[str, ...] = (
     "understand",
     "queries",
     "search",
+    "filter",
     "enrich",
     "semantic_search",
     "fuse",
@@ -32,18 +33,20 @@ PHASES: tuple[str, ...] = (
 )
 """The complete progress vocabulary, in checklist order.
 
-This tuple must stay identical to the ``id`` values in the frontend's ``PHASES``
-array (``frontend/src/app/App.tsx``).  Ticket P3.7 is the only one permitted to
-change it, and it changes both files in the same commit.
+The frontend consumes this over the real SSE stream (``POST
+/api/analyze/stream``) and collapses these into a smaller set of high-level
+display stages (see ``DISPLAY_STAGES`` in ``frontend/src/app/App.tsx``) rather
+than showing each raw phase name - but it still only advances based on which
+of these phases the backend actually reported reaching, so this vocabulary
+must stay accurate even though it's no longer shown to the user verbatim.
 
-``enrich`` and ``semantic_search``/``fuse``/``validate`` were added to bring this
-package in line with two things that had drifted ahead of it: legacy's
-``_run_pipeline`` (``backend/server.py``) already emits ``enrich``, and Phase 3
-adds three new agents between Keyword Search and Ranking. NOTE: the frontend does
-not currently consume the SSE stream at all (``frontend/src/app/App.tsx`` calls
-the non-streaming ``POST /api/analyze`` and fakes progress with a timer), so this
-extension is backend-only and does not yet have a frontend counterpart to update
-in lockstep - see the Architecture section of ``CLAUDE.md``.
+``filter`` is the title/abstract relevance pre-filter (``keyword_search_node``)
+that runs after raw search results come back and before full-text enrichment,
+to bound how many candidates the expensive full-text fetch runs against.
+``semantic_search``/``fuse``/``validate`` are Phase 3's agents; note that
+``semantic_search`` is currently disabled (see ``graph/pipeline.py``) but its
+phase name stays here rather than being removed, matching "disable, don't
+delete."
 """
 
 

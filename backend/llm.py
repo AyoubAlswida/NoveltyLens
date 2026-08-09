@@ -47,20 +47,24 @@ Analyze the invention below.
 Tasks:
 1. Extract the primary technical concepts that define the invention.
 2. Extract the essential engineering keywords that distinguish the invention from existing technology.
-3. Generate meaningful synonyms for those keywords.
-4. Generate exactly 5 high-quality patent search queries that maximize retrieval of patents describing the SAME invention.
+3. Generate exactly 5 high-quality patent search queries that maximize retrieval of patents describing the SAME invention.
 
 Search query guidelines:
 - Focus on the invention's primary functionality, purpose, and claimed mechanism.
 - Prioritize the core invention over enabling technologies.
 - Do NOT build queries around generic implementation details such as AI, cloud, encryption, Bluetooth, IoT, APIs, databases, or sensors unless they are the novel aspect of the invention.
-- Use terminology that is commonly found in patent titles, abstracts, and claims.
-- Generate queries from different perspectives (functional, structural, application, industry terminology, and common patent wording).
+- Use terminology that is commonly found in patent titles, abstracts, and claims - where a keyword has a more common patent-literature term or synonym, prefer that term over the user's own wording.
+- Generate the 5 queries from different, deliberately distinct angles:
+  1. Functional - what the invention does.
+  2. Structural - what it's made of or how its components are arranged.
+  3. Application/industry - the domain or use case it's deployed in.
+  4. Broader technical classification - describe the invention the way a patent examiner would name its general technology category, not its specific implementation (this is the query most likely to surface prior art that solves the same problem with different vocabulary).
+  5. Common patent wording - phrasing typical of how patents in this field are actually titled.
 - Keep each query between 3 and 8 words.
 - Avoid repeating nearly identical queries.
 
 Return ONLY valid JSON in this exact schema:
-{{"concepts": ["string"], "keywords": ["string"], "synonyms": {{"keyword": ["synonym1", "synonym2"]}}, "queries": ["string"]}}
+{{"concepts": ["string"], "keywords": ["string"], "queries": ["string"]}}
 Do not change the schema. Do not add explanations. Return JSON only.
 
 Invention:
@@ -110,7 +114,7 @@ Include one rationale object for every patent from index 1 through {count}, in o
 
     trace("analyze_all_matches.start", patent_count=count)
     try:
-        raw = _llm_chat(prompt, max_tokens=3200, temperature=0.3, timeout=60)
+        raw = _llm_chat(prompt, max_tokens=6000, temperature=0.3, timeout=60)
         match = re.search(r"\{.*\}", raw, re.DOTALL)
         if not match:
             raise ValueError("no JSON object found in LLM response")
