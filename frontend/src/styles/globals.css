@@ -1,0 +1,1591 @@
+:root {
+  font-family: var(--font-sans);
+  color: #11264d;
+  background: #fff;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --navy: #10264f;
+  --navy-soft: #53657f;
+  --muted: #7a899e;
+  --line: #dbe5ec;
+  --green: #08a873;
+  --green-dark: #078c63;
+  --teal: #12b8b2;
+  --blue: #155bd7;
+  --card: rgba(255, 255, 255, 0.91);
+  --shadow: 0 18px 50px rgba(32, 72, 105, 0.09);
+  /* Aramco Pixel button palette. The exact hex should come from the brand
+     portal's Colors page -- these were matched by eye to the Components
+     screenshot, so swap the four values below and every button follows. */
+  --btn-blue: #1179c4;
+  --btn-blue-hover: #0e67a8;
+  --btn-blue-active: #0b5789;
+  --btn-disabled-bg: #d0d5db;
+  --btn-disabled-fg: #8d949d;
+  --btn-radius: 8px;
+  --btn-blue-dark: #54acf0;
+  --btn-blue-dark-hover: #7cc0f5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-width: 320px;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+}
+
+button,
+textarea {
+  font: inherit;
+}
+
+button:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid rgba(21, 91, 215, 0.18);
+  outline-offset: 2px;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.app-shell {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #fff;
+}
+
+.brand-rail {
+  position: relative;
+  z-index: 20;
+  width: 84px;
+  min-width: 84px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 8px 18px;
+  background: rgba(255, 255, 255, 0.96);
+  border-right: 1px solid rgba(196, 212, 222, 0.72);
+  box-shadow: 8px 0 28px rgba(25, 65, 98, 0.025);
+}
+
+.rail-brand {
+  width: 46px;
+  height: 46px;
+  border: 0;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  background: linear-gradient(145deg, #114fd6 4%, #0e75c6 54%, #0da878 100%);
+  box-shadow: 0 10px 26px rgba(21, 91, 215, 0.24);
+}
+
+/* The mark here is novelty-lens-mark-white.svg, a drawn reversed cut — no filter.
+   brightness(0) invert(1) used to knock the colour mark out to white, but it flattens
+   every dot in the cluster to the same value and the faint ones vanish on the tile. */
+.rail-brand img {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+}
+
+.rail-nav {
+  width: 100%;
+  margin-top: 44px;
+}
+
+.rail-item,
+.rail-mode {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  color: #5a6c82;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.rail-item {
+  padding: 10px 3px;
+  border: 0;
+  border-radius: 11px;
+  cursor: pointer;
+  background: transparent;
+  transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.rail-item:hover {
+  background: rgba(8, 168, 115, 0.07);
+  transform: translateY(-1px);
+}
+
+.rail-item-active {
+  color: var(--green-dark);
+}
+
+.rail-spacer {
+  flex: 1;
+}
+
+.rail-mode {
+  padding: 16px 3px 0;
+  border: 0;
+  border-top: 1px solid #dfe8ee;
+  border-radius: 0;
+  cursor: pointer;
+  background: transparent;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.workspace {
+  flex: 1;
+  min-width: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.screen {
+  position: relative;
+  width: 100%;
+  min-height: 100%;
+  padding: 22px 44px 24px;
+  /* Plain white in light mode. The wave photograph is dark-mode only now --
+     see the [data-theme="dark"] .screen rule further down. */
+  background: #fff;
+}
+
+.screen-scroll {
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.screen-scroll::-webkit-scrollbar {
+  width: 9px;
+}
+
+.screen-scroll::-webkit-scrollbar-thumb {
+  background: rgba(17, 91, 176, 0.16);
+  border-radius: 999px;
+}
+
+/* The wordmark used to be baked into a single PNG. It is now the standalone
+   mark plus live text, so the product name is editable; the navy/teal split
+   reproduces what the original artwork did. */
+.brand-header {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 16px;
+  min-height: 112px;
+}
+
+.brand-mark {
+  width: clamp(46px, 6vw, 62px);
+  height: auto;
+  display: block;
+  filter: drop-shadow(0 4px 10px rgba(13, 60, 105, 0.05));
+}
+
+.brand-wordmark {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.brand-name {
+  color: var(--navy);
+  font-family: var(--font-display);
+  font-size: clamp(26px, 3.1vw, 41px);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.brand-name-accent {
+  color: var(--teal);
+}
+
+.brand-sub {
+  color: #8496ad;
+  font-family: var(--font-display);
+  font-size: clamp(9px, 1.02vw, 13px);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.42em;
+  text-transform: uppercase;
+  /* Optically centres the tracked-out subtitle, which the trailing letter
+     space would otherwise push left of the name above it. */
+  text-indent: 0.42em;
+}
+
+.intro-copy {
+  max-width: 900px;
+  margin: 0 auto;
+  text-align: center;
+  color: var(--navy-soft);
+}
+
+.intro-copy h1 {
+  margin: 10px 0 9px;
+  color: var(--navy);
+  font-family: var(--font-display);
+  font-size: clamp(27px, 2.4vw, 38px);
+  line-height: 1.18;
+  letter-spacing: -0.025em;
+}
+
+.intro-copy p {
+  margin: 0;
+  font-size: clamp(14px, 1.2vw, 17px);
+  line-height: 1.65;
+}
+
+.submit-intro {
+  margin-top: 2px;
+  margin-bottom: 24px;
+}
+
+.running-intro {
+  margin-top: 2px;
+  margin-bottom: 26px;
+}
+
+.glass-card {
+  background: var(--card);
+  border: 1px solid rgba(198, 214, 224, 0.82);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(15px);
+}
+
+.form-card {
+  width: min(900px, 100%);
+  margin: 0 auto;
+  padding: 30px 34px 28px;
+  border-radius: 22px;
+}
+
+.field-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.field-title {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  color: var(--green);
+}
+
+.field-title label {
+  color: var(--navy);
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.field-title label span {
+  color: #73839a;
+  font-weight: 500;
+}
+
+/* Replaces the old "Required" pill. It sits inside the label, so it has to
+   beat `.field-title label span` (0,1,2), which greys out nested spans -
+   hence the extra class rather than a bare `.required-star`. */
+.field-title label .required-star {
+  margin-left: 4px;
+  color: #cb3c49;
+  font-weight: 700;
+}
+
+.textarea-wrap {
+  position: relative;
+}
+
+.textarea-wrap textarea {
+  width: 100%;
+  min-height: 114px;
+  resize: vertical;
+  padding: 16px 18px 34px;
+  border: 1px solid #cad8e1;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--navy);
+  font-size: 16px;
+  line-height: 1.65;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.textarea-wrap-primary textarea {
+  min-height: 176px;
+  border-color: var(--green);
+}
+
+.textarea-wrap textarea:hover,
+.textarea-wrap textarea:focus {
+  border-color: var(--green);
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(8, 168, 115, 0.07);
+  outline: none;
+}
+
+.textarea-wrap textarea::placeholder {
+  color: #a1aebe;
+}
+
+.character-count {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  color: #75869d;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.concept-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.concept-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border: 1px solid rgba(8, 168, 115, 0.24);
+  border-radius: 999px;
+  background: rgba(8, 168, 115, 0.07);
+  color: var(--green-dark);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: 30px;
+  margin-top: 24px;
+}
+
+/* Buttons follow the Aramco Pixel component spec: a solid Contained button, an
+   Outlined button, and a flat grey disabled state. The previous blue-to-green
+   gradient, lifting hover and 12px radius were the old house style and are
+   deliberately gone -- the spec's buttons are flat, square-ish and change only
+   in fill. */
+.primary-action,
+.secondary-button {
+  border: 1px solid transparent;
+  border-radius: var(--btn-radius);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-weight: 700;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.primary-action:focus-visible,
+.secondary-button:focus-visible {
+  outline: 2px solid var(--btn-blue);
+  outline-offset: 2px;
+}
+
+/* Contained */
+.primary-action {
+  min-height: 48px;
+  padding: 0 24px;
+  color: #fff;
+  background: var(--btn-blue);
+}
+
+.primary-action:hover:not(:disabled) {
+  background: var(--btn-blue-hover);
+}
+
+.primary-action:active:not(:disabled) {
+  background: var(--btn-blue-active);
+}
+
+.primary-action:disabled {
+  cursor: not-allowed;
+  color: var(--btn-disabled-fg);
+  background: var(--btn-disabled-bg);
+}
+
+.primary-action.compact {
+  min-height: 40px;
+  padding: 0 18px;
+  font-size: 13px;
+}
+
+/* Outlined */
+.secondary-button {
+  min-height: 40px;
+  padding: 0 18px;
+  font-size: 13px;
+  color: var(--btn-blue);
+  background: transparent;
+  border-color: var(--btn-blue);
+}
+
+.secondary-button:hover:not(:disabled) {
+  background: rgba(17, 121, 196, 0.08);
+}
+
+.secondary-button:active:not(:disabled) {
+  background: rgba(17, 121, 196, 0.16);
+}
+
+.secondary-button:disabled {
+  cursor: not-allowed;
+  color: var(--btn-disabled-fg);
+  border-color: var(--btn-disabled-bg);
+  background: transparent;
+}
+
+.progress-card {
+  width: min(760px, 100%);
+  margin: 0 auto;
+  padding: 20px 32px;
+  border-radius: 20px;
+}
+
+.progress-step {
+  position: relative;
+  min-height: 60px;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid rgba(210, 222, 230, 0.78);
+}
+
+.progress-step:last-child {
+  border-bottom: 0;
+}
+
+.phase-track {
+  position: relative;
+  align-self: stretch;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.phase-icon {
+  position: relative;
+  z-index: 2;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #7f90a6;
+  background: #f1f5f8;
+  transition: all 180ms ease;
+}
+
+.phase-line {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  bottom: -50%;
+  width: 1px;
+  border-left: 1px dashed #ccd9e2;
+}
+
+.progress-step.active .phase-icon {
+  color: var(--green-dark);
+  background: #e8f8f2;
+  box-shadow: 0 0 0 7px rgba(8, 168, 115, 0.05);
+}
+
+.progress-step.complete .phase-icon {
+  color: #fff;
+  background: var(--green);
+}
+
+.progress-step.complete .phase-line {
+  border-color: rgba(8, 168, 115, 0.45);
+}
+
+.phase-label {
+  color: #8290a4;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.progress-step.active .phase-label {
+  color: var(--navy);
+  font-weight: 700;
+}
+
+.progress-step.complete .phase-label {
+  color: #52647b;
+}
+
+.activity-ring {
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(8, 168, 115, 0.2);
+  border-top-color: var(--green);
+  border-radius: 50%;
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.report-screen {
+  padding-bottom: 40px;
+}
+
+.report-toolbar {
+  /* Lifted above the cards that follow it. Every .glass-card sets
+     backdrop-filter, which creates a stacking context, so without this the
+     export dropdown paints underneath the summary card below. */
+  position: relative;
+  z-index: 50;
+  width: min(1120px, 100%);
+  margin: 2px auto 22px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.icon-button {
+  width: 42px;
+  height: 42px;
+  padding: 0;
+}
+
+.report-title-block {
+  min-width: 0;
+  flex: 1;
+}
+
+.report-title-block h1 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--navy);
+  font-family: var(--font-display);
+  font-size: 17px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-title-block p {
+  margin: 4px 0 0;
+  color: #7d8ba0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.report-grid,
+.matches-card,
+.recommendations-card {
+  width: min(1120px, 100%);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.report-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.75fr);
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.summary-card,
+.concept-card,
+.matches-card,
+.recommendations-card {
+  border-radius: 20px;
+}
+
+.summary-card {
+  padding: 26px;
+  display: flex;
+  align-items: center;
+  gap: 28px;
+}
+
+.score-ring {
+  position: relative;
+  width: 128px;
+  height: 128px;
+  flex: 0 0 128px;
+}
+
+.score-ring svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.score-ring circle {
+  fill: none;
+  stroke-width: 11;
+}
+
+.score-track {
+  stroke: #e5edf2;
+}
+
+.score-value {
+  stroke-linecap: round;
+  stroke: var(--green);
+}
+
+.score-ring > div {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.score-ring strong {
+  color: var(--green-dark);
+  font-family: var(--font-mono);
+  font-size: 24px;
+}
+
+.score-ring span {
+  color: #75869b;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+.score-ring.risk-high .score-value,
+.patent-score.risk-high .score-bar i { stroke: #cb3c49; background: #cb3c49; }
+.score-ring.risk-high strong,
+.patent-score.risk-high strong,
+.patent-score.risk-high span { color: #bd3442; }
+.score-ring.risk-medium .score-value,
+.patent-score.risk-medium .score-bar i { stroke: #bd7a15; background: #bd7a15; }
+.score-ring.risk-medium strong,
+.patent-score.risk-medium strong,
+.patent-score.risk-medium span { color: #a96b11; }
+.score-ring.risk-low .score-value,
+.patent-score.risk-low .score-bar i { stroke: var(--green); background: var(--green); }
+.score-ring.risk-low strong,
+.patent-score.risk-low strong,
+.patent-score.risk-low span { color: var(--green-dark); }
+
+.summary-copy {
+  min-width: 0;
+}
+
+.eyebrow {
+  margin: 0 0 7px;
+  color: #7b8ba0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+}
+
+.summary-copy h2,
+.section-heading h2 {
+  margin: 0;
+  color: var(--navy);
+  font-family: var(--font-display);
+}
+
+.summary-copy h2 {
+  font-size: 20px;
+}
+
+.summary-copy > p:not(.eyebrow) {
+  margin: 7px 0 14px;
+  color: #677991;
+  font-size: 13px;
+}
+
+.verdict-pill {
+  display: inline-flex;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.verdict-strong { color: var(--green-dark); background: rgba(8, 168, 115, 0.09); }
+.verdict-moderate { color: #9a6514; background: rgba(189, 122, 21, 0.1); }
+.verdict-weak { color: #b73643; background: rgba(203, 60, 73, 0.09); }
+
+.concept-card {
+  padding: 26px;
+}
+
+.report-concepts {
+  margin-top: 14px;
+}
+
+.matches-card {
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.section-heading {
+  padding: 22px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  border-bottom: 1px solid #e2e9ee;
+}
+
+.section-heading h2 {
+  font-size: 18px;
+}
+
+.section-heading > svg {
+  color: var(--green);
+}
+
+.result-count {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: var(--green-dark);
+  background: rgba(8, 168, 115, 0.09);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.patent-row {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid #e6edf1;
+}
+
+.patent-row:last-child {
+  border-bottom: 0;
+}
+
+.patent-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.patent-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: #7b8ba0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.patent-meta span:nth-child(2) {
+  color: var(--green-dark);
+}
+
+.patent-main h3 {
+  margin: 6px 0 5px;
+  color: var(--navy);
+  font-family: var(--font-display);
+  font-size: 15px;
+}
+
+.patent-main p {
+  margin: 0;
+  color: #687b92;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.patent-score {
+  width: 126px;
+  flex: 0 0 126px;
+}
+
+.patent-score > div:first-child {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 8px;
+}
+
+.patent-score strong {
+  font-family: var(--font-mono);
+  font-size: 16px;
+}
+
+.patent-score span {
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: #f1f5f7;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.score-bar {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e9eff3;
+}
+
+.score-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.recommendations-card {
+  padding-bottom: 6px;
+  background: rgba(241, 252, 248, 0.91);
+  border-color: rgba(8, 168, 115, 0.23);
+}
+
+.recommendations-card .section-heading {
+  border-color: rgba(8, 168, 115, 0.16);
+}
+
+.recommendation-list {
+  margin: 0;
+  padding: 20px 24px 24px;
+  list-style: none;
+}
+
+.recommendation-list li {
+  display: flex;
+  gap: 13px;
+  margin-bottom: 13px;
+}
+
+.recommendation-list li:last-child {
+  margin-bottom: 0;
+}
+
+.recommendation-list li > span {
+  width: 25px;
+  height: 25px;
+  flex: 0 0 25px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: var(--green);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.recommendation-list p {
+  margin: 1px 0 0;
+  color: #52677d;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.empty-state {
+  color: #8391a3;
+  font-size: 13px;
+}
+
+.empty-state.padded,
+.recommendations-card > .empty-state {
+  padding: 22px 24px;
+  margin: 0;
+}
+
+@media (max-width: 980px) {
+  .brand-rail {
+    width: 74px;
+    min-width: 74px;
+  }
+
+  .rail-brand {
+    width: 42px;
+    height: 42px;
+  }
+
+  .rail-item span,
+  .rail-mode span {
+    font-size: 11px;
+  }
+
+  .screen {
+    padding-left: 26px;
+    padding-right: 26px;
+  }
+
+  .report-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  body {
+    overflow: auto;
+  }
+
+  .app-shell {
+    display: block;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
+  .brand-rail {
+    position: sticky;
+    top: 0;
+    width: 100%;
+    min-width: 0;
+    height: 66px;
+    padding: 8px 14px;
+    flex-direction: row;
+    justify-content: space-between;
+    border-right: 0;
+    border-bottom: 1px solid #dbe5ec;
+  }
+
+  .rail-brand {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+  }
+
+  .rail-brand img {
+    width: 38px;
+    height: 38px;
+  }
+
+  .rail-nav {
+    width: auto;
+    margin: 0;
+  }
+
+  .rail-item,
+  .rail-mode {
+    width: auto;
+    flex-direction: row;
+    padding: 8px 10px;
+    gap: 7px;
+  }
+
+  .rail-spacer,
+  .rail-mode {
+    display: none;
+  }
+
+  .workspace,
+  .screen-scroll {
+    height: auto;
+    min-height: calc(100vh - 66px);
+    overflow: visible;
+  }
+
+  .screen {
+    padding: 14px 15px 24px;
+    background-attachment: scroll;
+  }
+
+  .brand-header {
+    min-height: 90px;
+  }
+
+  .desktop-break {
+    display: none;
+  }
+
+  .form-card,
+  .progress-card {
+    padding: 22px 18px;
+    border-radius: 17px;
+  }
+
+  .form-actions,
+  .report-toolbar,
+  .summary-card,
+  .patent-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .primary-action {
+    width: 100%;
+  }
+
+  .report-toolbar {
+    gap: 10px;
+  }
+
+  .report-title-block h1 {
+    white-space: normal;
+  }
+
+  .toolbar-actions {
+    width: 100%;
+  }
+
+  .toolbar-actions button {
+    flex: 1;
+  }
+
+  .summary-card {
+    text-align: center;
+  }
+
+  .score-ring {
+    margin: 0 auto;
+  }
+
+  .patent-score {
+    width: 100%;
+    flex-basis: auto;
+  }
+
+  .patent-score > div:first-child {
+    justify-content: flex-start;
+  }
+}
+
+/* Failed-run screen. Mirrors the running screen's header treatment, with the
+   red already used by .verdict-weak / .risk-high rather than a new colour. */
+.error-intro {
+  padding-top: 4px;
+}
+
+.failed-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #a82f3c;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.failed-label span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #cb3c49;
+  box-shadow: 0 0 0 5px rgba(203, 60, 73, 0.1);
+}
+
+.error-card {
+  width: min(900px, 100%);
+  margin: 22px auto 0;
+  padding: 26px 30px 24px;
+  border-radius: 22px;
+  border-color: rgba(203, 60, 73, 0.22);
+}
+
+.error-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.error-heading h2 {
+  margin: 0;
+  color: var(--navy);
+  font-family: var(--font-display);
+  font-size: 19px;
+  letter-spacing: -0.015em;
+}
+
+.error-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  color: #b73643;
+  background: rgba(203, 60, 73, 0.09);
+}
+
+.error-detail {
+  margin: 18px 0 0;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(203, 60, 73, 0.18);
+  background: rgba(203, 60, 73, 0.05);
+  color: #8f2b36;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.error-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 18px;
+}
+
+.error-pip {
+  width: 26px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line);
+}
+
+.error-pip.done {
+  background: var(--green);
+}
+
+.error-pip.failed {
+  background: #cb3c49;
+}
+
+.error-progress-note {
+  margin-left: 8px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 22px;
+}
+
+.error-actions .secondary-button {
+  padding: 0 16px;
+  color: var(--navy);
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid var(--line);
+}
+
+.error-hint {
+  margin: 18px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.error-hint code {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(16, 38, 79, 0.06);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .error-actions .primary-action,
+  .error-actions .secondary-button {
+    flex: 1 1 100%;
+  }
+}
+
+/* Export dropdown. Replaces the old "View JSON" + "Export PDF" pair with one
+   menu; the anchor is position:relative so the panel hangs off the button. */
+.export-menu {
+  position: relative;
+}
+
+.export-caret {
+  transition: transform 160ms ease;
+}
+
+.export-caret.open {
+  transform: rotate(180deg);
+}
+
+.export-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  width: 232px;
+  padding: 6px;
+  border-radius: 14px;
+  /* Opaque on purpose: .glass-card's 0.91 alpha let the cards behind show
+     through the menu, which read as a rendering bug rather than as glass. */
+  background: #fff;
+  box-shadow: 0 16px 40px rgba(24, 62, 96, 0.16);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: export-pop 130ms ease-out;
+}
+
+@keyframes export-pop {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.export-option {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 10px 11px;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  background: transparent;
+  color: var(--green);
+  transition: background 140ms ease;
+}
+
+.export-option:hover,
+.export-option:focus-visible {
+  background: rgba(8, 168, 115, 0.09);
+}
+
+.export-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.export-option-text strong {
+  color: var(--navy);
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.export-option-text small {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+/* ==========================================================================
+   Dark theme. Applied by <html data-theme="dark">, toggled from the rail.
+
+   Written as an override layer rather than by refactoring the light palette
+   into tokens: only ~19 of the ~100 colour declarations already went through
+   variables, so remapping the rest carried more risk to the shipped light
+   design than it was worth. Light mode below this point is untouched.
+
+   The rail is true black and every other surface is a dark grey, so the
+   navigation reads as a distinct plane from the content.
+   ========================================================================== */
+:root[data-theme="dark"] {
+  --navy: #e9edf3;
+  --navy-soft: #b4bfcc;
+  --muted: #8a96a5;
+  --line: #2f353d;
+  --card: rgba(33, 37, 43, 0.92);
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.42);
+  /* Accents lift slightly; the light-mode greens go muddy on dark. */
+  --green: #16c98d;
+  --green-dark: #23d79a;
+  --teal: #2ad4cd;
+  color: var(--navy);
+  background: #16191d;
+}
+
+:root[data-theme="dark"] .app-shell {
+  background: #16191d;
+}
+
+/* Rail: black, per the brief. */
+:root[data-theme="dark"] .brand-rail {
+  background: #000;
+  border-right-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 8px 0 28px rgba(0, 0, 0, 0.5);
+}
+
+:root[data-theme="dark"] .rail-item,
+:root[data-theme="dark"] .rail-mode {
+  color: #9aa6b5;
+}
+
+:root[data-theme="dark"] .rail-item:hover,
+:root[data-theme="dark"] .rail-mode:hover {
+  background: rgba(22, 201, 141, 0.12);
+}
+
+:root[data-theme="dark"] .rail-mode {
+  border-top-color: rgba(255, 255, 255, 0.1);
+}
+
+/* The wave photograph stays, dimmed hard so it reads as texture not image. */
+:root[data-theme="dark"] .screen {
+  background:
+    linear-gradient(rgba(26, 30, 35, 0.93), rgba(26, 30, 35, 0.93)),
+    url("/aramco-wave-background.jpg") center / cover no-repeat fixed;
+}
+
+:root[data-theme="dark"] .screen-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+:root[data-theme="dark"] .glass-card {
+  border-color: rgba(255, 255, 255, 0.09);
+}
+
+:root[data-theme="dark"] .brand-sub {
+  color: #7d8b9c;
+}
+
+/* Inputs */
+:root[data-theme="dark"] .textarea-wrap textarea {
+  border-color: #39414a;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--navy);
+}
+
+:root[data-theme="dark"] .textarea-wrap textarea:hover,
+:root[data-theme="dark"] .textarea-wrap textarea:focus {
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: 0 0 0 4px rgba(22, 201, 141, 0.1);
+}
+
+:root[data-theme="dark"] .textarea-wrap textarea::placeholder {
+  color: #6d7987;
+}
+
+:root[data-theme="dark"] .character-count,
+:root[data-theme="dark"] .phase-label,
+:root[data-theme="dark"] .eyebrow,
+:root[data-theme="dark"] .report-title-block p,
+:root[data-theme="dark"] .patent-meta,
+:root[data-theme="dark"] .empty-state,
+:root[data-theme="dark"] .score-ring span,
+:root[data-theme="dark"] .field-title label span {
+  color: #8d99a8;
+}
+
+:root[data-theme="dark"] .summary-copy > p:not(.eyebrow),
+:root[data-theme="dark"] .patent-main p,
+:root[data-theme="dark"] .recommendation-list p,
+:root[data-theme="dark"] .progress-step.complete .phase-label {
+  color: #a7b3c1;
+}
+
+/* Progress list */
+:root[data-theme="dark"] .progress-step {
+  border-bottom-color: rgba(255, 255, 255, 0.07);
+}
+
+:root[data-theme="dark"] .phase-icon {
+  color: #8d99a8;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* The rule above is (0,3,0), the same specificity as `.progress-step.complete
+   .phase-icon` and `.progress-step.active .phase-icon` in the light block --
+   and it comes later, so without these it silently flattened every completed
+   and in-progress step to the same grey as a pending one. Third time this
+   specificity trap has bitten in this stylesheet; assume any state class needs
+   an explicit dark counterpart. */
+:root[data-theme="dark"] .progress-step.active .phase-icon {
+  color: var(--green-dark);
+  background: rgba(22, 201, 141, 0.16);
+  box-shadow: 0 0 0 7px rgba(22, 201, 141, 0.07);
+}
+
+:root[data-theme="dark"] .progress-step.complete .phase-icon {
+  /* Dark glyph on the lifted green: white on #16c98d is only ~2:1. */
+  color: #0d1f19;
+  background: var(--green);
+}
+
+:root[data-theme="dark"] .progress-step.complete .phase-line {
+  border-color: rgba(22, 201, 141, 0.5);
+}
+
+:root[data-theme="dark"] .phase-line {
+  border-left-color: #3a424c;
+}
+
+/* Buttons */
+/* The Outlined button keeps its blue on dark, lifted for contrast rather than
+   flattened to grey -- otherwise it stops reading as the Pixel outlined variant. */
+:root[data-theme="dark"] .primary-action {
+  background: var(--btn-blue-dark);
+}
+
+:root[data-theme="dark"] .primary-action:hover:not(:disabled) {
+  background: var(--btn-blue-dark-hover);
+}
+
+:root[data-theme="dark"] .primary-action:disabled {
+  color: #7c848d;
+  background: #3a4048;
+}
+
+:root[data-theme="dark"] .secondary-button {
+  color: var(--btn-blue-dark);
+  background: transparent;
+  border-color: var(--btn-blue-dark);
+}
+
+:root[data-theme="dark"] .secondary-button:hover:not(:disabled) {
+  background: rgba(84, 172, 240, 0.14);
+}
+
+/* Report surfaces */
+:root[data-theme="dark"] .score-track {
+  stroke: #333b45;
+}
+
+:root[data-theme="dark"] .section-heading {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+:root[data-theme="dark"] .patent-row {
+  border-bottom-color: rgba(255, 255, 255, 0.07);
+}
+
+:root[data-theme="dark"] .patent-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+:root[data-theme="dark"] .patent-score span {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+:root[data-theme="dark"] .score-bar {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+:root[data-theme="dark"] .recommendations-card {
+  background: rgba(20, 44, 38, 0.85);
+  border-color: rgba(22, 201, 141, 0.26);
+}
+
+:root[data-theme="dark"] .recommendations-card .section-heading {
+  border-color: rgba(22, 201, 141, 0.2);
+}
+
+:root[data-theme="dark"] .concept-chip {
+  border-color: rgba(22, 201, 141, 0.3);
+  background: rgba(22, 201, 141, 0.12);
+}
+
+:root[data-theme="dark"] .result-count,
+:root[data-theme="dark"] .verdict-strong {
+  background: rgba(22, 201, 141, 0.16);
+}
+
+:root[data-theme="dark"] .verdict-moderate {
+  background: rgba(214, 148, 36, 0.18);
+}
+
+:root[data-theme="dark"] .verdict-weak {
+  background: rgba(226, 82, 96, 0.18);
+}
+
+/* Risk accents need lifting to stay legible on dark. */
+:root[data-theme="dark"] .verdict-weak,
+:root[data-theme="dark"] .score-ring.risk-high strong,
+:root[data-theme="dark"] .patent-score.risk-high strong,
+:root[data-theme="dark"] .patent-score.risk-high span {
+  color: #ef7683;
+}
+
+:root[data-theme="dark"] .verdict-moderate,
+:root[data-theme="dark"] .score-ring.risk-medium strong,
+:root[data-theme="dark"] .patent-score.risk-medium strong,
+:root[data-theme="dark"] .patent-score.risk-medium span {
+  color: #e0a63c;
+}
+
+/* Export menu */
+:root[data-theme="dark"] .export-dropdown {
+  background: #23272e;
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+}
+
+:root[data-theme="dark"] .export-option:hover,
+:root[data-theme="dark"] .export-option:focus-visible {
+  background: rgba(22, 201, 141, 0.14);
+}
+
+/* Error screen */
+:root[data-theme="dark"] .error-card {
+  border-color: rgba(226, 82, 96, 0.3);
+}
+
+:root[data-theme="dark"] .error-icon {
+  color: #ef7683;
+  background: rgba(226, 82, 96, 0.16);
+}
+
+:root[data-theme="dark"] .error-detail {
+  border-color: rgba(226, 82, 96, 0.28);
+  background: rgba(226, 82, 96, 0.1);
+  color: #f0929c;
+}
+
+:root[data-theme="dark"] .failed-label {
+  color: #ef7683;
+}
+
+:root[data-theme="dark"] .error-actions .secondary-button {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+:root[data-theme="dark"] .error-hint code {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+:root[data-theme="dark"] .error-pip {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* The rule above is (0,3,0) and would otherwise beat `.error-pip.done` /
+   `.error-pip.failed` at (0,2,0), flattening every phase pip to the same grey
+   and losing the completed-vs-failed distinction entirely. */
+:root[data-theme="dark"] .error-pip.done {
+  background: var(--green);
+}
+
+:root[data-theme="dark"] .error-pip.failed {
+  background: #ef7683;
+}

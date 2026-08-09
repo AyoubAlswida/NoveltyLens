@@ -1,1 +1,119 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Aramco Ghawar - the corporate typeface from the Aramco Brand Portal
+   (brand.aramco.com/guidelines/corporate/typography), OTF release
+   Ghawar 1.312-Beta 4.0. Files live in public/fonts/; see the README there.
+
+   Two things about how this font is packaged are load-bearing:
+
+   1. Every weight ships as its own FAMILY ("Ghawar_1.312-Beta_4.0 Bold", each
+      with subfamily "Regular") rather than as nine members of one family. The
+      @font-face blocks below are what collapse them into a single "Aramco
+      Ghawar" family with real font-weight values, which is why CSS can say
+      font-weight: 600 at all. Do not "simplify" this to one rule.
+   2. There are NO italic files in the release. Every italic in the UI is
+      therefore synthesised by the browser. If genuine italics ship later, add
+      font-style: italic blocks rather than relying on the oblique.
+
+   The local() names are the real internal names and include the version, so a
+   font update will silently stop matching them - the url() is the reliable
+   path, and local() is only a convenience for machines with it installed. */
+
+@font-face {
+  font-family: "Aramco Ghawar";
+  font-style: normal;
+  font-weight: 100;
+  font-display: swap;
+  src:
+    local("Ghawar_1.312-Beta_4.0 Hairline"),
+    url("/fonts/AramcoGhawar-Hairline.otf") format("opentype");
+}
+
+@font-face {
+  font-family: "Aramco Ghawar";
+  font-style: normal;
+  font-weight: 200;
+  font-display: swap;
+  src:
+    local("Ghawar_1.312-Beta_4.0 Thin"),
+    url("/fonts/AramcoGhawar-Thin.otf") format("opentype");
+}
+
+@font-face {
+  font-family: "Aramco Ghawar";
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src:
+    local("Ghawar_1.312-Beta_4.0 Light"),
+    url("/fonts/AramcoGhawar-Light.otf") format("opentype");
+}
+
+@font-face {
+  font-family: "Aramco Ghawar";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src:
+    local("Ghawar_1.312-Beta_4.0"),
+    url("/fonts/AramcoGhawar-Regular.otf") format("opentype");
+}
+
+@font-face {
+  font-family: "Aramco Ghawar";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src:
+    local("Ghawar_1.312-Beta_4.0 Hefty"),
+    url("/fonts/AramcoGhawar-Hefty.otf") format("opentype");
+}
+
+@font-face {
+  font-family: "Aramco Ghawar";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src:
+    local("Ghawar_1.312-Beta_4.0 SmeiBold"),
+    url("/fonts/AramcoGhawar-SemiBold.otf") format("opentype");
+}
+
+@font-face {
+  font-family: "Aramco Ghawar";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src:
+    local("Ghawar_1.312-Beta_4.0 Bold"),
+    url("/fonts/AramcoGhawar-Bold.otf") format("opentype");
+}
+
+@font-face {
+  font-family: "Aramco Ghawar";
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src:
+    local("Ghawar_1.312-Beta_4.0 Heavy"),
+    url("/fonts/AramcoGhawar-Heavy.otf") format("opentype");
+}
+
+@font-face {
+  font-family: "Aramco Ghawar";
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+  src:
+    local("Ghawar_1.312-Beta_4.0 Black"),
+    url("/fonts/AramcoGhawar-Black.otf") format("opentype");
+}
+
+:root {
+  /* One brand family drives the whole UI. --font-display and --font-mono stay
+     separate variables only so a future exception is a one-line change; today
+     all three resolve to Aramco Ghawar per the brand typography guidelines.
+     The tails are pure system fallbacks for the case where the font files fail
+     to ship - no webfont CDN is involved anywhere in this app. */
+  --font-sans: "Aramco Ghawar", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Aramco Ghawar", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Aramco Ghawar", ui-monospace, SFMono-Regular, monospace;
+}

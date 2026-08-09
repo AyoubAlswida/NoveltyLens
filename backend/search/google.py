@@ -16,6 +16,24 @@ logger = logging.getLogger(__name__)
 SERPAPI_URL = "https://serpapi.com/search"
 
 
+def _raise_for_status(response: requests.Response, context: str) -> None:
+    """``raise_for_status`` without leaking the API key.
+
+    SerpAPI takes its credential as a query parameter, and ``requests``' own
+    ``HTTPError`` message embeds the full request URL. That message is not
+    internal: ``search_all_providers_strict`` interpolates it into
+    ``PatentSearchError``, and ``server.py`` sends ``str(error)`` straight to the
+    browser as the SSE ``error`` detail - so a plain 429 or 401 would print the
+    live key into the user's devtools console and any log that captured it.
+
+    Observed for real: an exhausted free-tier quota returned 429 and put the key
+    on the wire. Status and context are all a caller needs to act.
+    """
+    if response.status_code < 400:
+        return
+    raise RuntimeError(f"SerpAPI {context} returned HTTP {response.status_code}")
+
+
 class _TextExtractor(HTMLParser):
     """Minimal HTML-to-text extractor for the description_link page.
 
@@ -45,7 +63,7 @@ def search_google(query: str, size: int = 10) -> list[PatentRecord]:
         params={"engine": "google_patents", "q": query, "num": max(10, size), "api_key": settings.serpapi_key},
         timeout=30,
     )
-    response.raise_for_status()
+    _raise_for_status(response, f"search for {query!r}")
     data = response.json()
     if "error" in data:
         trace("google.search.error", query=query, error=str(data["error"]))
@@ -107,7 +125,7 @@ def get_patent_full_text(serpapi_id: str, timeout: int = 30, include_description
         params={"engine": "google_patents_details", "patent_id": serpapi_id, "api_key": settings.serpapi_key},
         timeout=timeout,
     )
-    response.raise_for_status()
+    _raise_for_status(response, f"details for {serpapi_id!r}")
     data = response.json()
     if "error" in data:
         trace("google.details.error", serpapi_id=serpapi_id, error=str(data["error"]))
@@ -136,11 +154,18 @@ def enrich_with_full_text(patents: list[PatentRecord], max_workers: int = 8, inc
     """Populate ``full_text`` on each Google-sourced patent via parallel
     Details API calls. Non-Google records, or any record whose call fails,
     are left with an empty ``full_text`` so callers fall back to title+abstract.
+
+    A record that already has full_text is skipped too (ticket P2.2): a
+    patent restored from the Postgres query cache (``search/search.py``,
+    ``cache.py``) may already carry enriched text from an earlier request,
+    and re-fetching it would spend a live Details API call for no new data.
     """
-    targets = [patent for patent in patents if patent.serpapi_id]
+    targets = [patent for patent in patents if patent.serpapi_id and not patent.full_text]
     skipped = len(patents) - len(targets)
     if skipped:
-        logger.info("Full-text enrichment: skipping %d patent(s) with no serpapi_id (non-Google source)", skipped)
+        logger.info(
+            "Full-text enrichment: skipping %d patent(s) (no serpapi_id, or already enriched from cache)", skipped
+        )
     if not targets:
         return patents
 

@@ -1,9 +1,15 @@
 """Validation node.
 
-LLM relevance check over the fused candidate set, backed by
-``llm.validate_relevance``. Same zero-tolerance policy as every other LLM step
-in this package: a failed or malformed validation call raises and fails the
-request rather than passing every candidate through unchecked.
+LLM relevance check over the candidate set, backed by ``llm.validate_relevance``.
+Same zero-tolerance policy as every other LLM step in this package: a failed or
+malformed validation call raises and fails the request rather than passing
+every candidate through unchecked.
+
+Reads ``state["candidates"]`` directly rather than ``fused_patents`` - fusion
+is TEMP: disabled along with semantic_search (see ``graph/pipeline.py``), and
+with only one branch (keyword_search) live, fusion was a no-op re-sort of the
+same list anyway. Re-enabling fusion doesn't require touching this file:
+``fuse_node`` also writes ``candidates``.
 """
 
 from graph.events import emit_progress
@@ -13,17 +19,18 @@ from llm import validate_relevance
 MAX_CANDIDATES = 30
 """Bounds the batched validation prompt to a sane size, mirroring
 ``graph/ranking.py``'s ``MAX_RESULTS`` cap. Candidates arrive already ordered by
-fused rank, so this keeps the strongest candidates and drops the long tail."""
+the upstream step, so this keeps the strongest candidates and drops the long
+tail."""
 
 
 def validate_node(state: GraphState) -> dict:
-    """Filter the fused candidate set down to the ones an LLM judges relevant.
+    """Filter the candidate set down to the ones an LLM judges relevant.
 
     An empty input is not sent to the LLM - there is nothing to check, and a
-    fused set that survives validation as empty is a genuine answer, the same
-    as an empty search.
+    candidate set that survives validation as empty is a genuine answer, the
+    same as an empty search.
     """
-    candidates = state["fused_patents"][:MAX_CANDIDATES]
+    candidates = state["candidates"][:MAX_CANDIDATES]
     if not candidates:
         return {"validated_patents": [], "candidates": []}
 

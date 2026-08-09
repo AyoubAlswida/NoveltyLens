@@ -1,11 +1,13 @@
 """Search Orchestrator, Keyword Search, and Semantic Search nodes.
 
-One behavior change against the legacy path: **a single provider failure fails
-the request.**  ``search_patents`` counts a run as successful when at least one
-provider worked.  That means an EPO outage halves the corpus and the user still
-gets a novelty verdict - one indistinguishable from a healthy run, computed
-against prior art that was never retrieved.
-:func:`search_all_providers_strict` raises instead.
+**A single provider failure fails the request.**  Counting a run as successful
+when at least one provider worked - which the retired legacy path did - means an
+EPO outage halves the corpus and the user still gets a novelty verdict, one
+indistinguishable from a healthy run but computed against prior art that was
+never retrieved.  :func:`search_all_providers_strict` raises instead.
+
+Providers are called concurrently, but their results are collected in query
+order; see that function for why the ordering is load-bearing.
 
 Finding nothing is *not* a failure.  A search that reaches every provider and
 gets zero results has produced a genuine answer, and the pipeline reports it as
@@ -25,10 +27,17 @@ enrichment is wrapped in ``except`` - a failure at any of these fails the whole
 request rather than silently shipping a degraded result the user cannot tell
 apart from a healthy one.
 
-**TEMP: Qdrant indexing and Semantic Search are disabled** - not removed, see
+Indexing survivors into Qdrant is a *separate* node, :func:`index_patents_node`,
+which the graph runs after both search branches have joined - see that
+function's docstring for why the write has to sit behind that join.
+**Semantic Search itself is still TEMP: disabled** - not removed, see
 ``graph/pipeline.py``'s module docstring. ``semantic_search_node`` below is
-fully intact but is not wired into the graph, so it never runs.
+fully intact but is not wired into the graph, so it never *reads* Qdrant right
+now; the corpus grows from indexing regardless, ready for whenever it's
+re-enabled.
 """
+
+import logging
 
 from compare import rank_by_title_abstract
 from graph.events import emit_progress
@@ -36,8 +45,9 @@ from graph.state import GraphState
 from search.epo import enrich_with_full_text as enrich_epo_full_text
 from search.retrieve import retrieve_similar_patents
 from search.search import enrich_with_full_text, search_all_providers_strict
+from search.vector_store import known_ids, store_patents
 
-# from search.vector_store import store_patents  # TEMP: disabled, see above
+logger = logging.getLogger(__name__)
 
 RESULTS_PER_QUERY = 10
 """Results requested per query, per provider. Raised from 4: both providers'
@@ -85,7 +95,8 @@ def keyword_search_node(state: GraphState) -> dict:
         PatentSearchError: if any single provider call fails.
     """
     queries = state["queries"]
-    patents = search_all_providers_strict(queries, results_per_query=RESULTS_PER_QUERY)
+    found = search_all_providers_strict(queries, results_per_query=RESULTS_PER_QUERY)
+    patents = found.candidates
 
     emit_progress(
         "search",
@@ -135,16 +146,16 @@ def keyword_search_node(state: GraphState) -> dict:
         # Details call can fail too.
         patents = [patent for patent in patents if patent.full_text]
 
-        # Index into Qdrant so a later, related request's semantic_search_node
-        # can retrieve these. TEMP: disabled along with semantic search - see
-        # module docstring. No try/except when re-enabled: an unreachable
-        # Qdrant should fail the whole request rather than silently shipping
-        # a keyword-only result.
-        # store_patents(patents)
-
-    # `candidates` is what ranking reads.  Phase 3's fusion and validation nodes
-    # will overwrite it after this point without touching `keyword_patents`.
-    return {"keyword_patents": patents, "candidates": patents}
+    # `candidates` is what ranking reads.  Fusion and validation overwrite it
+    # after this point without touching `keyword_patents`.
+    #
+    # Indexing deliberately does NOT happen here - it is `index_patents_node`,
+    # which the graph runs after *both* search branches have read. See that node.
+    return {
+        "keyword_patents": patents,
+        "index_only_patents": found.index_only,
+        "candidates": patents,
+    }
 
 
 def semantic_search_node(state: GraphState) -> dict:
@@ -166,3 +177,59 @@ def semantic_search_node(state: GraphState) -> dict:
         found=len(patents),
     )
     return {"semantic_patents": patents}
+
+
+def index_patents_node(state: GraphState) -> dict:
+    """Index this request's keyword hits into Qdrant, for *later* requests.
+
+    This runs after both search branches, and that ordering is the entire point.
+    It used to sit at the end of ``keyword_search_node``, on the assumption that
+    the two branches fanning out from ``search_orchestrator`` were isolated from
+    each other. They are not: LangGraph runs a superstep's sync nodes
+    sequentially, so whichever branch runs first has its side effects visible to
+    the other. When keyword search happened to go first, the write landed in
+    Qdrant before ``semantic_search_node`` read, and semantic search retrieved
+    the patents keyword search had just found. On a cold or small corpus that
+    made the semantic branch a pure echo, and Result Fusion then credited those
+    echoes from *both* branches, ranking them above patents only one branch
+    found (see ``ranking.reciprocal_rank_fusion``).
+
+    Placing the write downstream of the join makes read-before-write a property
+    of the graph's shape rather than of the scheduler's ordering, so it holds
+    whichever branch runs first - which is not a fixed fact (see the module
+    docstring) and is not something to encode an assumption about.
+
+    Two sets are indexed, for different reasons:
+
+    - ``keyword_patents`` — enriched, and always written. Re-writing a patent
+      already in the collection is intentional here: this copy carries full
+      text, so it can only improve the stored vector.
+    - ``index_only_patents`` — the surplus the providers returned for free (see
+      ``search.search.FETCH_PER_QUERY``), filtered to those Qdrant does *not*
+      already hold. Skipping the known ones saves embedding calls and, more
+      importantly, stops an abstract-only record from overwriting a richer
+      enriched vector stored by an earlier request.
+
+    ``semantic_patents`` is not indexed: it came *out* of Qdrant and is already
+    there.
+
+    Raises:
+        Exception: whatever the embedding call or Qdrant client raises. No
+            ``except`` - an unreachable Qdrant fails the whole request rather
+            than silently shipping a result whose corpus never grew.
+    """
+    enriched = state["keyword_patents"]
+
+    extras = state.get("index_only_patents") or []
+    if extras:
+        already_indexed = known_ids(extras)
+        extras = [patent for patent in extras if patent.id not in already_indexed]
+
+    to_index = enriched + extras
+    if to_index:
+        store_patents(to_index)
+        logger.info(
+            "Indexed %d patents into Qdrant (%d enriched candidates, %d new extras)",
+            len(to_index), len(enriched), len(extras),
+        )
+    return {}
