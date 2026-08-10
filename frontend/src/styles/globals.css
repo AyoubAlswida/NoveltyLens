@@ -250,14 +250,103 @@ button {
   overflow: hidden;
 }
 
-.rail-section {
-  margin: 0 0 6px;
+.rail-section-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
   padding: 0 10px;
+}
+
+.rail-section {
+  margin: 0;
   color: #8b98a9;
   font-family: var(--font-mono);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
+}
+
+/* Quiet until pointed at, then red: it is the only destructive control in the
+   app, and it sits two pixels from the list it destroys. */
+.rail-clear {
+  flex: none;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #93a0b1;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  transition: color 140ms ease, background 140ms ease;
+}
+
+.rail-clear:hover {
+  color: #cb3c49;
+  background: rgba(203, 60, 73, 0.09);
+}
+
+/* Two-step confirm, in place of a native confirm() -- the app removed its last
+   native dialog deliberately. Deleting every stored report is irreversible on
+   both sides, so it does not happen on a single click. */
+.rail-confirm {
+  margin: 0 4px 8px;
+  padding: 10px 11px;
+  border: 1px solid rgba(203, 60, 73, 0.28);
+  border-radius: 10px;
+  background: rgba(203, 60, 73, 0.06);
+}
+
+.rail-confirm p {
+  margin: 0 0 9px;
+  color: #8f2b36;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.rail-confirm div {
+  display: flex;
+  gap: 6px;
+}
+
+.rail-confirm button {
+  flex: 1;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: 11.5px;
+  font-weight: 700;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.rail-confirm button:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.rail-confirm-yes {
+  color: #fff;
+  background: #b73643;
+}
+
+.rail-confirm-yes:hover:not(:disabled) {
+  background: #a32e3a;
+}
+
+.rail-confirm-no {
+  color: var(--navy-soft);
+  background: transparent;
+  border-color: #d3dde5;
+}
+
+.rail-confirm-no:hover {
+  background: rgba(16, 38, 79, 0.05);
 }
 
 /* min-height:0 on both this and .rail-recents is what actually makes the list
@@ -2021,6 +2110,36 @@ button {
 
 :root[data-theme="dark"] .rail-recents ul::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.16);
+}
+
+/* Clear-all and its confirm. The reds lift to the dark-mode value used by
+   .verdict-weak and the error screen; #cb3c49 and #8f2b36 are near-unreadable
+   on black. */
+:root[data-theme="dark"] .rail-clear {
+  color: #8d99a8;
+}
+
+:root[data-theme="dark"] .rail-clear:hover {
+  color: #ef7683;
+  background: rgba(226, 82, 96, 0.16);
+}
+
+:root[data-theme="dark"] .rail-confirm {
+  border-color: rgba(226, 82, 96, 0.3);
+  background: rgba(226, 82, 96, 0.1);
+}
+
+:root[data-theme="dark"] .rail-confirm p {
+  color: #f0929c;
+}
+
+:root[data-theme="dark"] .rail-confirm-no {
+  color: #d3d9e0;
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+:root[data-theme="dark"] .rail-confirm-no:hover {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 /* Flat grey. The wave photograph and its dimming gradient are gone -- it was

@@ -110,6 +110,31 @@ def test_history_is_empty_before_any_run(report_store):
     assert TestClient(server.app, headers=AUTH).get("/api/history").json() == []
 
 
+def test_clearing_removes_every_run(deterministic, report_store):
+    list(run_graph_pipeline(DESCRIPTION, CLAIMS))
+    list(run_graph_pipeline("a second invention " + DESCRIPTION, None))
+    client = TestClient(server.app, headers=AUTH)
+    assert len(client.get("/api/history").json()) == 2
+
+    response = client.delete("/api/history")
+    assert response.status_code == 200
+    assert response.json() == {"deleted": 2}
+    assert client.get("/api/history").json() == []
+
+
+def test_clearing_an_empty_history_is_not_an_error(report_store):
+    """Nothing to delete is a legitimate outcome, not a 404."""
+    response = TestClient(server.app, headers=AUTH).delete("/api/history")
+    assert response.status_code == 200
+    assert response.json() == {"deleted": 0}
+
+
+def test_clearing_requires_a_session(report_store):
+    """The destructive endpoint is behind the same gate as the rest, so a
+    passer-by cannot wipe stored reports."""
+    assert TestClient(server.app).delete("/api/history").status_code == 401
+
+
 def test_history_entries_carry_every_field_the_report_card_reads(
     deterministic, report_store
 ):

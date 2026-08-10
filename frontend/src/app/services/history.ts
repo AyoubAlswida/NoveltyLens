@@ -19,6 +19,20 @@ export class HistoryService {
     if (!response.ok) throw new Error(`History request failed (${response.status}).`);
     return (await response.json()) as HistoryEntry[];
   }
+
+  /**
+   * Delete every stored run. Irreversible — there is no undo on either side.
+   *
+   * Returns the number deleted, so the caller can report what actually
+   * happened rather than assuming the request did what it asked for.
+   */
+  async clear(): Promise<number> {
+    const response = await this.auth.authorizedFetch(`${API_BASE_URL}/api/history`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) throw new Error(`Clearing history failed (${response.status}).`);
+    return ((await response.json()) as { deleted: number }).deleted;
+  }
 }
 
 /**

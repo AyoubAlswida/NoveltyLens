@@ -244,6 +244,14 @@ class FakeReportStore:
             })
         return entries
 
+    def clear_history(self, conn: object) -> int:
+        """Mirrors the real one: drops every run and the patent rows no run
+        references any more. Since this clears everything, that is all of them."""
+        deleted = len(self.runs)
+        self.runs.clear()
+        self.patent_meta.clear()
+        return deleted
+
     @contextmanager
     def connect(self):
         """Stands in for ``db.connect()``. Yields a sentinel: nothing in the

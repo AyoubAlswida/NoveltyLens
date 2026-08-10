@@ -120,6 +120,35 @@ def save_report(
     return str(run_id)
 
 
+def clear_history(conn: psycopg.Connection) -> int:
+    """Delete every stored run and return how many were removed.
+
+    Two statements, in this order and in one transaction:
+
+    1. ``search_runs`` — ``search_run_matches`` goes with it through
+       ``ON DELETE CASCADE``.
+    2. ``patents`` rows no longer referenced by any match. Since there is no
+       query cache any more, that table exists *only* to give a stored match its
+       title and url; once no run references a patent, the row is dead weight
+       and keeping it would mean "clear all" quietly left the descriptions of
+       everything you ever searched for sitting in the database.
+
+    The ``NOT IN`` is written against the surviving matches rather than being
+    an unconditional ``DELETE FROM patents``, so this stays correct if a
+    selective delete is ever added alongside it.
+
+    Not a soft delete and not recoverable. The caller is responsible for asking
+    first; the frontend does that with a two-step confirm.
+    """
+    with conn.transaction(), conn.cursor() as cur:
+        cur.execute("DELETE FROM search_runs")
+        deleted = cur.rowcount
+        cur.execute(
+            "DELETE FROM patents WHERE id NOT IN (SELECT patent_id FROM search_run_matches)"
+        )
+    return deleted
+
+
 def list_history(conn: psycopg.Connection, limit: int = 50) -> list[dict[str, object]]:
     """Return the most recent completed runs with their ranked matches, most
     recent first. Backs ``GET /api/history``.

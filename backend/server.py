@@ -26,7 +26,7 @@ load_dotenv(override=True)  # see config.py's load_dotenv(override=True) for why
 import db
 from auth import authenticate, issue_token, require_user
 from graph.pipeline import run_graph_pipeline
-from reports import list_history
+from reports import clear_history, list_history
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -119,6 +119,21 @@ async def history(email: str = Depends(require_user)) -> list[dict[str, object]]
     """
     with db.connect() as conn:
         return list_history(conn, limit=HISTORY_LIMIT)
+
+
+@app.delete("/api/history")
+async def delete_history(email: str = Depends(require_user)) -> dict[str, int]:
+    """Delete every stored run. Irreversible, and there is no undo anywhere.
+
+    Deliberately not scoped to the caller: there is one seeded account and no
+    per-user ownership column, so this clears the whole table. **If accounts
+    ever become per-user, this endpoint has to grow a WHERE clause before that
+    ships** — otherwise one user's "Clear all" wipes everybody's history.
+    """
+    with db.connect() as conn:
+        deleted = clear_history(conn)
+    logger.info("History cleared by %s: %d run(s) deleted", email, deleted)
+    return {"deleted": deleted}
 
 
 if __name__ == "__main__":

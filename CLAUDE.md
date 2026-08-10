@@ -262,6 +262,15 @@ fails the request rather than reporting a successful search whose report was dro
 the floor. A run that found nothing is stored too: "we searched and there was no prior
 art" is a real answer and belongs in History next to the others.
 
+**`DELETE /api/history` (`clear_history`) is the one destructive endpoint.** It drops every
+`search_runs` row — matches follow through `ON DELETE CASCADE` — and then the `patents`
+rows no run references any more. That second statement matters: with no query cache, the
+`patents` table exists *only* to give a stored match its title and url, so skipping it
+would leave "clear all" quietly holding the full text of everything ever searched. It is
+**not scoped to the caller**, because there is one seeded account and no ownership column;
+**if accounts ever become per-user this needs a WHERE clause before it ships**, or one
+user's Clear all wipes everyone's history.
+
 **There is still no caching of any kind**, and re-adding it is a design decision, not a
 restoration. See the Local infrastructure section for exactly what was and was not brought
 back from `15914d10^`.
@@ -269,7 +278,7 @@ back from `15914d10^`.
 ### Auth: one seeded account, no signup
 
 `POST /api/auth/login` is the only endpoint that answers without a token. `/api/analyze`,
-`/api/analyze/stream`, `/api/history` and `/api/auth/me` all sit behind
+`/api/analyze/stream`, `GET`/`DELETE /api/history` and `/api/auth/me` all sit behind
 `auth.require_user` and return **401** — never 403 — because the frontend treats exactly
 one status as "your session is gone, show the login screen."
 
@@ -557,6 +566,14 @@ Layout of `frontend/src/app/`:
   empty stay distinct. Only the `<ul>` scrolls, and both it and `.rail-recents` need
   `min-height: 0` or a long history pushes Sign out past the bottom of the viewport
   instead of scrolling.
+
+  **Clear all** sits beside the Recents heading and is the app's only destructive
+  control. It goes through a **two-step in-sidebar confirm, not `confirm()`** — the app
+  removed its last native dialog on purpose (see `ErrorScreen`), and `DELETE /api/history`
+  is irreversible on both sides. Afterwards the list is *refetched* rather than emptied
+  locally, because the server is the record of what exists; and if the open report came
+  from history it is dropped, since it would otherwise be a rendering of a run that no
+  longer exists.
 - `config.ts` — `API_BASE_URL`, replacing `import.meta.env.VITE_API_URL`. See the running
   section above for the `window.NOVELTY_LENS_API_URL` override.
 - `models/report.ts` — `AnalysisReport`, `HistoryEntry`, `PHASE_ORDER`, `PHASE_LABELS`,

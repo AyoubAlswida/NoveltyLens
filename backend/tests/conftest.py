@@ -52,5 +52,6 @@ def report_store():
     store = FakeReportStore()
     with patch("db.connect", store.connect), \
          patch("graph.pipeline.save_report", store.save_report), \
-         patch("server.list_history", store.list_history):
+         patch("server.list_history", store.list_history), \
+         patch("server.clear_history", store.clear_history):
         yield store

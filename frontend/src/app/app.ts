@@ -101,7 +101,35 @@ const EXAMPLE_DESC =
                72px column. Collapsing hides the section rather than shrinking it. -->
           @if (sidebarOpen()) {
             <div class="rail-recents">
-              <p class="rail-section">Recents</p>
+              <div class="rail-section-row">
+                <p class="rail-section">Recents</p>
+                @if (recents().length && !clearing()) {
+                  <button
+                    class="rail-clear"
+                    (click)="askClearHistory()"
+                    title="Delete every stored search"
+                  >
+                    Clear all
+                  </button>
+                }
+              </div>
+
+              <!-- Two-step rather than a native confirm(): deleting every stored
+                   report is irreversible on both sides, and the app replaced its
+                   last native dialog on purpose (see ErrorScreen). -->
+              @if (confirmingClear()) {
+                <div class="rail-confirm" role="alertdialog" aria-label="Confirm clearing history">
+                  <p>Delete all {{ history().length }} stored searches? This cannot be undone.</p>
+                  <div>
+                    <button class="rail-confirm-yes" (click)="clearHistory()" [disabled]="clearing()">
+                      {{ clearing() ? 'Clearing…' : 'Delete all' }}
+                    </button>
+                    <button class="rail-confirm-no" (click)="confirmingClear.set(false)">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              }
 
               @if (historyLoading() && !recents().length) {
                 <p class="rail-recents-note">Loading…</p>
@@ -226,6 +254,9 @@ export class App {
 
   readonly sidebarOpen = signal(localStorage.getItem('novelty-lens-sidebar') !== 'closed');
 
+  readonly confirmingClear = signal(false);
+  readonly clearing = signal(false);
+
   /** Which history entry the report screen is currently showing, so the matching
    * Recents row can be marked. Null for a freshly-run report, which is not in
    * the list the sidebar is rendering. */
@@ -311,6 +342,7 @@ export class App {
     this.historyError.set('');
     this.cameFromHistory = false;
     this.openEntryId.set(null);
+    this.confirmingClear.set(false);
     this.screen.set('submit');
   }
 
@@ -324,6 +356,44 @@ export class App {
     this.openEntryId.set(entry.id);
     this.reportData.set(reportFromHistory(entry));
     this.screen.set('report');
+  }
+
+  askClearHistory() {
+    this.confirmingClear.set(true);
+  }
+
+  /**
+   * Delete every stored run. Only reachable behind the two-step confirm above.
+   *
+   * The list is refetched rather than emptied locally: the server is the record
+   * of what exists, and assuming the delete removed everything would show an
+   * empty sidebar even if it had only partly succeeded.
+   */
+  async clearHistory() {
+    this.clearing.set(true);
+    try {
+      await this.historyService.clear();
+      this.confirmingClear.set(false);
+      // A report opened from history is now showing something that no longer
+      // exists, so it goes back to the form rather than lingering as a record
+      // of a run the user just deleted.
+      if (this.cameFromHistory || this.screen() === 'history') {
+        this.reportData.set(null);
+        this.openEntryId.set(null);
+        this.cameFromHistory = false;
+        this.screen.set('submit');
+      }
+      await this.loadHistory();
+    } catch (failure) {
+      this.confirmingClear.set(false);
+      this.historyError.set(
+        failure instanceof Error && failure.message
+          ? failure.message
+          : 'Clearing the history failed without a readable error.',
+      );
+    } finally {
+      this.clearing.set(false);
+    }
   }
 
   async loadHistory() {
