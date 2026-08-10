@@ -141,8 +141,8 @@ button {
   display: grid;
   place-items: center;
   cursor: pointer;
-  background: linear-gradient(145deg, #114fd6 4%, #0e75c6 54%, #0da878 100%);
-  box-shadow: 0 10px 26px rgba(21, 91, 215, 0.24);
+  background: linear-gradient(90deg, #643278 0%, #26a8ab 100%);
+  box-shadow: 0 10px 26px rgba(100, 50, 120, 0.24);
 }
 
 /* The mark here is novelty-lens-mark-white.svg, a drawn reversed cut — no filter.

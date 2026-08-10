@@ -624,22 +624,28 @@ the total bundle from ~277 kB to ~190 kB.
 Angular copies `public/` to the build root verbatim, so those paths work in both dev and
 `dist/`.
 
-**The product has its own mark now — `novelty-lens-mark.svg` — and it ships in three
-cuts.** It is not the Aramco AI mark; it borrows that mark's palette (the
-blue→teal→green gradient already in `theme.css`) and nothing else. The drawing is a lens
-ring holding a weighted cluster of prior art, with the invention as a green ring outside
-the glass; the gap between them is the novelty score, which is the one thing the product
-actually measures. All three cuts are hand-written SVG on a 64-unit grid, optically
-centred on 32,32, and each carries a comment explaining what it is for:
+**The product has its own mark — `novelty-lens-mark.svg` — and it ships in three
+cuts.** It is not the Aramco AI mark and no longer uses that mark's palette. The drawing
+is four viewfinder brackets framing a 4×4 dot grid (the corpus of prior art being
+scanned), split into two ranks above and below a centre scan-line that fades in from both
+edges to a single focus dot at 32,32 — the comparison pass that turns "prior art found"
+into the novelty score, which is the one thing the product actually measures. The brand
+gradient is `#643278` → `#26A8AB`, left to right (`x1`/`x2` vary, `y1`/`y2` constant — do
+not go back to a diagonal `x1,y1`→`x2,y2` sweep). All three cuts are hand-written SVG on a
+64-unit grid, optically centred on 32,32, and each carries a comment explaining what it is
+for:
 
 - `novelty-lens-mark.svg` — the colour cut. Used by `shared/chrome.ts`
   (`.brand-mark`) on every screen, **and on the rail in dark mode**.
 - `novelty-lens-mark-white.svg` — a **drawn** reversed cut, used on the rail in **light
   mode only**. It is not the colour cut with a filter over it. `globals.css`'s
-  `.rail-brand img` used to carry `filter: brightness(0) invert(1)`, which knocks
-  everything to a single white value and loses the cluster's opacity weighting against the
-  tile's mid-tone gradient; the reversed cut lifts those opacities (0.44–0.72 → 0.60–0.86)
-  instead. **The filter is gone — do not put it back.**
+  `.rail-brand img` used to carry `filter: brightness(0) invert(1)`, which is exactly
+  what a flat white re-draw achieves anyway now that the mark is a uniform dot grid rather
+  than an organically-weighted cluster — brackets and the centre dot are fully opaque, the
+  sixteen grid dots sit at a flat 0.86 opacity, and the scan-line is reproduced as a plain
+  white line at 0.5 opacity since it can't carry over the two-colour gradient this cut
+  doesn't have. **Do not add the filter back** — the geometry is still hand-drawn per cut,
+  not filtered, so the two files can diverge on purpose if a future redesign needs them to.
 
   `app.ts` picks between the two off the `theme()` signal, and the split tracks the tile,
   not the theme: light still paints the blue→green gradient behind the mark, which needs
@@ -647,9 +653,9 @@ centred on 32,32, and each carries a comment explaining what it is for:
   sits on flat black and shows its real colours. If either tile ever changes, the pairing
   changes with it.
 - `novelty-lens-favicon.svg` — the small-size cut for `<link rel="icon">` in
-  `src/index.html`, with the cluster cut from seven dots to three and every stroke
-  thickened. Below ~32px the full cluster fills in to a smudge. Use the full mark above
-  that size.
+  `src/index.html`, with the dot grid cut from sixteen dots to four and every stroke
+  thickened. Below ~32px the full grid and the scan-line fill in to a smudge. Use the full
+  mark above that size.
 
 The two `aramco-ai-*.png` files are both **retired** and nothing loads either one.
 `aramco-ai-logo.png` was the full lockup, which baked the wordmark into the image;

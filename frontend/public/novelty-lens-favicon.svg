@@ -3,25 +3,30 @@
   <title>Novelty Lens</title>
   <!--
     Small-size cut, for the browser tab. Same composition as novelty-lens-mark.svg with
-    the cluster reduced from seven dots to three and every stroke thickened: at 16px the
-    full cluster fills in to a smudge and the 4.2-unit ring goes wispy. Use the full mark
-    anywhere above ~32px.
+    the dot grid reduced from sixteen to four and every stroke thickened: at 16px the fine
+    scan-line and the full grid fill in to a smudge. Use the full mark anywhere above ~32px.
   -->
   <defs>
-    <linearGradient id="nlFav" gradientUnits="userSpaceOnUse" x1="10" y1="8" x2="54" y2="56">
-      <stop offset="0" stop-color="#155BD7"/>
-      <stop offset="0.55" stop-color="#12B8B2"/>
-      <stop offset="1" stop-color="#08A873"/>
+    <linearGradient id="nlFav" gradientUnits="userSpaceOnUse" x1="6" y1="32" x2="58" y2="32">
+      <stop offset="0" stop-color="#643278"/>
+      <stop offset="1" stop-color="#26A8AB"/>
     </linearGradient>
   </defs>
 
-  <circle cx="25.5" cy="37.5" r="18" fill="none" stroke="url(#nlFav)" stroke-width="5.5"/>
-
-  <g fill="url(#nlFav)">
-    <circle cx="19.5" cy="32.5" r="4.5"/>
-    <circle cx="29.5" cy="40.5" r="3.6" opacity="0.8"/>
-    <circle cx="18.5" cy="44.5" r="3.2" opacity="0.62"/>
+  <g fill="none" stroke="url(#nlFav)" stroke-width="5" stroke-linecap="round">
+    <path d="M23,9 H14 Q9,9 9,14 V23"/>
+    <path d="M41,9 H50 Q55,9 55,14 V23"/>
+    <path d="M23,55 H14 Q9,55 9,50 V41"/>
+    <path d="M41,55 H50 Q55,55 55,50 V41"/>
   </g>
 
-  <circle cx="49.5" cy="15.5" r="7.5" fill="none" stroke="#08A873" stroke-width="4.2"/>
+  <g fill="url(#nlFav)">
+    <circle cx="24" cy="24" r="3.4"/>
+    <circle cx="40" cy="24" r="3.4"/>
+    <circle cx="24" cy="40" r="3.4"/>
+    <circle cx="40" cy="40" r="3.4"/>
+  </g>
+
+  <circle cx="32" cy="32" r="6.2" fill="#FFFFFF"/>
+  <circle cx="32" cy="32" r="4.3" fill="url(#nlFav)"/>
 </svg>

@@ -2,23 +2,39 @@
      role="img" aria-label="Novelty Lens">
   <title>Novelty Lens</title>
   <!--
-    Reversed cut of novelty-lens-mark.svg, for the blue-to-green rail tile. Drawn rather
-    than filtered: the dot opacities are lifted (0.44-0.72 becomes 0.60-0.86) because the
-    faint end of the cluster disappears against a mid-tone gradient at 34px, which is what
-    a brightness(0) invert(1) filter over the colour version used to do. Geometry is
-    identical to the colour cut — only fill and opacity differ.
+    Reversed cut of novelty-lens-mark.svg, for the rail tile. Geometry is identical to the
+    colour cut; the gradient strokes/fills become flat white and the scan-line's fade is
+    reproduced with opacity instead of a two-stop colour gradient, since a gradient url()
+    can't carry over without the purple/teal stops that don't exist on this cut.
   -->
-  <circle cx="27" cy="36.5" r="19" fill="none" stroke="#FFFFFF" stroke-width="4.2"/>
-
-  <g fill="#FFFFFF">
-    <circle cx="19" cy="29.5" r="3" opacity="0.82"/>
-    <circle cx="30" cy="27.5" r="2.3" opacity="0.68"/>
-    <circle cx="16" cy="39.5" r="2.5" opacity="0.64"/>
-    <circle cx="25" cy="37.5" r="4.2"/>
-    <circle cx="34" cy="36.5" r="2.7" opacity="0.86"/>
-    <circle cx="21" cy="46.5" r="2.8" opacity="0.74"/>
-    <circle cx="32" cy="45.5" r="2.1" opacity="0.6"/>
+  <g fill="none" stroke="#FFFFFF" stroke-width="3.2" stroke-linecap="round">
+    <path d="M21,10 H13.5 Q10,10 10,13.5 V21"/>
+    <path d="M43,10 H50.5 Q54,10 54,13.5 V21"/>
+    <path d="M21,54 H13.5 Q10,54 10,50.5 V43"/>
+    <path d="M43,54 H50.5 Q54,54 54,50.5 V43"/>
   </g>
 
-  <circle cx="50" cy="14.5" r="6.4" fill="none" stroke="#FFFFFF" stroke-width="3.4"/>
+  <line x1="10" y1="32" x2="54" y2="32" stroke="#FFFFFF" stroke-width="1.4" opacity="0.5"/>
+
+  <g fill="#FFFFFF">
+    <circle cx="21.2" cy="19" r="2.8" opacity="0.86"/>
+    <circle cx="28.4" cy="19" r="2.8" opacity="0.86"/>
+    <circle cx="35.6" cy="19" r="2.8" opacity="0.86"/>
+    <circle cx="42.8" cy="19" r="2.8" opacity="0.86"/>
+    <circle cx="21.2" cy="26" r="2.8" opacity="0.86"/>
+    <circle cx="28.4" cy="26" r="2.8" opacity="0.86"/>
+    <circle cx="35.6" cy="26" r="2.8" opacity="0.86"/>
+    <circle cx="42.8" cy="26" r="2.8" opacity="0.86"/>
+    <circle cx="21.2" cy="38" r="2.8" opacity="0.86"/>
+    <circle cx="28.4" cy="38" r="2.8" opacity="0.86"/>
+    <circle cx="35.6" cy="38" r="2.8" opacity="0.86"/>
+    <circle cx="42.8" cy="38" r="2.8" opacity="0.86"/>
+    <circle cx="21.2" cy="45" r="2.8" opacity="0.86"/>
+    <circle cx="28.4" cy="45" r="2.8" opacity="0.86"/>
+    <circle cx="35.6" cy="45" r="2.8" opacity="0.86"/>
+    <circle cx="42.8" cy="45" r="2.8" opacity="0.86"/>
+  </g>
+
+  <circle cx="32" cy="32" r="5.5" fill="#FFFFFF" opacity="0.3"/>
+  <circle cx="32" cy="32" r="3.8" fill="#FFFFFF"/>
 </svg>
