@@ -58,7 +58,8 @@ from search.vector_store import QUERY_INSTRUCTION
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0"})
 
 SLOWDOWN = 1.0
-"""Scales the artificial delays. Set to 0 by ``--fast``; see :func:`_pause`."""
+"""Scales the artificial delays. Set to 0 by ``--fast``, or to any multiplier by
+``--pace``; see :func:`_pause`."""
 
 
 def _pause(seconds: float) -> None:
@@ -69,6 +70,11 @@ def _pause(seconds: float) -> None:
     entire job is showing progress impossible to evaluate. A real run takes
     ~62s; these delays land it around 8s, close enough to judge the pacing and
     far enough from tedious.
+
+    ``--pace`` scales every delay at once, so ``--pace 1.3`` stretches the run to
+    roughly 10s. It scales only the sleeps: the mocked work itself, and every
+    real part of the pipeline around it, take whatever they take. Pushing it high
+    does not make the mock more faithful -- it just adds dead time.
     """
     if SLOWDOWN:
         time.sleep(seconds * SLOWDOWN)
@@ -437,10 +443,14 @@ def main() -> None:
     parser.add_argument("--fast", action="store_true",
                         help="drop the artificial delays; a run finishes in ~2s and the "
                              "running screen is gone before you can read it")
+    parser.add_argument("--pace", type=float, default=1.0,
+                        help="scale the artificial delays (default 1.0, a ~8s run). "
+                             "1.3 gives roughly 10s. Ignored when --fast is passed.")
     args = parser.parse_args()
 
-    if args.fast:
-        SLOWDOWN = 0.0
+    # --fast wins: it is the "I do not want to wait" switch, so a stale --pace in
+    # a shell alias must not quietly reintroduce the wait it exists to remove.
+    SLOWDOWN = 0.0 if args.fast else max(args.pace, 0.0)
 
     import uvicorn
 
