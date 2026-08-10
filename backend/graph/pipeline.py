@@ -160,7 +160,7 @@ def build_result_event(state: GraphState) -> dict[str, object]:
         return _result_envelope(state, patents=[], top_score=0, recommendations=[])
 
     match_analysis = state["match_analysis"]
-    patents = format_matches(state["comparisons"], match_analysis.rationales)
+    patents = format_matches(state["comparisons"], match_analysis.rationales, match_analysis.key_overlaps)
     return _result_envelope(
         state,
         patents=patents,

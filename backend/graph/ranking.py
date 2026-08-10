@@ -32,17 +32,17 @@ def verdict_for(top_score: int) -> str:
 
 
 def format_matches(
-    comparisons: list[ComparisonResult], rationales: list[str]
+    comparisons: list[ComparisonResult], rationales: list[str], key_overlaps: list[list[str]]
 ) -> list[dict[str, object]]:
     """Build the ``patents[]`` entries of the ``result`` event.
 
-    ``rationales`` is positionally aligned with ``comparisons``; zipping is
-    strict because a length mismatch would silently blank an explanation.
-    ``analyze_all_matches`` already refuses to return a short list, so this only
-    guards against future drift.
+    ``rationales`` and ``key_overlaps`` are positionally aligned with
+    ``comparisons``; zipping is strict because a length mismatch would
+    silently blank an explanation. ``analyze_all_matches`` already refuses to
+    return a short list for either, so this only guards against future drift.
     """
     formatted: list[dict[str, object]] = []
-    for result, rationale in zip(comparisons, rationales, strict=True):
+    for result, rationale, tags in zip(comparisons, rationales, key_overlaps, strict=True):
         patent = result.patent
         score = max(0, min(100, int(result.similarity_score * 100)))
         formatted.append({
@@ -51,7 +51,9 @@ def format_matches(
             "pct": score,
             "risk": "High" if score >= 75 else "Low" if score <= 25 else "Medium",
             "rationale": rationale,
+            "key_overlap": tags,
             "source": patent.source or "live",
+            "url": patent.url,
         })
     # `comparisons` already arrives sorted by the underlying float score. Sorting
     # again on the truncated integer is what the legacy path does, and Python's

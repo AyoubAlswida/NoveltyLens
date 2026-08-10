@@ -75,7 +75,11 @@ def search_google(query: str, size: int = 10) -> list[PatentRecord]:
             abstract=item.get("snippet", ""),
             publication_date=item.get("filing_date", ""),
             source="Google Patents",
-            url=item.get("serpapi_link", ""),
+            # "serpapi_link" is SerpAPI's own JSON API endpoint for this result,
+            # not a page for a human to open - "patent_link" is the real
+            # https://patents.google.com/patent/... page. Confirmed against a
+            # live response; do not swap this back without checking again.
+            url=item.get("patent_link", ""),
             # "patent_id" (e.g. "patent/US1234567B2/en") is the identifier the
             # Details endpoint expects; it is distinct from the human-readable
             # publication_number we use as PatentRecord.id.
