@@ -175,32 +175,34 @@ import { AnalysisReport, Risk, Verdict } from '../models/report';
               }
             </div>
           </article>
-
-          <article class="recommendations-card glass-card">
-            <div class="section-heading">
-              <app-icon name="Sparkles" [size]="24" />
-              <div>
-                <p class="eyebrow">AI Recommendation</p>
-                <h2>How to make it more unique</h2>
-              </div>
-            </div>
-            @if (data().recommendations.length) {
-              <ol class="recommendation-list">
-                @for (recommendation of data().recommendations; track $index) {
-                  <li>
-                    <span>{{ $index + 1 }}</span>
-                    <p>{{ recommendation }}</p>
-                  </li>
-                }
-              </ol>
-            } @else {
-              <p class="empty-state">
-                No recommendations were generated &mdash; no prior art was found to distinguish
-                this invention from.
-              </p>
-            }
-          </article>
         </div>
+      </section>
+
+      <section class="recommendations-section">
+        <article class="recommendations-card glass-card">
+          <div class="section-heading">
+            <app-icon name="Sparkles" [size]="24" />
+            <div>
+              <p class="eyebrow">AI Recommendation</p>
+              <h2>How to make it more unique</h2>
+            </div>
+          </div>
+          @if (data().recommendations.length) {
+            <ol class="recommendation-list">
+              @for (recommendation of data().recommendations; track $index) {
+                <li>
+                  <span>{{ $index + 1 }}</span>
+                  <p>{{ recommendation }}</p>
+                </li>
+              }
+            </ol>
+          } @else {
+            <p class="empty-state">
+              No recommendations were generated &mdash; no prior art was found to distinguish
+              this invention from.
+            </p>
+          }
+        </article>
       </section>
     </div>
   `,
