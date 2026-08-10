@@ -90,7 +90,10 @@ def test_analyze_scales_max_tokens_with_patent_count():
     def capture(prompt: str, **kwargs: object) -> str:
         seen.append(int(kwargs["max_tokens"]))
         return json.dumps({
-            "rationales": [{"index": i, "text": f"r{i}"} for i in range(1, PATENT_COUNT + 1)],
+            "rationales": [
+                {"index": i, "text": f"r{i}", "key_overlap": ["tag a", "tag b"]}
+                for i in range(1, PATENT_COUNT + 1)
+            ],
             "recommendations": ["rec"],
         })
 

@@ -226,7 +226,7 @@ def analyze_all_matches(invention: str, patents: list[PatentRecord]) -> MatchAna
     """
     count = len(patents)
     if count == 0:
-        return MatchAnalysis(rationales=[], recommendations=[])
+        return MatchAnalysis(rationales=[], key_overlaps=[], recommendations=[])
 
     patent_block = "\n".join(
         f"[{index}] Number: {patent.id}\n    Title: {patent.title}\n    Abstract: {patent.abstract[:350]}"
@@ -241,23 +241,24 @@ Prior-art patents:
 {patent_block}
 
 Tasks:
-1. For EACH of the {count} patents, write a DETAILED one-paragraph technical rationale (3 to 5 full sentences) explaining specifically how that patent's technology OVERLAPS with the user's invention - the shared mechanism, purpose, structure, or technical approach that makes it relevant prior art. Reference the concrete technical features of that individual patent that are similar to the user's invention. Do NOT describe how the invention differs from the patent - that is covered separately; focus this rationale entirely on the similarity. Every rationale must be distinct - never reuse wording between patents.
-2. Provide AS MANY actionable, specific uniqueness recommendations as you can (at least 10) describing concrete engineering, structural, or claim-drafting changes the user can make to distinguish their invention from this body of prior art.
+1. For EACH of the {count} patents, write a concise overlap summary (1 to 2 sentences, not more) explaining the actual technical overlap - the shared mechanism, purpose, structure, or technical approach that makes it relevant prior art. Reference the concrete technical features of that individual patent that are similar to the user's invention. Do NOT describe how the invention differs from the patent, and do NOT explain why an algorithm or search selected this patent - focus entirely on describing the real technical overlap itself. Every summary must be distinct - never reuse wording between patents.
+2. For EACH of the {count} patents, also extract 3 to 4 short key-overlap tags (2-4 words each, e.g. "distributed sensing", "strain measurement") naming the specific overlapping technical concepts between that patent and the invention. These must name real shared concepts, not generic category words like "patent" or "invention".
+3. Provide AS MANY actionable, specific uniqueness recommendations as you can (at least 10) describing concrete engineering, structural, or claim-drafting changes the user can make to distinguish their invention from this body of prior art.
 
 Return ONLY valid JSON in exactly this schema:
-{{"rationales": [{{"index": 1, "text": "detailed paragraph for patent 1"}}], "recommendations": ["tip 1", "tip 2"]}}
+{{"rationales": [{{"index": 1, "text": "1-2 sentence overlap summary for patent 1", "key_overlap": ["tag 1", "tag 2", "tag 3"]}}], "recommendations": ["tip 1", "tip 2"]}}
 Include one rationale object for every patent from index 1 through {count}, in order. Do not include markdown code fences or any text outside the JSON object.'''
 
     trace("analyze_all_matches.start", patent_count=count)
     try:
         parsed = _llm_json(
             prompt,
-            # Scales with the workload instead of a flat 3200. This prompt asks
-            # for 3-5 full sentences per patent (~135 tokens each) plus at least
-            # ten recommendations, so at the MAX_RESULTS cap of 15 patents the
-            # honest requirement is ~2700 tokens - close enough to a flat 3200
-            # that ordinary variation truncated it. Observed doing exactly that
-            # on a real 14-match run.
+            # Scales with the workload instead of a flat 3200. Shorter
+            # rationales (1-2 sentences, ~40 tokens) plus 3-4 short tags
+            # (~20 tokens) per patent use less than the old 3-5 sentence
+            # version did, but the headroom is kept generous rather than
+            # re-tuned tight - a prior truncation incident on this exact call
+            # is why (see LLMTruncatedError's docstring).
             max_tokens=min(8000, 1200 + 250 * count),
             temperature=0.3,
             timeout=90,
@@ -267,28 +268,44 @@ Include one rationale object for every patent from index 1 through {count}, in o
         raise
 
     rationales = [""] * count
+    key_overlaps: list[list[str]] = [[] for _ in range(count)]
     raw_rationales = parsed.get("rationales", [])
     for item in raw_rationales:
         if isinstance(item, dict):
             index = int(item.get("index", 0)) - 1
             if 0 <= index < count:
                 rationales[index] = str(item.get("text", "")).strip()
+                key_overlaps[index] = [
+                    str(tag).strip() for tag in item.get("key_overlap", []) if str(tag).strip()
+                ]
     if not any(rationales):
-        # Tolerate a plain array of strings instead of indexed objects.
+        # Tolerate a plain array of strings instead of indexed objects. No
+        # key_overlap data exists in this shape, so those stay empty - caught
+        # by the same-shaped check below as a missing field, same as a
+        # missing rationale.
         for index, item in enumerate(raw_rationales[:count]):
             if isinstance(item, str):
                 rationales[index] = item.strip()
 
-    missing = [index + 1 for index, text in enumerate(rationales) if not text]
-    if missing:
-        raise ValueError(f"LLM omitted rationale(s) for patent index/indices: {missing}")
+    missing_rationale = [index + 1 for index, text in enumerate(rationales) if not text]
+    if missing_rationale:
+        raise ValueError(f"LLM omitted rationale(s) for patent index/indices: {missing_rationale}")
+
+    missing_overlap = [index + 1 for index, tags in enumerate(key_overlaps) if not tags]
+    if missing_overlap:
+        raise ValueError(f"LLM omitted key-overlap tags for patent index/indices: {missing_overlap}")
 
     recommendations = [str(item).strip() for item in parsed.get("recommendations", []) if str(item).strip()]
     if not recommendations:
         raise ValueError("LLM returned no uniqueness recommendations")
 
-    trace("analyze_all_matches.done", rationale_count=len(rationales), recommendation_count=len(recommendations))
-    return MatchAnalysis(rationales=rationales, recommendations=recommendations)
+    trace(
+        "analyze_all_matches.done",
+        rationale_count=len(rationales),
+        key_overlap_counts=[len(tags) for tags in key_overlaps],
+        recommendation_count=len(recommendations),
+    )
+    return MatchAnalysis(rationales=rationales, key_overlaps=key_overlaps, recommendations=recommendations)
 
 
 def validate_relevance(invention: str, patents: list[PatentRecord]) -> list[bool]:

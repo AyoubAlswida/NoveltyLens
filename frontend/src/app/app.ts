@@ -175,7 +175,9 @@ export class App {
                 risk: patent.risk,
                 rationale:
                   patent.rationale || 'No detailed rationale was returned for this record.',
+                key_overlap: patent.key_overlap ?? [],
                 source: patent.source || 'Patent database',
+                url: patent.url || '',
               })),
               top_score: Math.round(backend.top_score ?? 0),
               verdict: backend.verdict ?? 'Strong',

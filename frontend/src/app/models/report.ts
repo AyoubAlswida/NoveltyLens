@@ -8,7 +8,9 @@ export interface PatentMatch {
   pct: number;
   risk: Risk;
   rationale: string;
+  key_overlap: string[];
   source: string;
+  url: string;
 }
 
 export interface AnalysisReport {

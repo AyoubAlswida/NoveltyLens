@@ -65,9 +65,9 @@ RESULT_KEYS = {
 }
 """Every key ``graph/pipeline.py``'s ``_result_envelope`` promises the frontend."""
 
-CORE_PATENT_FIELDS = {"num", "title", "pct", "risk", "rationale", "source"}
-"""What the frontend actually reads off each patents[] entry (App.tsx's
-BackendPatent)."""
+CORE_PATENT_FIELDS = {"num", "title", "pct", "risk", "rationale", "key_overlap", "source", "url"}
+"""What the frontend actually reads off each patents[] entry (app.ts's
+result-mapping code)."""
 
 
 def _fake_llm_chat(prompt: str, **kwargs: object) -> str:
@@ -87,11 +87,16 @@ def _fake_llm_chat(prompt: str, **kwargs: object) -> str:
 
     if "expert patent examiner" in prompt:
         # The prompt states how many patents it is analyzing; honor that exactly,
-        # because analyze_all_matches raises on a missing rationale.
+        # because analyze_all_matches raises on a missing rationale or missing
+        # key-overlap tags.
         count = int(re.search(r"against (\d+) prior-art patents", prompt).group(1))
         return json.dumps({
             "rationales": [
-                {"index": i, "text": f"Deterministic rationale for patent {i}."}
+                {
+                    "index": i,
+                    "text": f"Deterministic rationale for patent {i}.",
+                    "key_overlap": [f"overlap tag {i}a", f"overlap tag {i}b"],
+                }
                 for i in range(1, count + 1)
             ],
             "recommendations": [f"Deterministic recommendation {i}." for i in range(1, 11)],
