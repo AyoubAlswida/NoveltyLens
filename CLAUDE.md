@@ -132,9 +132,19 @@ frontend today. The SSE contract (`POST /api/analyze/stream`) is real, tested
 is wired to it — but changing it cannot currently break the running app. Every event has a
 `type` of `progress` | `result` | `error`. `progress.phase` is one of the values in
 `backend/graph/events.py`'s `PHASES` tuple (nine now — see below). The stream must end with
-exactly one `result` event (data shape: `patents[].{num,title,pct,risk,rationale,source}`
-plus `title`, `date`, `concepts`, `top_score`, `verdict`, `recommendations`, `query_count`)
-or a client reading the stream would throw.
+exactly one `result` event (data shape:
+`patents[].{num,title,pct,risk,rationale,key_overlap,url,source}` plus `title`, `date`,
+`concepts`, `top_score`, `verdict`, `recommendations`, `query_count`) or a client reading
+the stream would throw.
+
+**Adding a field to `patents[]` is a three-place change, not one.** It has to be produced
+(`graph/ranking.py`'s `format_matches`), *persisted* (`reports.py` — `save_report` writes it
+and `list_history` reads it back, usually needing a migration), and declared on the
+frontend's `PatentMatch`. Miss the middle one and the live run renders while the same report
+reopened from History does not, because both go through the same component. That happened
+with `key_overlap`; `tests/test_history.py` now asserts the whole `patents[]` key set
+round-trips rather than named fields, so the next omission fails there instead of in the
+browser.
 
 ### `backend/graph/` — the LangGraph pipeline
 
@@ -663,6 +673,14 @@ list, and it had been eating the rail's active item the whole time without anyon
 noticing. Each now has an explicit dark counterpart. **Any state class you add needs one
 too**, and the symptom is never an error: it is a state that renders identically to its
 neutral, so it only surfaces when someone looks at the right screen in the right theme.
+
+**The other half of the same problem: a new class with no dark rule at all.** The redesign
+in `3dad9f6b` landed `.patent-card`, `.risk-legend-*` and `.summary-why` with hardcoded
+light greys, one of them (`#465266` on the `#353535` card, ~1.4:1) effectively invisible;
+renaming `.patent-row` to `.patent-card` also orphaned two dark rules onto a class no
+template uses any more. Nothing errored either time. **Renaming a class means grepping the
+dark block for the old name**, and any new class carrying a literal colour needs a dark
+counterpart in the same commit.
 
 Styling is unchanged from the React build and is **global, not component-scoped**:
 `src/styles.css` imports `styles/fonts.css`, `styles/theme.css` and `styles/globals.css`
