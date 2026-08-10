@@ -85,24 +85,57 @@ button {
   background: #fff;
 }
 
+/* ==========================================================================
+   Sidebar. Two widths, toggled by `.rail-open` from app.ts and remembered in
+   localStorage.
+
+   Collapsed is icon-only, NOT icon-over-label as it used to be: at 72px a
+   label either wraps or truncates, and "New Search" over two lines under a
+   glyph was the reason the rail could not carry a Recents list. Every control
+   keeps a `title`, so the collapsed state still names itself on hover.
+
+   Rows are laid out expanded-first (`flex-direction: row`) and the collapsed
+   rules override, because the expanded sidebar is the default state.
+   ========================================================================== */
 .brand-rail {
   position: relative;
   z-index: 20;
-  width: 84px;
-  min-width: 84px;
+  width: 72px;
+  min-width: 72px;
   height: 100vh;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  padding: 20px 8px 18px;
+  align-items: stretch;
+  padding: 16px 10px 14px;
   background: rgba(255, 255, 255, 0.96);
   border-right: 1px solid rgba(196, 212, 222, 0.72);
   box-shadow: 8px 0 28px rgba(25, 65, 98, 0.025);
+  transition: width 180ms ease, min-width 180ms ease;
+}
+
+.brand-rail.rail-open {
+  width: 264px;
+  min-width: 264px;
+  padding: 16px 12px 14px;
+}
+
+.rail-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.rail-open .rail-head {
+  flex-direction: row;
+  gap: 10px;
 }
 
 .rail-brand {
-  width: 46px;
-  height: 46px;
+  flex: none;
+  width: 42px;
+  height: 42px;
   border: 0;
   border-radius: 12px;
   display: grid;
@@ -116,45 +149,170 @@ button {
    brightness(0) invert(1) used to knock the colour mark out to white, but it flattens
    every dot in the cluster to the same value and the faint ones vanish on the tile. */
 .rail-brand img {
-  width: 34px;
-  height: 34px;
+  width: 31px;
+  height: 31px;
   object-fit: contain;
 }
 
-.rail-nav {
-  width: 100%;
-  margin-top: 44px;
+.rail-wordmark {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--navy);
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
-.rail-item,
-.rail-mode {
-  width: 100%;
+.rail-wordmark span {
+  color: var(--teal);
+}
+
+.rail-toggle {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+  color: #7a899e;
+  background: transparent;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.rail-toggle:hover {
+  color: var(--teal-ink);
+  background: rgba(38, 168, 171, 0.09);
+}
+
+.rail-nav {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 7px;
-  color: #5a6c82;
-  font-size: 11px;
-  font-weight: 600;
-  text-align: center;
+  gap: 2px;
 }
 
 .rail-item {
-  padding: 10px 3px;
+  width: 100%;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 10px;
   border: 0;
-  border-radius: 11px;
+  border-radius: 10px;
   cursor: pointer;
+  color: #5a6c82;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
   background: transparent;
-  transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+/* Collapsed: the glyph centres itself and the label is removed from the box
+   entirely rather than hidden, so it cannot reserve width. */
+.brand-rail:not(.rail-open) .rail-item {
+  justify-content: center;
+  padding: 10px 0;
+}
+
+.brand-rail:not(.rail-open) .rail-item span {
+  display: none;
+}
+
+.rail-item span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .rail-item:hover {
   background: rgba(38, 168, 171, 0.09);
-  transform: translateY(-1px);
 }
 
 .rail-item-active {
   color: var(--teal-ink);
+  background: rgba(38, 168, 171, 0.09);
+}
+
+/* Recents: the list of past searches, expanded-only. It is the only part of
+   the sidebar that scrolls, so a long history cannot push sign-out off-screen. */
+.rail-recents {
+  min-height: 0;
+  margin-top: 20px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.rail-section {
+  margin: 0 0 6px;
+  padding: 0 10px;
+  color: #8b98a9;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+/* min-height:0 on both this and .rail-recents is what actually makes the list
+   scroll: a flex child defaults to min-height:auto and refuses to shrink below
+   its content, so without it a long history grows the column and pushes Sign
+   out past the bottom of the viewport instead of scrolling here. */
+.rail-recents ul {
+  margin: 0;
+  padding: 0;
+  min-height: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.rail-recents ul::-webkit-scrollbar {
+  width: 7px;
+}
+
+.rail-recents ul::-webkit-scrollbar-thumb {
+  background: rgba(17, 91, 176, 0.16);
+  border-radius: 999px;
+}
+
+.rail-recent {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: left;
+  color: #5a6c82;
+  background: transparent;
+  font-size: 12.5px;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.rail-recent:hover {
+  color: var(--navy);
+  background: rgba(38, 168, 171, 0.09);
+}
+
+.rail-recent-active {
+  color: var(--teal-ink);
+  background: rgba(38, 168, 171, 0.11);
+}
+
+.rail-recents-note {
+  margin: 0;
+  padding: 4px 10px 0;
+  color: #93a0b1;
+  font-size: 12px;
 }
 
 .rail-spacer {
@@ -162,13 +320,14 @@ button {
 }
 
 .rail-mode {
-  padding: 16px 3px 0;
-  border: 0;
+  margin-top: 6px;
+  padding-top: 14px;
   border-top: 1px solid #dfe8ee;
   border-radius: 0;
-  cursor: pointer;
-  background: transparent;
-  transition: background 160ms ease, color 160ms ease;
+}
+
+.brand-rail:not(.rail-open) .rail-mode {
+  padding-top: 14px;
 }
 
 .workspace {
@@ -1112,19 +1271,19 @@ button {
 }
 
 @media (max-width: 980px) {
-  .brand-rail {
-    width: 74px;
-    min-width: 74px;
+  /* The expanded sidebar narrows; collapsed is already as narrow as it goes. */
+  .brand-rail.rail-open {
+    width: 226px;
+    min-width: 226px;
   }
 
   .rail-brand {
-    width: 42px;
-    height: 42px;
+    width: 40px;
+    height: 40px;
   }
 
-  .rail-item span,
-  .rail-mode span {
-    font-size: 11px;
+  .rail-item span {
+    font-size: 12.5px;
   }
 
   .screen {
@@ -1154,7 +1313,11 @@ button {
     overflow: visible;
   }
 
-  .brand-rail {
+  /* Below this width the sidebar stops being a sidebar and becomes a top bar,
+     so the collapse toggle has nothing to collapse -- both states are the same
+     bar, and Recents moves to the History screen where there is room for it. */
+  .brand-rail,
+  .brand-rail.rail-open {
     position: sticky;
     top: 0;
     width: 100%;
@@ -1162,9 +1325,22 @@ button {
     height: 66px;
     padding: 8px 14px;
     flex-direction: row;
+    align-items: center;
     justify-content: space-between;
     border-right: 0;
     border-bottom: 1px solid #dbe5ec;
+  }
+
+  .rail-head,
+  .rail-open .rail-head {
+    flex-direction: row;
+    margin-bottom: 0;
+  }
+
+  .rail-toggle,
+  .rail-recents,
+  .rail-wordmark {
+    display: none;
   }
 
   .rail-brand {
@@ -1181,14 +1357,22 @@ button {
   .rail-nav {
     width: auto;
     margin: 0;
+    flex-direction: row;
+    gap: 4px;
   }
 
-  .rail-item,
-  .rail-mode {
+  .rail-item {
     width: auto;
     flex-direction: row;
     padding: 8px 10px;
     gap: 7px;
+  }
+
+  /* Beats `.brand-rail:not(.rail-open) .rail-item span` (0,3,1): on a horizontal
+     bar there is room for the label whatever the sidebar state says. */
+  .brand-rail .rail-item span {
+    display: inline;
+    font-size: 12px;
   }
 
   .rail-spacer,
@@ -1795,6 +1979,48 @@ button {
 
 :root[data-theme="dark"] .rail-mode {
   border-top-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Sidebar chrome. Every class the collapsible sidebar added needs a rule here:
+   all of them carry a literal light grey, and on the black rail they would
+   render as bright-on-black or invisible. */
+:root[data-theme="dark"] .rail-wordmark {
+  color: #f2f4f7;
+}
+
+:root[data-theme="dark"] .rail-toggle {
+  color: #9aa6b5;
+}
+
+:root[data-theme="dark"] .rail-toggle:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.09);
+}
+
+:root[data-theme="dark"] .rail-section,
+:root[data-theme="dark"] .rail-recents-note {
+  color: #8d99a8;
+}
+
+:root[data-theme="dark"] .rail-recent {
+  color: #b6c0cc;
+}
+
+:root[data-theme="dark"] .rail-recent:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+/* (0,4,0), so it beats the plain `.rail-recent` rule above at (0,3,0) whichever
+   order they end up in. Without it the open entry looks like every other row --
+   the same failure the rail's own active state had. */
+:root[data-theme="dark"] .rail-recent.rail-recent-active {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.13);
+}
+
+:root[data-theme="dark"] .rail-recents ul::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
 }
 
 /* Flat grey. The wave photograph and its dimming gradient are gone -- it was

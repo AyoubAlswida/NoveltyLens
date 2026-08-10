@@ -533,12 +533,30 @@ with no context, router, memo or state library to unpick.
 
 Layout of `frontend/src/app/`:
 
-- `app.ts` — the shell. Owns the rail, the theme toggle, the `screen` signal that selects
+- `app.ts` — the shell. Owns the sidebar, the theme toggle, the `screen` signal that selects
   which of the five signed-in screens renders, and `startRunning()`, which drives the SSE
   run. State is Angular signals; there is no router, because the app has never had URLs to
   restore and adding routing would be new behaviour rather than a port. **The whole
-  workspace is gated on `auth.signedIn()`** — signed out, the rail shows only the mark and
+  workspace is gated on `auth.signedIn()`** — signed out, the sidebar shows only the mark and
   the theme toggle, and `LoginScreen` replaces the `@switch` entirely.
+
+  **The sidebar collapses**, `sidebarOpen()` persisted to localStorage, 264px ↔ 72px.
+  Collapsed is **icon-only**, not the old icon-over-label: at 72px a label wraps or
+  truncates, and that is what made a Recents list impossible. Every control keeps a
+  `title` so the collapsed state still names itself on hover. The CSS is written
+  expanded-first with `.brand-rail:not(.rail-open)` overriding, because expanded is the
+  default. Below 720px the sidebar becomes a horizontal top bar and the toggle, wordmark
+  and Recents are all hidden — there is nothing to collapse.
+
+  **Recents** lists the last `RECENTS_SHOWN` (8) runs by description, expanded-only, and
+  clicking one opens that report. It is the reason `loadHistory()` is now called on
+  sign-in (via `LoginScreen`'s `signedIn` output and `restore()`) rather than only when the
+  History screen opens, and the reason a finished run *refetches* history instead of
+  clearing it — dropping the cache would blank the sidebar on the one action that just
+  added a row to it. It shares the History screen's three-state rule: loading, failed and
+  empty stay distinct. Only the `<ul>` scrolls, and both it and `.rail-recents` need
+  `min-height: 0` or a long history pushes Sign out past the bottom of the viewport
+  instead of scrolling.
 - `config.ts` — `API_BASE_URL`, replacing `import.meta.env.VITE_API_URL`. See the running
   section above for the `window.NOVELTY_LENS_API_URL` override.
 - `models/report.ts` — `AnalysisReport`, `HistoryEntry`, `PHASE_ORDER`, `PHASE_LABELS`,

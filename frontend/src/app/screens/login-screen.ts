@@ -1,4 +1,4 @@
-import { Component, ChangeDetectionStrategy, signal, inject } from '@angular/core';
+import { Component, ChangeDetectionStrategy, signal, inject, output } from '@angular/core';
 import { Icon } from '../shared/icon';
 import { BrandHeader } from '../shared/chrome';
 import { AuthService } from '../services/auth';
@@ -84,6 +84,11 @@ import { AuthService } from '../services/auth';
 export class LoginScreen {
   private readonly auth = inject(AuthService);
 
+  /** Emitted once the token is stored. `auth.signedIn()` flipping is what swaps
+   * the screen; this exists so the shell can also fetch what a signed-in user
+   * needs (the sidebar's Recents) at the one moment it becomes fetchable. */
+  readonly signedIn = output<void>();
+
   readonly email = signal('');
   readonly password = signal('');
   readonly error = signal('');
@@ -103,6 +108,7 @@ export class LoginScreen {
       await this.auth.login(this.email().trim(), this.password());
       // No navigation here: `signedIn()` flips and app.ts swaps the screen.
       this.password.set('');
+      this.signedIn.emit();
     } catch (failure) {
       // Verbatim, like the error screen: "Incorrect email or password." and
       // "Failed to fetch" mean different things and must stay distinguishable.
