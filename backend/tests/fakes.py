@@ -196,16 +196,16 @@ class FakeReportStore:
     and strictly increasing, so ordering is deterministic rather than dependent
     on how fast the test ran.
 
-    ``patents`` is stored as a title lookup only. The real ``list_history``
-    JOINs ``search_run_matches`` to ``patents`` for each match's title, and a
-    match whose patent row is missing would silently vanish from that JOIN --
-    so the fake resolves titles the same way instead of echoing back whatever
+    ``patents`` is stored as a title/url lookup only. The real ``list_history``
+    JOINs ``search_run_matches`` to ``patents`` for each match's title and url,
+    and a match whose patent row is missing would silently vanish from that JOIN
+    -- so the fake resolves both the same way instead of echoing back whatever
     was in ``matches``.
     """
 
     def __init__(self) -> None:
         self.runs: list[dict] = []
-        self.patent_titles: dict[str, str] = {}
+        self.patent_meta: dict[str, tuple[str, str]] = {}
         self._ids = itertools.count(1)
         self._clock = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -213,7 +213,7 @@ class FakeReportStore:
         matches: list[dict] = list(fields.pop("matches"))  # type: ignore[arg-type]
         patents: list = list(fields.pop("patents"))  # type: ignore[arg-type]
         for patent in patents:
-            self.patent_titles[patent.id.strip().upper()] = patent.title
+            self.patent_meta[patent.id.strip().upper()] = (patent.title, patent.url)
 
         run_id = f"run-{next(self._ids)}"
         self._clock += timedelta(minutes=1)
@@ -233,7 +233,12 @@ class FakeReportStore:
                 "verdict": run["verdict"],
                 "recommendations": run["recommendations"],
                 "patents": [
-                    {**match, "title": self.patent_titles[str(match["num"]).strip().upper()]}
+                    {
+                        **match,
+                        "key_overlap": list(match.get("key_overlap") or []),
+                        "title": self.patent_meta[str(match["num"]).strip().upper()][0],
+                        "url": self.patent_meta[str(match["num"]).strip().upper()][1],
+                    }
                     for match in run["matches"]
                 ],
             })

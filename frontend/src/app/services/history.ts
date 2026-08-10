@@ -39,7 +39,16 @@ export function reportFromHistory(entry: HistoryEntry): AnalysisReport {
       year: 'numeric',
     }),
     concepts: entry.concepts ?? [],
-    patents: entry.patents ?? [],
+    // Normalised field by field rather than passed straight through. The report
+    // card reads `patent.key_overlap.length` directly, so a single entry stored
+    // before migration 0005 added that column would throw and blank the screen.
+    // An empty list is the honest value there: no tags were recorded for that
+    // run, which is not the same as the run having found no overlap.
+    patents: (entry.patents ?? []).map((patent) => ({
+      ...patent,
+      key_overlap: patent.key_overlap ?? [],
+      url: patent.url ?? '',
+    })),
     top_score: entry.top_score ?? 0,
     verdict: entry.verdict,
     recommendations: entry.recommendations ?? [],

@@ -108,3 +108,27 @@ def test_history_resolves_each_match_title_from_the_patents_table(
 
 def test_history_is_empty_before_any_run(report_store):
     assert TestClient(server.app, headers=AUTH).get("/api/history").json() == []
+
+
+def test_history_entries_carry_every_field_the_report_card_reads(
+    deterministic, report_store
+):
+    """A stored run must round-trip the *whole* patents[] shape, not a subset.
+
+    This is a regression test for a break that neither change caused on its own:
+    3dad9f6b added ``key_overlap`` and ``url`` to the result payload and made the
+    report card read ``patent.key_overlap.length`` directly, while persistence
+    only stored the fields that existed when it was written. A report reopened
+    from History then threw on a missing array and blanked the screen -- the
+    live path and the History path rendering through the same component is
+    exactly what makes that a break rather than a cosmetic gap.
+    """
+    list(run_graph_pipeline(DESCRIPTION, CLAIMS))
+    live = [event for event in run_graph_pipeline(DESCRIPTION, CLAIMS)][-1]["data"]["patents"][0]
+
+    entry = TestClient(server.app, headers=AUTH).get("/api/history").json()[0]
+    stored = entry["patents"][0]
+
+    assert set(stored) == set(live), "History drops or invents a patents[] field"
+    assert isinstance(stored["key_overlap"], list)
+    assert stored["key_overlap"], "the tags the LLM wrote were not persisted"

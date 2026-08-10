@@ -101,8 +101,8 @@ def save_report(
         for rank, match in enumerate(matches):
             cur.execute(
                 """
-                INSERT INTO search_run_matches (run_id, rank, patent_id, pct, risk, rationale, source)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO search_run_matches (run_id, rank, patent_id, pct, risk, rationale, key_overlap, source)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     run_id,
@@ -111,6 +111,9 @@ def save_report(
                     match["pct"],
                     match["risk"],
                     match["rationale"],
+                    # .get, not [], so a caller built before key_overlap existed
+                    # still stores a run rather than failing on a KeyError.
+                    list(match.get("key_overlap") or []),
                     match["source"],
                 ),
             )
@@ -142,9 +145,16 @@ def list_history(conn: psycopg.Connection, limit: int = 50) -> list[dict[str, ob
             return []
 
         run_ids = [row[0] for row in runs]
+        # Every field the frontend's PatentMatch declares, so a report reopened
+        # from History renders through the same component as a live one with
+        # nothing missing. `url` comes from the patents row rather than being
+        # snapshotted per run (unlike `source`): it is a link to a page, so the
+        # freshest one is the useful one, and a stale link is worse than a
+        # changed one.
         cur.execute(
             """
-            SELECT srm.run_id, srm.patent_id, p.title, srm.pct, srm.risk, srm.rationale, srm.source
+            SELECT srm.run_id, srm.patent_id, p.title, srm.pct, srm.risk, srm.rationale,
+                   srm.key_overlap, srm.source, p.url
             FROM search_run_matches srm
             JOIN patents p ON p.id = srm.patent_id
             WHERE srm.run_id = ANY(%s)
@@ -153,10 +163,17 @@ def list_history(conn: psycopg.Connection, limit: int = 50) -> list[dict[str, ob
             (run_ids,),
         )
         matches_by_run: dict[str, list[dict[str, object]]] = {str(rid): [] for rid in run_ids}
-        for run_id, patent_id, title, pct, risk, rationale, source in cur.fetchall():
-            matches_by_run[str(run_id)].append(
-                {"num": patent_id, "title": title, "pct": pct, "risk": risk, "rationale": rationale, "source": source}
-            )
+        for run_id, patent_id, title, pct, risk, rationale, key_overlap, source, url in cur.fetchall():
+            matches_by_run[str(run_id)].append({
+                "num": patent_id,
+                "title": title,
+                "pct": pct,
+                "risk": risk,
+                "rationale": rationale,
+                "key_overlap": list(key_overlap),
+                "source": source,
+                "url": url,
+            })
 
     return [
         {

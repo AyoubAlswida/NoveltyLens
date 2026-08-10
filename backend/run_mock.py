@@ -383,6 +383,15 @@ def _mock_llm_chat(prompt: str, **kwargs: object) -> str:
 
     if "expert patent examiner" in prompt:
         count = int(re.search(r"against (\d+) prior-art patents", prompt).group(1))
+        # `key_overlap` is not optional: as of 3dad9f6b, analyze_all_matches
+        # raises if any patent comes back without tags, so omitting them here
+        # would fail every mock run at the analyze phase.
+        overlap_tags = [
+            ["ultraviolet treatment", "in-cap emitter", "timed cycle"],
+            ["membrane filtration", "replaceable cartridge", "particulate retention"],
+            ["flow sensing", "automatic triggering", "cycle scheduling"],
+            ["photocatalytic surface", "biofilm control", "potable water"],
+        ]
         return json.dumps({
             "rationales": [
                 {
@@ -394,6 +403,7 @@ def _mock_llm_chat(prompt: str, **kwargs: object) -> str:
                         f"filtration with automatic cycle triggering. (Mock rationale "
                         f"{index} - no model was called.)"
                     ),
+                    "key_overlap": overlap_tags[(index - 1) % len(overlap_tags)],
                 }
                 for index in range(1, count + 1)
             ],
