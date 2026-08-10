@@ -426,6 +426,42 @@ button {
   overflow: hidden;
 }
 
+/* ==========================================================================
+   Theme toggle, signed-out. The rail is not rendered on the login screen (see
+   app.ts), so its `.rail-mode` button has nowhere to live; this is the same
+   control in the page corner.
+
+   It is `fixed`, not absolute, because `.screen` is what scrolls -- anchoring
+   to the scrolling box would let the toggle slide away on a short viewport.
+   Deliberately not styled as a rail item: on an empty white page a full-width
+   text row would read as navigation that goes nowhere.
+   ========================================================================== */
+.theme-fab {
+  position: fixed;
+  top: 20px;
+  right: 26px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 13px;
+  border: 1px solid #dfe8ee;
+  border-radius: var(--btn-radius);
+  cursor: pointer;
+  color: #5a6c82;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.9);
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
+}
+
+.theme-fab:hover {
+  color: var(--teal-ink);
+  border-color: rgba(38, 168, 171, 0.34);
+  background: rgba(38, 168, 171, 0.09);
+}
+
 .screen {
   position: relative;
   width: 100%;
@@ -2060,6 +2096,22 @@ button {
 /* `.rail-item:hover` sets a translateY lift in the light block. */
 :root[data-theme="dark"] .rail-item:hover {
   transform: none;
+}
+
+/* The signed-out theme toggle. It carries literal light greys, so it needs this
+   counterpart in the same commit -- the trap documented at the top of the dark
+   block, in its other form: a new class with no dark rule at all. Flat fill and
+   a hairline, like every other dark surface. */
+:root[data-theme="dark"] .theme-fab {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+:root[data-theme="dark"] .theme-fab:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 :root[data-theme="dark"] .rail-mode {

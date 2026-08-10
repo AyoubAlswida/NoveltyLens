@@ -546,8 +546,14 @@ Layout of `frontend/src/app/`:
   which of the five signed-in screens renders, and `startRunning()`, which drives the SSE
   run. State is Angular signals; there is no router, because the app has never had URLs to
   restore and adding routing would be new behaviour rather than a port. **The whole
-  workspace is gated on `auth.signedIn()`** — signed out, the sidebar shows only the mark and
-  the theme toggle, and `LoginScreen` replaces the `@switch` entirely.
+  workspace is gated on `auth.signedIn()`** — signed out, the sidebar is **not rendered at
+  all** and `LoginScreen` replaces the `@switch` entirely. The rail used to render empty
+  (mark + theme toggle only); it now sits inside `@if (auth.signedIn())`, which is also why
+  the `@if`s that used to guard the nav and Sign out from *within* the rail are gone —
+  nothing inside it can be reached signed out. The theme toggle survives as `.theme-fab`, a
+  `position: fixed` button in the page's top-right corner, because it is the one control
+  that still applies with no session. It is `fixed` rather than `absolute` on purpose:
+  `.screen` is the scrolling box, so anchoring to it would let the toggle scroll away.
 
   **The sidebar collapses**, `sidebarOpen()` persisted to localStorage, 264px ↔ 72px.
   Collapsed is **icon-only**, not the old icon-over-label: at 72px a label wraps or

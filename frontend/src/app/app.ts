@@ -42,6 +42,10 @@ const EXAMPLE_DESC =
   ],
   template: `
     <div class="app-shell">
+      <!-- Signed out there is nothing to navigate: no screens, no recents, no
+           account to sign out of. The rail is removed rather than emptied, and
+           the one control that still applies moves to a corner button. -->
+      @if (auth.signedIn()) {
       <aside
         class="brand-rail"
         [class.rail-open]="sidebarOpen()"
@@ -72,106 +76,102 @@ const EXAMPLE_DESC =
           </button>
         </div>
 
-        @if (auth.signedIn()) {
-          <nav class="rail-nav">
-            <button
-              class="rail-item"
-              [class.rail-item-active]="screen() !== 'history'"
-              (click)="startNewSearch()"
-              aria-label="Start a new search, clearing the current description and report"
-              title="New Search"
-            >
-              <app-icon name="Plus" [size]="20" [strokeWidth]="2" />
-              <span>New Search</span>
-            </button>
-            <button
-              class="rail-item"
-              [class.rail-item-active]="screen() === 'history'"
-              (click)="openHistory()"
-              aria-label="View past searches"
-              title="History"
-            >
-              <app-icon name="History" [size]="20" [strokeWidth]="2" />
-              <span>History</span>
-            </button>
-          </nav>
+        <nav class="rail-nav">
+          <button
+            class="rail-item"
+            [class.rail-item-active]="screen() !== 'history'"
+            (click)="startNewSearch()"
+            aria-label="Start a new search, clearing the current description and report"
+            title="New Search"
+          >
+            <app-icon name="Plus" [size]="20" [strokeWidth]="2" />
+            <span>New Search</span>
+          </button>
+          <button
+            class="rail-item"
+            [class.rail-item-active]="screen() === 'history'"
+            (click)="openHistory()"
+            aria-label="View past searches"
+            title="History"
+          >
+            <app-icon name="History" [size]="20" [strokeWidth]="2" />
+            <span>History</span>
+          </button>
+        </nav>
 
-          <!-- Recents is expanded-only: the titles are the whole point of it, and
-               there is nothing meaningful to show for a search description in a
-               72px column. Collapsing hides the section rather than shrinking it. -->
-          @if (sidebarOpen()) {
-            <div class="rail-recents">
-              <div class="rail-section-row">
-                <p class="rail-section">Recents</p>
-                @if (recents().length && !clearing()) {
-                  <button
-                    class="rail-clear"
-                    (click)="askClearHistory()"
-                    title="Delete every stored search"
-                  >
-                    Clear all
-                  </button>
-                }
-              </div>
-
-              <!-- Two-step rather than a native confirm(): deleting every stored
-                   report is irreversible on both sides, and the app replaced its
-                   last native dialog on purpose (see ErrorScreen). -->
-              @if (confirmingClear()) {
-                <div class="rail-confirm" role="alertdialog" aria-label="Confirm clearing history">
-                  <p>Delete all {{ history().length }} stored searches? This cannot be undone.</p>
-                  <div>
-                    <button class="rail-confirm-yes" (click)="clearHistory()" [disabled]="clearing()">
-                      {{ clearing() ? 'Clearing…' : 'Delete all' }}
-                    </button>
-                    <button class="rail-confirm-no" (click)="confirmingClear.set(false)">
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              }
-
-              @if (historyLoading() && !recents().length) {
-                <p class="rail-recents-note">Loading…</p>
-              } @else if (historyError()) {
-                <!-- Distinct from "no searches yet" for the same reason the History
-                     screen keeps them apart: a failed fetch is not an empty list. -->
-                <p class="rail-recents-note">Could not load recents.</p>
-              } @else {
-                <ul>
-                  @for (entry of recents(); track entry.id) {
-                    <li>
-                      <button
-                        class="rail-recent"
-                        [class.rail-recent-active]="entry.id === openEntryId()"
-                        [title]="entry.description"
-                        (click)="openHistoryEntry(entry)"
-                      >
-                        {{ entry.description }}
-                      </button>
-                    </li>
-                  } @empty {
-                    <li class="rail-recents-note">No searches yet.</li>
-                  }
-                </ul>
+        <!-- Recents is expanded-only: the titles are the whole point of it, and
+             there is nothing meaningful to show for a search description in a
+             72px column. Collapsing hides the section rather than shrinking it. -->
+        @if (sidebarOpen()) {
+          <div class="rail-recents">
+            <div class="rail-section-row">
+              <p class="rail-section">Recents</p>
+              @if (recents().length && !clearing()) {
+                <button
+                  class="rail-clear"
+                  (click)="askClearHistory()"
+                  title="Delete every stored search"
+                >
+                  Clear all
+                </button>
               }
             </div>
-          }
+
+            <!-- Two-step rather than a native confirm(): deleting every stored
+                 report is irreversible on both sides, and the app replaced its
+                 last native dialog on purpose (see ErrorScreen). -->
+            @if (confirmingClear()) {
+              <div class="rail-confirm" role="alertdialog" aria-label="Confirm clearing history">
+                <p>Delete all {{ history().length }} stored searches? This cannot be undone.</p>
+                <div>
+                  <button class="rail-confirm-yes" (click)="clearHistory()" [disabled]="clearing()">
+                    {{ clearing() ? 'Clearing…' : 'Delete all' }}
+                  </button>
+                  <button class="rail-confirm-no" (click)="confirmingClear.set(false)">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            }
+
+            @if (historyLoading() && !recents().length) {
+              <p class="rail-recents-note">Loading…</p>
+            } @else if (historyError()) {
+              <!-- Distinct from "no searches yet" for the same reason the History
+                   screen keeps them apart: a failed fetch is not an empty list. -->
+              <p class="rail-recents-note">Could not load recents.</p>
+            } @else {
+              <ul>
+                @for (entry of recents(); track entry.id) {
+                  <li>
+                    <button
+                      class="rail-recent"
+                      [class.rail-recent-active]="entry.id === openEntryId()"
+                      [title]="entry.description"
+                      (click)="openHistoryEntry(entry)"
+                    >
+                      {{ entry.description }}
+                    </button>
+                  </li>
+                } @empty {
+                  <li class="rail-recents-note">No searches yet.</li>
+                }
+              </ul>
+            }
+          </div>
         }
 
         <div class="rail-spacer"></div>
 
-        @if (auth.signedIn()) {
-          <button
-            class="rail-item rail-signout"
-            (click)="signOut()"
-            [attr.aria-label]="'Sign out of ' + (auth.email() ?? 'Novelty Lens')"
-            [title]="auth.email() ?? 'Sign out'"
-          >
-            <app-icon name="LogOut" [size]="19" [strokeWidth]="1.9" />
-            <span>Sign out</span>
-          </button>
-        }
+        <button
+          class="rail-item rail-signout"
+          (click)="signOut()"
+          [attr.aria-label]="'Sign out of ' + (auth.email() ?? 'Novelty Lens')"
+          [title]="auth.email() ?? 'Sign out'"
+        >
+          <app-icon name="LogOut" [size]="19" [strokeWidth]="1.9" />
+          <span>Sign out</span>
+        </button>
 
         <button
           class="rail-item rail-mode"
@@ -183,9 +183,23 @@ const EXAMPLE_DESC =
           <span>{{ theme() === 'dark' ? 'Dark' : 'Light' }}</span>
         </button>
       </aside>
+      }
 
       <main class="workspace">
         @if (!auth.signedIn()) {
+          <!-- The rail's theme toggle, relocated: signed out it is the only
+               control that still means anything, so it sits in the page corner
+               instead of dragging a whole navigation column back on screen. -->
+          <button
+            class="theme-fab"
+            (click)="toggleTheme()"
+            [attr.aria-label]="'Switch to ' + (theme() === 'dark' ? 'light' : 'dark') + ' appearance'"
+            [title]="'Switch to ' + (theme() === 'dark' ? 'light' : 'dark') + ' appearance'"
+          >
+            <app-icon [name]="theme() === 'dark' ? 'Moon' : 'Sun'" [size]="18" [strokeWidth]="1.7" />
+            <span>{{ theme() === 'dark' ? 'Dark' : 'Light' }}</span>
+          </button>
+
           <app-login-screen (signedIn)="loadHistory()" />
         } @else {
           @switch (screen()) {
