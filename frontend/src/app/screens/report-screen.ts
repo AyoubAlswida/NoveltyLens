@@ -90,17 +90,6 @@ import { AnalysisReport, Risk, Verdict } from '../models/report';
                     </span>
                   </div>
 
-                  @if (patent.key_overlap.length) {
-                    <div class="patent-overlap">
-                      <p class="card-label">Key overlap</p>
-                      <div class="overlap-tags">
-                        @for (tag of patent.key_overlap; track tag) {
-                          <span class="overlap-tag">{{ tag }}</span>
-                        }
-                      </div>
-                    </div>
-                  }
-
                   <div class="patent-summary">
                     <p class="card-label">Overlap summary</p>
                     <p>{{ patent.rationale }}</p>

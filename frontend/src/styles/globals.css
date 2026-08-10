@@ -634,7 +634,7 @@ button {
   gap: 7px;
   padding: 8px 14px;
   border: 1px solid rgba(38, 168, 171, 0.28);
-  border-radius: 999px;
+  border-radius: var(--btn-radius);
   background: rgba(38, 168, 171, 0.09);
   color: var(--teal-ink);
   font-size: 13px;
@@ -1106,7 +1106,7 @@ button {
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
-  border-radius: 999px;
+  border-radius: var(--btn-radius);
   font-size: 11px;
   font-weight: 700;
   text-transform: capitalize;
@@ -1153,7 +1153,7 @@ button {
   min-width: 34px;
   height: 34px;
   padding: 0 10px;
-  border-radius: 999px;
+  border-radius: var(--btn-radius);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1249,10 +1249,6 @@ button {
   margin-top: 7px;
 }
 
-.patent-overlap {
-  margin-bottom: 16px;
-}
-
 .overlap-tags {
   display: flex;
   flex-wrap: wrap;
@@ -1265,7 +1261,7 @@ button {
   align-items: center;
   padding: 5px 11px;
   border: 1px solid rgba(38, 168, 171, 0.28);
-  border-radius: 999px;
+  border-radius: 6px;
   background: rgba(38, 168, 171, 0.09);
   color: var(--teal-ink);
   font-size: 11px;
@@ -1910,7 +1906,7 @@ button {
 .history-verdict {
   flex: none;
   padding: 6px 10px;
-  border-radius: 999px;
+  border-radius: var(--btn-radius);
   font-family: var(--font-display);
   font-size: 11px;
   font-weight: 700;
