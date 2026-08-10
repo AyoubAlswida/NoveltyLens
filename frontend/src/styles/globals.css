@@ -10,7 +10,26 @@
   --line: #dbe5ec;
   --green: #84BD00;
   --green-dark: #078c63;
-  --teal: #12b8b2;
+  /* Aramco secondary palette, from the brand portal's Colors page. Real
+     published values, unlike the button hexes below which were eyeballed.
+
+     The brand allows exactly two tints of a secondary colour and no others, so
+     they are tokens rather than something to mix ad hoc at each call site. Note
+     the portal page contradicts itself: the prose says "70% and 40% tints" while
+     the swatches under it render 70% and 50%. These follow the swatches, which
+     are the values actually shown; 40% is #A8DCDD if the prose turns out to be
+     the authority. */
+  --teal: #26A8AB;
+  --teal-70: #67C2C4;
+  --teal-50: #92D4D5;
+  /* A darkened teal for INK, and the one value here that is not published.
+     The brand sanctions only tints, which are all lighter than the base -- but
+     the base is 2.89:1 on white, so using it for 11-13px chip and label text
+     would fail WCAG AA outright. This is the brand hue at 72% lightness:
+     5.16:1 on white, 4.72:1 on the chip wash. Fills, borders and icons use
+     --teal itself; only type reaches for this. If the brand portal publishes a
+     dark teal, replace this one value. */
+  --teal-ink: #1B797B;
   --blue: #155bd7;
   --card: rgba(255, 255, 255, 0.91);
   --shadow: 0 18px 50px rgba(32, 72, 105, 0.09);
@@ -130,12 +149,12 @@ button {
 }
 
 .rail-item:hover {
-  background: rgba(8, 168, 115, 0.07);
+  background: rgba(38, 168, 171, 0.09);
   transform: translateY(-1px);
 }
 
 .rail-item-active {
-  color: var(--green-dark);
+  color: var(--teal-ink);
 }
 
 .rail-spacer {
@@ -293,7 +312,7 @@ button {
   display: flex;
   align-items: center;
   gap: 11px;
-  color: var(--green);
+  color: var(--teal);
 }
 
 .field-title label {
@@ -339,14 +358,14 @@ button {
 
 .textarea-wrap-primary textarea {
   min-height: 176px;
-  border-color: var(--green);
+  border-color: var(--teal);
 }
 
 .textarea-wrap textarea:hover,
 .textarea-wrap textarea:focus {
-  border-color: var(--green);
+  border-color: var(--teal);
   background: #fff;
-  box-shadow: 0 0 0 4px rgba(8, 168, 115, 0.07);
+  box-shadow: 0 0 0 4px rgba(38, 168, 171, 0.09);
   outline: none;
 }
 
@@ -366,10 +385,10 @@ button {
   align-items: center;
   gap: 7px;
   padding: 8px 14px;
-  border: 1px solid rgba(8, 168, 115, 0.24);
+  border: 1px solid rgba(38, 168, 171, 0.28);
   border-radius: 999px;
-  background: rgba(8, 168, 115, 0.07);
-  color: var(--green-dark);
+  background: rgba(38, 168, 171, 0.09);
+  color: var(--teal-ink);
   font-size: 13px;
   font-weight: 600;
 }
@@ -511,18 +530,18 @@ button {
 }
 
 .progress-step.active .phase-icon {
-  color: var(--green-dark);
-  background: #e8f8f2;
-  box-shadow: 0 0 0 7px rgba(8, 168, 115, 0.05);
+  color: var(--teal-ink);
+  background: #e8f6f6;
+  box-shadow: 0 0 0 7px rgba(38, 168, 171, 0.06);
 }
 
 .progress-step.complete .phase-icon {
   color: #fff;
-  background: var(--green);
+  background: var(--teal-ink);
 }
 
 .progress-step.complete .phase-line {
-  border-color: rgba(8, 168, 115, 0.45);
+  border-color: rgba(38, 168, 171, 0.5);
 }
 
 .phase-label {
@@ -543,8 +562,8 @@ button {
 .activity-ring {
   width: 24px;
   height: 24px;
-  border: 2px solid rgba(8, 168, 115, 0.2);
-  border-top-color: var(--green);
+  border: 2px solid rgba(38, 168, 171, 0.24);
+  border-top-color: var(--teal);
   border-radius: 50%;
   animation: spin 900ms linear infinite;
 }
@@ -879,7 +898,7 @@ button {
 }
 
 .section-heading > svg {
-  color: var(--green);
+  color: var(--teal);
 }
 
 .result-count {
@@ -890,8 +909,8 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--green-dark);
-  background: rgba(8, 168, 115, 0.09);
+  color: var(--teal-ink);
+  background: rgba(38, 168, 171, 0.11);
   font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 700;
@@ -908,7 +927,7 @@ button {
 }
 
 .patent-card:hover {
-  background: rgba(8, 168, 115, 0.05);
+  background: rgba(38, 168, 171, 0.06);
 }
 
 .patent-card:hover .patent-title {
@@ -943,7 +962,7 @@ button {
 }
 
 .patent-meta span:nth-child(2) {
-  color: var(--green-dark);
+  color: var(--teal-ink);
 }
 
 .patent-title {
@@ -997,10 +1016,10 @@ button {
   display: inline-flex;
   align-items: center;
   padding: 5px 11px;
-  border: 1px solid rgba(8, 168, 115, 0.24);
+  border: 1px solid rgba(38, 168, 171, 0.28);
   border-radius: 999px;
-  background: rgba(8, 168, 115, 0.07);
-  color: var(--green-dark);
+  background: rgba(38, 168, 171, 0.09);
+  color: var(--teal-ink);
   font-size: 11px;
   font-weight: 600;
 }
@@ -1015,7 +1034,7 @@ button {
 .patent-action {
   display: block;
   margin-top: 16px;
-  color: var(--green-dark);
+  color: var(--teal-ink);
   font-size: 12px;
   font-weight: 700;
   text-align: right;
@@ -1036,12 +1055,12 @@ button {
 
 .recommendations-card {
   padding-bottom: 6px;
-  background: rgba(241, 252, 248, 0.91);
-  border-color: rgba(8, 168, 115, 0.23);
+  background: rgba(240, 251, 251, 0.91);
+  border-color: rgba(38, 168, 171, 0.26);
 }
 
 .recommendations-card .section-heading {
-  border-color: rgba(8, 168, 115, 0.16);
+  border-color: rgba(38, 168, 171, 0.18);
 }
 
 .recommendation-list {
@@ -1068,7 +1087,7 @@ button {
   display: grid;
   place-items: center;
   color: #fff;
-  background: var(--green);
+  background: var(--teal-ink);
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 700;
@@ -1340,7 +1359,7 @@ button {
 }
 
 .error-pip.done {
-  background: var(--green);
+  background: var(--teal);
 }
 
 .error-pip.failed {
@@ -1439,13 +1458,13 @@ button {
   cursor: pointer;
   text-align: left;
   background: transparent;
-  color: var(--green);
+  color: var(--teal);
   transition: background 140ms ease;
 }
 
 .export-option:hover,
 .export-option:focus-visible {
-  background: rgba(8, 168, 115, 0.09);
+  background: rgba(38, 168, 171, 0.11);
 }
 
 .export-option-text {
@@ -1496,7 +1515,7 @@ button {
   display: flex;
   align-items: center;
   gap: 9px;
-  color: var(--green);
+  color: var(--teal);
   font-family: var(--font-display);
   font-size: 13px;
   font-weight: 700;
@@ -1521,9 +1540,9 @@ button {
 
 .login-field input:hover,
 .login-field input:focus {
-  border-color: var(--green);
+  border-color: var(--teal);
   background: #fff;
-  box-shadow: 0 0 0 4px rgba(8, 168, 115, 0.07);
+  box-shadow: 0 0 0 4px rgba(38, 168, 171, 0.09);
   outline: none;
 }
 
@@ -1586,7 +1605,7 @@ button {
 }
 
 .history-row:hover {
-  background: rgba(8, 168, 115, 0.05);
+  background: rgba(38, 168, 171, 0.06);
 }
 
 .history-main {
@@ -1708,7 +1727,17 @@ button {
   /* Accents lift slightly; the light-mode greens go muddy on dark. */
   --green: #16c98d;
   --green-dark: #23d79a;
-  --teal: #2ad4cd;
+  /* Teal is NOT lifted, unlike the greens above: the brand value clears 4.9:1
+     on the page and 4.25:1 on a card, so the invented #2ad4cd it replaces was
+     buying legibility the real colour already has. */
+  --teal: #26A8AB;
+  /* Ink flips to the sanctioned 70% tint here, which is the whole reason the
+     tints are tokens. --teal-ink's light value (#1B797B) is a dark teal and
+     would be almost invisible on a #353535 card; #67C2C4 reads at 5.89:1 on a
+     card and 6.8:1 on the page. Because it is the same token, every chip,
+     pill, label and count that uses it flips with the theme and needs no
+     per-rule dark counterpart. */
+  --teal-ink: #67C2C4;
   color: var(--navy);
   background: var(--aramco-gray);
 }
@@ -1814,7 +1843,7 @@ button {
 
 :root[data-theme="dark"] .textarea-wrap textarea:focus {
   background: rgba(255, 255, 255, 0.07);
-  box-shadow: 0 0 0 4px rgba(22, 201, 141, 0.1);
+  box-shadow: 0 0 0 4px rgba(103, 194, 196, 0.22);
 }
 
 :root[data-theme="dark"] .textarea-wrap textarea::placeholder {
@@ -1861,20 +1890,22 @@ button {
    specificity trap has bitten in this stylesheet; assume any state class needs
    an explicit dark counterpart. */
 :root[data-theme="dark"] .progress-step.active .phase-icon {
-  color: var(--green-dark);
-  background: rgba(22, 201, 141, 0.16);
+  color: var(--teal-ink);
+  background: rgba(38, 168, 171, 0.22);
   /* The light block's 7px halo. The tinted fill alone marks the active step. */
   box-shadow: none;
 }
 
 :root[data-theme="dark"] .progress-step.complete .phase-icon {
-  /* Dark glyph on the lifted green: white on #16c98d is only ~2:1. */
+  /* Dark glyph on the teal fill, 5.93:1. Light mode uses white on --teal-ink
+     instead, because white on the base teal is only 2.89:1 - the fill and the
+     glyph swap roles between themes rather than either one being lifted. */
   color: #0d1f19;
-  background: var(--green);
+  background: var(--teal);
 }
 
 :root[data-theme="dark"] .progress-step.complete .phase-line {
-  border-color: rgba(22, 201, 141, 0.5);
+  border-color: rgba(38, 168, 171, 0.55);
 }
 
 :root[data-theme="dark"] .phase-line {
@@ -1965,11 +1996,16 @@ button {
 }
 
 :root[data-theme="dark"] .concept-chip {
-  border-color: rgba(22, 201, 141, 0.3);
-  background: rgba(22, 201, 141, 0.12);
+  border-color: rgba(38, 168, 171, 0.38);
+  background: rgba(38, 168, 171, 0.16);
 }
 
-:root[data-theme="dark"] .result-count,
+:root[data-theme="dark"] .result-count {
+  background: rgba(38, 168, 171, 0.2);
+}
+
+/* Split from .result-count: the count is an accent and went teal, the verdict
+   is semantic (Strong/Moderate/Weak) and stays on the green scale. */
 :root[data-theme="dark"] .verdict-strong {
   background: rgba(22, 201, 141, 0.16);
 }
@@ -2023,7 +2059,7 @@ button {
 
 :root[data-theme="dark"] .export-option:hover,
 :root[data-theme="dark"] .export-option:focus-visible {
-  background: rgba(22, 201, 141, 0.14);
+  background: rgba(38, 168, 171, 0.18);
 }
 
 /* Error screen */
@@ -2068,7 +2104,7 @@ button {
    `.error-pip.failed` at (0,2,0), flattening every phase pip to the same grey
    and losing the completed-vs-failed distinction entirely. */
 :root[data-theme="dark"] .error-pip.done {
-  background: var(--green);
+  background: var(--teal);
 }
 
 :root[data-theme="dark"] .error-pip.failed {
@@ -2092,7 +2128,7 @@ button {
 
 :root[data-theme="dark"] .login-field input:focus {
   background: rgba(255, 255, 255, 0.07);
-  box-shadow: 0 0 0 4px rgba(22, 201, 141, 0.1);
+  box-shadow: 0 0 0 4px rgba(103, 194, 196, 0.22);
 }
 
 :root[data-theme="dark"] .login-field input::placeholder {

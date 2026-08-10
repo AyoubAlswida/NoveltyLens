@@ -628,6 +628,31 @@ colours and the 8px radius were matched by eye from a photo of the Pixel Compone
 not taken from a spec** — if you get the real values, changing those tokens updates every
 button, and nothing else needs touching.
 
+**Accent colour is Aramco's secondary palette: Teal `#26A8AB`.** Real published brand
+values, unlike the button hexes, which are still eyeballed. The brand sanctions exactly two
+tints and no others, so they are tokens rather than something to mix per call site:
+`--teal` `#26A8AB`, `--teal-70` `#67C2C4`, `--teal-50` `#92D4D5`. (The portal page
+contradicts itself — its prose says "70% and 40%" while its swatches render 70% and 50%.
+These follow the swatches; 40% is `#A8DCDD` if the prose turns out to be the authority.)
+
+`--teal-ink` is the **one value here that is not published**, and it exists because the
+brand's tints are all *lighter* than the base while `#26A8AB` is only 2.89:1 on white —
+unusable for 11–13px chip and label type. It is the brand hue at 72% lightness
+(`#1B797B`, 5.16:1 on white) in light mode, and flips to the sanctioned `#67C2C4` tint in
+dark (5.89:1 on a card). **Because it is one token, every chip, pill, label and count
+flips with the theme and needs no per-rule dark counterpart** — that is what it is for.
+Fills, borders and icons use `--teal` itself; only type reaches for `--teal-ink`. A solid
+teal fill carrying white text uses `--teal-ink` as the *background* in light and `--teal`
+with a dark glyph in dark, because white on the base teal fails.
+
+**Green did not go away, and the split is deliberate: teal is decoration, green is
+meaning.** Everything still green is semantic — the `risk-low` end of the High/Medium/Low
+scale (`.score-ring`, `.score-bar`, `.risk-label`, `.risk-legend-item`, `.history-score`)
+and `.verdict-strong`. Recolouring those to brand teal would destroy the one thing their
+colour communicates. If you are adding an accent, use teal; if you are adding a status,
+match the existing scale. The dark `.result-count` / `.verdict-strong` rule was split for
+exactly this reason — they had shared a declaration and no longer belong together.
+
 The light theme is **plain white** (`:root`, `.app-shell` and `.screen` all `#fff`) and
 keeps its glass, shadows and gradients. The
 "Typical result in under 60 seconds" note and the page footer were removed from every
