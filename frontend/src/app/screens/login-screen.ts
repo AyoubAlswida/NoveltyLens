@@ -22,10 +22,6 @@ import { AuthService } from '../services/auth';
     <div class="screen screen-scroll">
       <app-brand-header />
 
-      <section class="intro-copy submit-intro">
-        <p>Sign in to search prior art and read your past reports.</p>
-      </section>
-
       <section class="login-card glass-card">
         <form (submit)="submit($event)">
           <div class="login-field">

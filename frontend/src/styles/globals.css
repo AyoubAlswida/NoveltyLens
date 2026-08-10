@@ -1799,7 +1799,10 @@ button {
    ========================================================================== */
 .login-card {
   width: min(440px, 100%);
-  margin: 0 auto;
+  /* The top margin replaces the `.submit-intro` gap: the sign-in tagline that
+     used to sit between the brand mark and this card is gone, and it was what
+     held them apart. */
+  margin: 26px auto 0;
   padding: 30px 32px 24px;
   border-radius: 22px;
 }
