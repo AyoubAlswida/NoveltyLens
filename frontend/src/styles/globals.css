@@ -1916,12 +1916,37 @@ button {
   border-bottom-color: rgba(255, 255, 255, 0.08);
 }
 
-:root[data-theme="dark"] .patent-row {
+/* Retargeted from `.patent-row`, which 3dad9f6b renamed to `.patent-card`.
+   These rules survived the rename pointing at a class no template uses any
+   more, so the new card had a light `#e6edf1` divider on a dark surface. */
+:root[data-theme="dark"] .patent-card {
   border-bottom-color: rgba(255, 255, 255, 0.07);
 }
 
-:root[data-theme="dark"] .patent-row:hover {
+/* The light hover is a 5% green wash, which is all but invisible on grey and
+   is the only coloured hover left in dark mode. Same white wash as every other
+   dark hover surface. */
+:root[data-theme="dark"] .patent-card:hover {
   background: rgba(255, 255, 255, 0.03);
+}
+
+:root[data-theme="dark"] .risk-legend {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+/* #465266 on the #353535 card is about 1.4:1 - legible in the light design it
+   was written for, effectively invisible here. --navy-soft is the value the
+   dark block already uses for secondary body text. */
+:root[data-theme="dark"] .risk-legend-item {
+  color: var(--navy-soft);
+}
+
+:root[data-theme="dark"] .risk-legend-help {
+  color: #8d99a8;
+}
+
+:root[data-theme="dark"] .summary-why {
+  color: #a7b3c1;
 }
 
 :root[data-theme="dark"] .score-bar {
