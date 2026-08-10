@@ -164,8 +164,9 @@ button {
   width: 100%;
   min-height: 100%;
   padding: 22px 44px 24px;
-  /* Plain white in light mode. The wave photograph is dark-mode only now --
-     see the [data-theme="dark"] .screen rule further down. */
+  /* Plain white in light mode, flat grey in dark. The wave photograph that used
+     to back the dark screen is gone -- see the [data-theme="dark"] .screen rule
+     further down, and the banner above it for why nothing here is decorated. */
   background: #fff;
 }
 
@@ -324,7 +325,9 @@ button {
   width: 100%;
   min-height: 114px;
   resize: vertical;
-  padding: 16px 18px 34px;
+  /* The bottom padding used to be 34px to clear the "n / 2000" counter that
+     sat inside the field. The counter is gone, so the padding is even again. */
+  padding: 16px 18px;
   border: 1px solid #cad8e1;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.78);
@@ -349,15 +352,6 @@ button {
 
 .textarea-wrap textarea::placeholder {
   color: #a1aebe;
-}
-
-.character-count {
-  position: absolute;
-  right: 14px;
-  bottom: 12px;
-  color: #75869d;
-  font-family: var(--font-mono);
-  font-size: 10px;
 }
 
 .concept-row {
@@ -1302,6 +1296,207 @@ button {
 }
 
 /* ==========================================================================
+   Login screen.
+
+   Deliberately narrow: two fields and a button, with no "create account" link,
+   because there is no signup endpoint to link to. Inputs reuse the textarea's
+   border/focus treatment rather than inventing a second input style.
+   ========================================================================== */
+.login-card {
+  width: min(440px, 100%);
+  margin: 0 auto;
+  padding: 30px 32px 24px;
+  border-radius: 22px;
+}
+
+.login-card form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.login-field label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--green);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.login-field label span {
+  color: var(--navy);
+}
+
+.login-field input {
+  width: 100%;
+  height: 48px;
+  padding: 0 15px;
+  border: 1px solid #cad8e1;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--navy);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.login-field input:hover,
+.login-field input:focus {
+  border-color: var(--green);
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(8, 168, 115, 0.07);
+  outline: none;
+}
+
+.login-field input::placeholder {
+  color: #a1aebe;
+}
+
+.login-error {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  color: #8f2b36;
+  font-size: 13px;
+}
+
+.login-error svg {
+  flex: none;
+}
+
+.login-submit {
+  width: 100%;
+}
+
+/* ==========================================================================
+   History screen.
+
+   Rows share the report screen's risk and verdict colours, so a row and the
+   report it opens can never look like they disagree.
+   ========================================================================== */
+.history-card {
+  width: min(1000px, 100%);
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: 20px;
+}
+
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.history-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 16px 24px;
+  border: 0;
+  border-bottom: 1px solid #e2e9ee;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background 140ms ease;
+}
+
+.history-list li:last-child .history-row {
+  border-bottom: 0;
+}
+
+.history-row:hover {
+  background: rgba(8, 168, 115, 0.05);
+}
+
+.history-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* The full description is stored, and it can be 2000 characters. One line,
+   clipped -- the report screen is where the whole thing belongs. */
+.history-title {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--navy);
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.history-meta {
+  color: #7b8ba0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.history-verdict {
+  flex: none;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.history-score {
+  flex: none;
+  min-width: 58px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.history-score.risk-high { color: #b73643; }
+.history-score.risk-medium { color: #a96b11; }
+.history-score.risk-low { color: var(--green-dark); }
+
+.history-error {
+  padding: 20px 24px;
+}
+
+.history-error > p {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  color: #8f2b36;
+  font-family: var(--font-display);
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+.history-error > p svg {
+  flex: none;
+}
+
+/* .error-detail's own margin assumes it sits under the error card's heading. */
+.history-error .error-detail {
+  margin-top: 12px;
+}
+
+/* Sits below .rail-spacer, above the theme toggle, so it never competes with
+   the two navigation items for the eye. */
+.rail-signout {
+  margin-bottom: 8px;
+}
+
+/* ==========================================================================
    Dark theme. Applied by <html data-theme="dark">, toggled from the rail.
 
    Written as an override layer rather than by refactoring the light palette
@@ -1309,62 +1504,121 @@ button {
    variables, so remapping the rest carried more risk to the shipped light
    design than it was worth. Light mode below this point is untouched.
 
-   The rail is true black and every other surface is a dark grey, so the
-   navigation reads as a distinct plane from the content.
+   **Flat, three-value dark mode, matched to aramcoMETABRAIN.** A black rail, a
+   plain grey page, and cards one step lighter than the page. That is the whole
+   palette -- there is no fourth surface value and no decoration on any of them.
+
+   **Every visual effect is switched off here on purpose**, and each one has an
+   explicit `none` below rather than being left to a shorthand: the wave
+   photograph, the glass blur, every decorative shadow and glow, the gradient
+   logo tile, the hover lift, and the mark's drop shadow. If you add a new
+   surface, it gets a flat colour and a 1px border -- nothing else. Focus
+   outlines and the loading spinner are NOT effects and stay: one is
+   accessibility, the other is the only thing telling the user a 60-second run
+   is still alive.
+
+   Light mode keeps all of it. This flattening is scoped to dark on purpose.
    ========================================================================== */
 :root[data-theme="dark"] {
-  --navy: #e9edf3;
-  --navy-soft: #b4bfcc;
-  --muted: #8a96a5;
-  --line: #2f353d;
-  --card: rgba(33, 37, 43, 0.92);
-  --shadow: 0 18px 50px rgba(0, 0, 0, 0.42);
+  /* The three surface values, darkest to lightest. The brand greys that used
+     to be here (Aramco Gray #5F6369 page, Dark Gray #323232 rail+cards) read
+     too light and too close together against a black rail. */
+  --rail-black: #000;
+  --aramco-gray: #2b2b2b;
+  --aramco-dark-gray: #353535;
+  --navy: #f2f4f7;
+  --navy-soft: #d3d9e0;
+  --muted: #b9c0c8;
+  --line: #3d3d3d;
+  --card: #353535;
+  /* Cards are separated from the page by one step of grey and a hairline
+     border, not by elevation. Nothing in dark mode casts a shadow. */
+  --shadow: none;
   /* Accents lift slightly; the light-mode greens go muddy on dark. */
   --green: #16c98d;
   --green-dark: #23d79a;
   --teal: #2ad4cd;
   color: var(--navy);
-  background: #16191d;
+  background: var(--aramco-gray);
 }
 
 :root[data-theme="dark"] .app-shell {
-  background: #16191d;
+  background: var(--aramco-gray);
 }
 
-/* Rail: black, per the brief. */
+/* Rail: flat black, separated from the page by the border alone. */
 :root[data-theme="dark"] .brand-rail {
-  background: #000;
+  background: var(--rail-black);
   border-right-color: rgba(255, 255, 255, 0.1);
-  box-shadow: 8px 0 28px rgba(0, 0, 0, 0.5);
+  box-shadow: none;
+}
+
+/* The gradient tile behind the mark is a light-mode device. On black it would
+   be the single brightest object on the screen. */
+:root[data-theme="dark"] .rail-brand {
+  background: transparent;
+  box-shadow: none;
 }
 
 :root[data-theme="dark"] .rail-item,
 :root[data-theme="dark"] .rail-mode {
-  color: #9aa6b5;
+  color: #fff;
+}
+
+/* This is the specificity trap again, and it was already live: the rule above
+   is (0,3,0) and `.rail-item-active` is (0,1,0), so the dark block silently ate
+   the active colour. It went unnoticed while the rail had a single, always-
+   active item; with New Search and History side by side, "which screen am I on"
+   would have been unanswerable in dark mode.
+   White text is what was asked for, so the state cannot be carried by colour --
+   it is a flat fill instead, the same device as :hover one step stronger. */
+:root[data-theme="dark"] .rail-item-active {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
 }
 
 :root[data-theme="dark"] .rail-item:hover,
 :root[data-theme="dark"] .rail-mode:hover {
-  background: rgba(22, 201, 141, 0.12);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+/* :hover is (0,3,1) and beats the (0,3,0) active rule above, so without this an
+   active item goes *dimmer* when you point at it. */
+:root[data-theme="dark"] .rail-item-active:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* `.rail-item:hover` sets a translateY lift in the light block. */
+:root[data-theme="dark"] .rail-item:hover {
+  transform: none;
 }
 
 :root[data-theme="dark"] .rail-mode {
   border-top-color: rgba(255, 255, 255, 0.1);
 }
 
-/* The wave photograph stays, dimmed hard so it reads as texture not image. */
+/* Flat grey. The wave photograph and its dimming gradient are gone -- it was
+   the last decorative layer in the app. */
 :root[data-theme="dark"] .screen {
-  background:
-    linear-gradient(rgba(26, 30, 35, 0.93), rgba(26, 30, 35, 0.93)),
-    url("/aramco-wave-background.jpg") center / cover no-repeat fixed;
+  background: var(--aramco-gray);
+}
+
+:root[data-theme="dark"] .brand-mark {
+  filter: none;
 }
 
 :root[data-theme="dark"] .screen-scroll::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.16);
 }
 
+/* Not glass any more: an opaque grey panel with a hairline border. The blur is
+   removed rather than left at 15px over an opaque background, where it costs a
+   compositing layer per card and buys nothing. */
 :root[data-theme="dark"] .glass-card {
-  border-color: rgba(255, 255, 255, 0.09);
+  background: var(--card);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 :root[data-theme="dark"] .brand-sub {
@@ -1378,7 +1632,15 @@ button {
   color: var(--navy);
 }
 
-:root[data-theme="dark"] .textarea-wrap textarea:hover,
+/* Hover and focus were one rule sharing a 4px green ring. Split: hover just
+   lightens the fill, and the ring is kept for focus alone -- it is the keyboard
+   focus indicator, not decoration, so flattening it would be an accessibility
+   regression rather than a style change. */
+:root[data-theme="dark"] .textarea-wrap textarea:hover {
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: none;
+}
+
 :root[data-theme="dark"] .textarea-wrap textarea:focus {
   background: rgba(255, 255, 255, 0.07);
   box-shadow: 0 0 0 4px rgba(22, 201, 141, 0.1);
@@ -1388,7 +1650,6 @@ button {
   color: #6d7987;
 }
 
-:root[data-theme="dark"] .character-count,
 :root[data-theme="dark"] .phase-label,
 :root[data-theme="dark"] .eyebrow,
 :root[data-theme="dark"] .report-title-block p,
@@ -1425,7 +1686,8 @@ button {
 :root[data-theme="dark"] .progress-step.active .phase-icon {
   color: var(--green-dark);
   background: rgba(22, 201, 141, 0.16);
-  box-shadow: 0 0 0 7px rgba(22, 201, 141, 0.07);
+  /* The light block's 7px halo. The tinted fill alone marks the active step. */
+  box-shadow: none;
 }
 
 :root[data-theme="dark"] .progress-step.complete .phase-icon {
@@ -1493,13 +1755,15 @@ button {
   background: rgba(255, 255, 255, 0.1);
 }
 
+/* The green-tinted card is gone: dark mode has one card colour now. The green
+   heading icon and the numbered list still mark this as the guidance block. */
 :root[data-theme="dark"] .recommendations-card {
-  background: rgba(20, 44, 38, 0.85);
-  border-color: rgba(22, 201, 141, 0.26);
+  background: var(--card);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 :root[data-theme="dark"] .recommendations-card .section-heading {
-  border-color: rgba(22, 201, 141, 0.2);
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 :root[data-theme="dark"] .concept-chip {
@@ -1537,9 +1801,12 @@ button {
 
 /* Export menu */
 :root[data-theme="dark"] .export-dropdown {
-  background: #23272e;
-  border-color: rgba(255, 255, 255, 0.1);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  background: var(--aramco-dark-gray);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  /* The 40px drop shadow was what lifted this off the page. A border does the
+     same job flat -- and it needs a real border here, since the light rule
+     gives the panel none. */
+  box-shadow: none;
 }
 
 :root[data-theme="dark"] .export-option:hover,
@@ -1567,6 +1834,12 @@ button {
   color: #ef7683;
 }
 
+/* The light block gives this dot a 5px red halo. */
+:root[data-theme="dark"] .failed-label span {
+  background: #ef7683;
+  box-shadow: none;
+}
+
 :root[data-theme="dark"] .error-actions .secondary-button {
   background: rgba(255, 255, 255, 0.06);
 }
@@ -1588,4 +1861,82 @@ button {
 
 :root[data-theme="dark"] .error-pip.failed {
   background: #ef7683;
+}
+
+/* Login screen. Inputs mirror the dark textarea treatment above, which is the
+   only other text field in the app. */
+:root[data-theme="dark"] .login-field input {
+  border-color: #39414a;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--navy);
+}
+
+/* Split for the same reason as the textarea above: plain on hover, ring on
+   focus, because the ring is the keyboard focus indicator. */
+:root[data-theme="dark"] .login-field input:hover {
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: none;
+}
+
+:root[data-theme="dark"] .login-field input:focus {
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: 0 0 0 4px rgba(22, 201, 141, 0.1);
+}
+
+:root[data-theme="dark"] .login-field input::placeholder {
+  color: #6d7987;
+}
+
+:root[data-theme="dark"] .login-field label span {
+  color: #8d99a8;
+}
+
+/* The required asterisk, red again in dark.
+   The trap once more, and the light-mode fix did not carry: the muted-text
+   group above includes `:root[data-theme="dark"] .field-title label span` at
+   (0,3,2), which beats the light block's `.field-title label .required-star` at
+   (0,2,1) and greys the star out. Repeating .required-star here takes this to
+   (0,4,1), which wins on the class count. The red is the lifted dark-mode value
+   used by .verdict-weak and the risk-high accents, not the light #cb3c49 --
+   that one drops to roughly 3:1 against #353535. */
+:root[data-theme="dark"] .field-title label .required-star {
+  color: #ef7683;
+}
+
+:root[data-theme="dark"] .login-error {
+  color: #f0929c;
+}
+
+/* History screen */
+:root[data-theme="dark"] .history-row {
+  border-bottom-color: rgba(255, 255, 255, 0.07);
+}
+
+:root[data-theme="dark"] .history-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+:root[data-theme="dark"] .history-meta {
+  color: #8d99a8;
+}
+
+:root[data-theme="dark"] .history-error > p {
+  color: #f0929c;
+}
+
+/* These three are (0,4,0) against the light block's (0,2,0), so they win by
+   specificity as well as order -- but they exist for the reason the .error-pip
+   and .phase-icon comments above give: a state class with no dark counterpart
+   renders identically to its neutral, and nothing errors when it happens. The
+   accents are the same lifted values the risk rules use on .patent-score. */
+:root[data-theme="dark"] .history-score.risk-high {
+  color: #ef7683;
+}
+
+:root[data-theme="dark"] .history-score.risk-medium {
+  color: #e0a63c;
+}
+
+:root[data-theme="dark"] .history-score.risk-low {
+  color: var(--green-dark);
 }

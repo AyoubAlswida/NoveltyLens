@@ -1,9 +1,12 @@
-import { Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
 import { API_BASE_URL } from '../config';
 import { StreamEvent } from '../models/report';
+import { AuthService } from './auth';
 
 @Injectable({ providedIn: 'root' })
 export class AnalysisService {
+  private readonly auth = inject(AuthService);
+
   /**
    * Reads the SSE body of POST /api/analyze/stream.
    *
@@ -16,14 +19,18 @@ export class AnalysisService {
    * If you refactor this to HttpClient, the UI will look fine until you watch
    * a real 60-second run.
    *
-   * The endpoint, method and request shape are unchanged from the React
-   * version, so the backend integration is identical.
+   * EventSource being unusable is now load-bearing for a second reason: the
+   * endpoint requires a bearer token, and EventSource cannot set headers
+   * either. `authorizedFetch` attaches it and ends the session on a 401.
+   *
+   * The endpoint, method and request shape are otherwise unchanged from the
+   * React version.
    */
   async stream(
     payload: { description: string; claims: string },
     onEvent: (event: StreamEvent) => void,
   ): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/api/analyze/stream`, {
+    const response = await this.auth.authorizedFetch(`${API_BASE_URL}/api/analyze/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

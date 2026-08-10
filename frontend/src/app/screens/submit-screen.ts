@@ -10,14 +10,6 @@ import { BrandHeader } from '../shared/chrome';
     <div class="screen screen-scroll">
       <app-brand-header />
 
-      <section class="intro-copy submit-intro">
-        <p>
-          Describe your idea in plain language. Novelty Lens expands it into search
-          <br class="desktop-break" />
-          queries and scores it against real prior art.
-        </p>
-      </section>
-
       <section class="form-card glass-card" aria-label="Patent search input">
         <div class="field-heading">
           <div class="field-title">
@@ -38,7 +30,9 @@ import { BrandHeader } from '../shared/chrome';
             rows="6"
             placeholder="Describe your invention in plain language: what it does, how it works, and what makes it different from what already exists…"
           ></textarea>
-          <span class="character-count">{{ description().length }} / 2000</span>
+          <!-- The "n / 2000" counter was removed. maxlength stays: it is the
+               actual limit, and dropping it would let the field accept text the
+               browser then silently truncates. -->
         </div>
 
         <div class="form-actions">

@@ -27,8 +27,11 @@ and an Angular frontend — with no shared tooling; each is run and developed se
 **Backend** (from `backend/`):
 - Install deps: `pip install -r requirements.txt`
 - Run the API: `python server.py` — serves on `http://127.0.0.1:8001` (hardcoded host/port in `server.py`'s `__main__` block)
-- Run the tests: `python -m pytest` from `backend/` (config in `backend/pytest.ini`, which sets `pythonpath = .` because the modules import each other flat, e.g. `from config import settings`). The suite is `backend/tests/`. `backend/tests/conftest.py` now stubs embeddings and Qdrant (autouse, for every test) alongside the existing `_llm_chat`/`SOURCES` stubs — `compare.py`'s ranking and the semantic-search path are on the happy path for both pipelines now, not just Phase-3-specific tests, so the suite still needs no credentials and makes no network calls. `test_pipeline_parity.py` covers legacy↔LangGraph parity (no longer byte-identical on the happy path — see below); `test_phase3_agents.py` covers Semantic Search, Fusion, and Validation individually. This is not yet the full P3.8 failure-path matrix (LLM failure, single-provider failure, Qdrant/embeddings outage, zero-similarity are covered for the parts that existed pre-Phase-3; a dedicated outage-injection suite for the new agents is still open).
-- Still no lint config and no `pyproject.toml`. `pytest-asyncio` remains unused — the tests are all synchronous.
+- Apply the database schema: `python migrate.py` (yoyo, against `settings.database_url`). Needed once after `docker compose up`, and again whenever `backend/migrations/` gains a file.
+- **Run it without spending quota: `python run_mock.py`** (`--fast` to drop the pacing delays, `--port` to move it). Serves the real app on 8001 with only the metered boundaries stubbed. See the mock-mode section below before changing it.
+- Run the tests: `python -m pytest` from `backend/` (config in `backend/pytest.ini`, which sets `pythonpath = .` because the modules import each other flat, e.g. `from config import settings`). The suite is `backend/tests/`. `backend/tests/conftest.py` stubs embeddings, Qdrant **and Postgres** (autouse, for every test) alongside the existing `_llm_chat`/`SOURCES` stubs — `compare.py`'s ranking, the semantic-search path and `persist_run` are all unconditionally on the happy path, so the suite still needs no credentials, makes no network calls, and needs no running database. `test_phase3_agents.py` covers Semantic Search, Fusion, and Validation individually; `test_history.py` covers persistence and `GET /api/history`; `test_auth.py` covers password hashing, token signing/expiry, and the endpoint gate. This is not yet the full P3.8 failure-path matrix (LLM failure, single-provider failure, Qdrant/embeddings outage, zero-similarity are covered for the parts that existed pre-Phase-3; a dedicated outage-injection suite for the new agents is still open).
+- **The Postgres double is a dict, not a SQL engine.** `tests/fakes.py`'s `FakeReportStore` stands in at the `reports.py` seam, so it pins the *call* contract and nothing about the SQL. A CHECK constraint, a foreign key, or a column that does not exist is invisible to it — schema changes have to be exercised against the real Compose Postgres by hand.
+- Still no lint config and no `pyproject.toml`.
 
 **Frontend** (from `frontend/`) — **Angular 22**, standalone components, no NgModules:
 - Install deps: `npm install`
@@ -38,18 +41,26 @@ and an Angular frontend — with no shared tooling; each is run and developed se
 - `npm test` exists from the Angular scaffold but there are **no frontend tests**; it will find no specs.
 
 **Local infrastructure** (from the repo root): `docker compose up -d --wait` starts
-Qdrant 1.18.3 (`127.0.0.1:6333` HTTP, `6334` gRPC) with a persisted named volume and a
-healthcheck, so `--wait` returns only once it is actually serving. **Qdrant is required to
-run the backend at all**, not just for local convenience: the graph's `semantic_search`
-node reads it and `index_patents` writes it, and neither has a fallback path. The corpus
-it holds is the only persistent state this project keeps.
+**both** services, each with a persisted named volume and a healthcheck, so `--wait`
+returns only once they are actually serving:
 
-PostgreSQL used to be the second service here, backing the legacy pipeline's patent
-cache, query cache, and stored reports. **Both PostgreSQL and the legacy pipeline have
-been removed** — along with `cache.py`, `reports.py`, `db.py`, `migrate.py`,
-`migrations/`, the `PIPELINE` flag, and `GET /api/history`. There is one pipeline now and
-no relational database. If you are adding caching back, it is a fresh design decision, not
-a restoration; the deleted code is in git history.
+- **Qdrant 1.18.3** (`127.0.0.1:6333` HTTP, `6334` gRPC) — the graph's `semantic_search`
+  node reads it and `index_patents` writes it, neither with a fallback path.
+- **PostgreSQL 17.10** (`127.0.0.1:5432`, user/password/db all `agenticai`) — holds the
+  login accounts and every completed run.
+
+After the first `up`, apply the schema once: `cd backend && python migrate.py`. That also
+seeds the demo login (see the auth section below). Both services are **required to run the
+backend at all**, not just for local convenience — a request writes its report to Postgres
+before sending the result, and `GET /api/history` and the login lookup both read it.
+
+**Postgres was removed in `15914d10` and brought back deliberately, not restored
+wholesale.** What came back: `db.py`, `migrate.py`, `migrations/`, `reports.py`,
+`GET /api/history`, and the frontend History screen. What did **not**: `cache.py`, the
+`query_cache` table, and `find_recent_report`'s description-level report cache. Caching is
+still the fresh design decision the previous version of this file called it — reusing a
+stored report silently changes what a search returns, and nothing today does that. The
+deleted caching code is in git history at `15914d10^`.
 
 Keep the Qdrant image version in step with `qdrant-client` in `requirements.txt` — the
 client warns when the server is more than a minor version away.
@@ -85,9 +96,10 @@ currently unused (the EPO provider is commented out — see below). Optional:
 
 ### Backend: two pipelines, selected by the `PIPELINE` flag
 
-`psycopg[binary]`, `yoyo-migrations`, and `rank_bm25` sit in `backend/requirements.txt` but
-are **imported nowhere** — they are pre-staged for Phase 2. `sentence-transformers` is
-listed but also unused *by design*: `backend/embeddings.py` calls a HuggingFace-**hosted**
+`psycopg[binary]` and `yoyo-migrations` are back in `backend/requirements.txt` and are
+**live**: `db.py`/`reports.py` and `migrate.py` respectively. `rank_bm25` is gone along
+with the rest of the Phase 2 pre-staging. `sentence-transformers` is not listed and would
+be unused *by design* anyway: `backend/embeddings.py` calls a HuggingFace-**hosted**
 model over the network (see below), not a local `sentence-transformers` model — do not
 "fix" this by importing it. `langgraph` and `qdrant-client` are live and load-bearing.
 `scikit-learn` was removed from `requirements.txt` — `compare.py`'s TF-IDF fallback (the
@@ -211,6 +223,69 @@ path (`test_pipeline_parity.py`) were rewritten for this: they now assert the gr
 every phase legacy does, plus exactly `semantic_search`/`fuse`/`validate`, and that the
 terminal payload's *shape* still matches — not its values, which are now allowed to
 differ by design.
+
+### Persistence: PostgreSQL stores completed runs, and nothing else
+
+Four tables, created by `backend/migrations/` (yoyo, applied with `python migrate.py`):
+
+- **`patents`** — every patent that has appeared in a stored report, keyed by the same
+  `id.strip().upper()` `merge_patents()` dedupes on. **It is not a cache.** Nothing reads
+  it to skip a provider call; it exists so `search_run_matches` can render a title months
+  later. Its `full_text` column is preserved on conflict when a later write carries an
+  empty one, so a bare record can never erase an enriched one.
+- **`search_runs`** — one row per completed run, carrying everything the `result` event's
+  data object holds except the per-patent rows. It stores `description`/`claims` rather
+  than the payload's `title`/`date`, because those two are display values (`"Today"` is
+  literally hardcoded) and meaningless read back weeks later.
+- **`search_run_matches`** — one row per `patents[]` entry, in rank order, FK'd to both.
+- **`users`** — login accounts. See the auth section below.
+
+`backend/reports.py` is the whole read/write surface: `save_report` and `list_history`.
+`backend/db.py` is a one-function psycopg3 helper (autocommit connection per request);
+`save_report` opens its own transaction inside that, because a half-inserted run would
+render in History as a truncated report indistinguishable from a genuine short one.
+
+**Writes happen before the `result` event is sent.** `graph/pipeline.py`'s `persist_run`
+is called between `build_result_event` and the `yield`, with no `try` around it — that is
+the zero-tolerance policy applied to persistence. A database that cannot store the run
+fails the request rather than reporting a successful search whose report was dropped on
+the floor. A run that found nothing is stored too: "we searched and there was no prior
+art" is a real answer and belongs in History next to the others.
+
+**There is still no caching of any kind**, and re-adding it is a design decision, not a
+restoration. See the Local infrastructure section for exactly what was and was not brought
+back from `15914d10^`.
+
+### Auth: one seeded account, no signup
+
+`POST /api/auth/login` is the only endpoint that answers without a token. `/api/analyze`,
+`/api/analyze/stream`, `/api/history` and `/api/auth/me` all sit behind
+`auth.require_user` and return **401** — never 403 — because the frontend treats exactly
+one status as "your session is gone, show the login screen."
+
+The seeded account is **`testnovelty@gmail.com` / `ABC123`**, inserted by
+`migrations/0004.create-users.sql`. **That password is public** — it is in the migration
+and in this file, both checked in. The login screen used to print it too and no longer
+does; that was a presentation change and nothing more, so do not read the tidier screen as
+the credentials having become secret. Treat any backend reachable from outside localhost
+as having no access control until that row is replaced.
+
+- **Passwords**: PBKDF2-HMAC-SHA256 from the standard library — no bcrypt/argon2
+  dependency for a demo login. The stored string is self-describing
+  (`pbkdf2_sha256$<iterations>$<salt>$<key>`) so `ITERATIONS` can be raised later without
+  invalidating existing rows. Add an account with
+  `python -c "from auth import hash_password; print(hash_password('...'))"` and an INSERT.
+- **Tokens**: stateless HMAC-SHA256 over `{"sub", "exp"}`, keyed by `settings.auth_secret`.
+  Verifying one touches no database, which is why the gate can guard a 60-second SSE run
+  without holding a connection open. The cost is that a token cannot be revoked before it
+  expires — `AUTH_SESSION_HOURS` (default 12) is the only bound on a leaked one, and
+  rotating `AUTH_SECRET` is the only way to invalidate every issued token at once.
+- **`AUTH_SECRET` defaults to a constant checked into `config.py`.** Anyone who has read
+  this repository can mint a valid token against a backend that did not set it.
+
+Why gate it at all: a single novelty search spends roughly 25 of a 250/month SerpAPI
+allowance plus HuggingFace credits. This keeps a passer-by from spending them. It is not a
+security boundary — there is no rate limiting, no password reset, and no revocation.
 
 ### LLM: Llama via HuggingFace Router, not a local model
 
@@ -394,6 +469,46 @@ both. Neither degrades gracefully, by design: an exhausted quota fails the reque
 Check both before any benchmarking or repeated live runs; it is very easy to spend a
 month's allowance in an afternoon of testing.
 
+### Mock mode: `python run_mock.py`, for looking at the app without paying for it
+
+**Use this for any frontend or UI work.** It serves the real application on 8001 with only
+the metered boundaries replaced, so a full run — login, SSE progress, report, History —
+costs nothing instead of ~25 SerpAPI searches. `--fast` drops the pacing delays; `--port`
+moves it. Postgres and Qdrant still need to be up, and the frontend needs no change,
+because the mock takes the port the frontend already targets.
+
+Faked: `llm._llm_chat`, `compare.embed_texts`, `search.vector_store.embed_texts`,
+`search.search.SOURCES`, and both `graph.searching.enrich_*` functions. **Everything else
+is real** — the FastAPI app, the auth gate, the graph and its routing, the SSE framing,
+prompt construction, JSON parsing, dedup, chunking, cosine scoring, verdict thresholds,
+Postgres persistence, and `GET /api/history`. It is a stub at the network boundary, not a
+mock of the pipeline, which is what makes it worth trusting for UI work.
+
+Four things about it are load-bearing:
+
+- **It is a developer tool and must never become a runtime mode.** It patches from the
+  outside and is reachable only by running that file; nothing in `server.py` or `graph/`
+  knows it exists. Faking *inputs* in a separate script is a different thing from the
+  product substituting output for a failed step, and it stays different only while it
+  stays out of the application.
+- **An outbound-HTTP guard enforces the "costs nothing" claim.** `requests.Session.request`
+  is wrapped to raise `PaidCallAttempted` on any non-local host, so a boundary someone
+  forgets to mock fails loudly instead of quietly spending quota. `qdrant-client` (httpx)
+  and Postgres (psycopg) are untouched and stay real.
+- **Every fabricated record carries `MOCK DATA - no live search` in `source`**, which the
+  report screen prints beside each publication number. Mock runs are written to the real
+  database, so that string is also how you find them again:
+  `DELETE FROM search_runs WHERE id IN (SELECT run_id FROM search_run_matches WHERE source LIKE 'MOCK DATA%');`
+- **The mock embedder emits 1024-dim vectors**, matching bge-large. A Qdrant collection
+  fixes its width on creation, so a narrower vector would fail against a `patents`
+  collection a real run already made. Nothing writes today (indexing is disabled in
+  `graph/pipeline.py`), which is exactly why the mismatch would be baffling later.
+
+The LLM double keys off real prompt substrings (`"PatentScout AI"`, `"screening N
+candidate"`, `"expert patent examiner"`), so the real prompt-building code still runs and a
+prompt edit that breaks those markers raises there rather than passing silently. The same
+markers back `tests/test_pipeline_contract.py`; changing a prompt means checking both.
+
 ### Frontend: Angular 22, standalone components, no leftover scaffolding
 
 **The frontend was migrated from React/Vite to Angular.** The React build is gone, not
@@ -409,19 +524,31 @@ with no context, router, memo or state library to unpick.
 Layout of `frontend/src/app/`:
 
 - `app.ts` — the shell. Owns the rail, the theme toggle, the `screen` signal that selects
-  which of the four screens renders, and `startRunning()`, which drives the SSE run. State
-  is Angular signals; there is no router, because the app has never had URLs to restore
-  and adding routing would be new behaviour rather than a port.
+  which of the five signed-in screens renders, and `startRunning()`, which drives the SSE
+  run. State is Angular signals; there is no router, because the app has never had URLs to
+  restore and adding routing would be new behaviour rather than a port. **The whole
+  workspace is gated on `auth.signedIn()`** — signed out, the rail shows only the mark and
+  the theme toggle, and `LoginScreen` replaces the `@switch` entirely.
 - `config.ts` — `API_BASE_URL`, replacing `import.meta.env.VITE_API_URL`. See the running
   section above for the `window.NOVELTY_LENS_API_URL` override.
-- `models/report.ts` — `AnalysisReport`, `PHASE_ORDER`, `PHASE_LABELS`, `PHASE_ICONS`, and
-  the `StreamEvent` union. `PHASE_ORDER` is the mirror of `backend/graph/events.py`.
+- `models/report.ts` — `AnalysisReport`, `HistoryEntry`, `PHASE_ORDER`, `PHASE_LABELS`,
+  `PHASE_ICONS`, and the `StreamEvent` union. `PHASE_ORDER` is the mirror of
+  `backend/graph/events.py`.
+- `services/auth.ts` — the session. Token in localStorage, `restore()` re-validates it
+  against `GET /api/auth/me` on startup, and `authorizedFetch` attaches the header and
+  **ends the session on any 401**. Every authenticated call goes through it. There is no
+  signup method, because there is no signup endpoint.
 - `services/analysis.ts` — the SSE reader. Raw `fetch`, deliberately; see the SSE section.
+  EventSource is now doubly impossible: it can carry neither a POST body nor a header.
+- `services/history.ts` — `GET /api/history`, plus `reportFromHistory`, which maps an entry
+  onto `AnalysisReport` so a past run and a fresh one render through one display path. It
+  derives `title`/`date` (from `description`/`created_at`) and invents nothing else.
 - `services/export.ts` — PDF / Word / JSON. Ported verbatim from React, and
   `buildReportHtml`'s template literal is byte-identical, so exported documents are
   unchanged: the `.doc` and `.json` produced by the Angular build compare byte-for-byte
   equal to the React build's output for the same report. Keep it that way when editing.
-- `screens/` — `submit-screen`, `running-screen`, `report-screen`, `error-screen`.
+- `screens/` — `login-screen`, `submit-screen`, `running-screen`, `report-screen`,
+  `history-screen`, `error-screen`.
 - `shared/` — `chrome.ts` (brand header only; the page footer was removed), `export-menu.ts`, `icon.ts`,
   `icon-paths.ts`.
 
@@ -454,13 +581,20 @@ the glass; the gap between them is the novelty score, which is the one thing the
 actually measures. All three cuts are hand-written SVG on a 64-unit grid, optically
 centred on 32,32, and each carries a comment explaining what it is for:
 
-- `novelty-lens-mark.svg` — the colour cut, used by `shared/chrome.ts` (`.brand-mark`).
-- `novelty-lens-mark-white.svg` — a **drawn** reversed cut for the rail tile in `app.ts`.
-  It is not the colour cut with a filter over it. `globals.css`'s `.rail-brand img` used
-  to carry `filter: brightness(0) invert(1)`, which knocks everything to a single white
-  value and loses the cluster's opacity weighting against the tile's mid-tone gradient;
-  the reversed cut lifts those opacities (0.44–0.72 → 0.60–0.86) instead. The filter is
-  gone — do not put it back, and do not point that `<img>` at the colour cut.
+- `novelty-lens-mark.svg` — the colour cut. Used by `shared/chrome.ts`
+  (`.brand-mark`) on every screen, **and on the rail in dark mode**.
+- `novelty-lens-mark-white.svg` — a **drawn** reversed cut, used on the rail in **light
+  mode only**. It is not the colour cut with a filter over it. `globals.css`'s
+  `.rail-brand img` used to carry `filter: brightness(0) invert(1)`, which knocks
+  everything to a single white value and loses the cluster's opacity weighting against the
+  tile's mid-tone gradient; the reversed cut lifts those opacities (0.44–0.72 → 0.60–0.86)
+  instead. **The filter is gone — do not put it back.**
+
+  `app.ts` picks between the two off the `theme()` signal, and the split tracks the tile,
+  not the theme: light still paints the blue→green gradient behind the mark, which needs
+  the reversed cut; dark made `.rail-brand` transparent when it was flattened, so the mark
+  sits on flat black and shows its real colours. If either tile ever changes, the pairing
+  changes with it.
 - `novelty-lens-favicon.svg` — the small-size cut for `<link rel="icon">` in
   `src/index.html`, with the cluster cut from seven dots to three and every stroke
   thickened. Below ~32px the full cluster fills in to a smudge. Use the full mark above
@@ -469,8 +603,10 @@ centred on 32,32, and each carries a comment explaining what it is for:
 The two `aramco-ai-*.png` files are both **retired** and nothing loads either one.
 `aramco-ai-logo.png` was the full lockup, which baked the wordmark into the image;
 `aramco-ai-mark.png` was the standalone mark that stood in until the product had its own,
-and it was also the favicon. `aramco-wave-background.jpg` is still live, from
-`globals.css`.
+and it was also the favicon. **`aramco-wave-background.jpg` is now retired too** — it
+backed the dark `.screen` until dark mode was flattened (below), and nothing references it
+any more. The file is still in `public/`; deleting it is a separate call, and note Angular
+copies everything in `public/` into the build whether it is used or not.
 
 **Buttons follow the Aramco Pixel component spec**, not the old house style. Contained is
 a flat solid blue, Outlined is a blue border and blue text on no fill, and disabled is flat
@@ -482,19 +618,51 @@ colours and the 8px radius were matched by eye from a photo of the Pixel Compone
 not taken from a spec** — if you get the real values, changing those tokens updates every
 button, and nothing else needs touching.
 
-The light theme is **plain white** (`:root`, `.app-shell` and `.screen` all `#fff`). The
-wave photograph is dark-mode only now, in the `[data-theme="dark"] .screen` rule. The
-"Typical result in under 60 seconds" note and the page footer were removed from all four
-screens, along with their CSS and the `Clock3` / `LockKeyhole` icons.
+The light theme is **plain white** (`:root`, `.app-shell` and `.screen` all `#fff`) and
+keeps its glass, shadows and gradients. The
+"Typical result in under 60 seconds" note and the page footer were removed from every
+screen, along with their CSS and the `Clock3` icon. (`LockKeyhole` went too, then came
+back for the login screen.)
 
-**A specificity trap has now bitten three times in this stylesheet, so assume it will
+**Dark mode is flat, and that is a requirement, not a style opinion.** It was reshaped to
+match aramcoMETABRAIN: a **black** rail (`--rail-black: #000`), a plain grey page
+(`--aramco-gray: #2b2b2b`), and cards exactly one step lighter (`--card: #353535`) with a
+1px hairline border. Three surface values, no fourth. Rail labels are **plain `#fff`**.
+
+Because the labels are white, the rail's active state cannot be carried by colour: dark
+gives `.rail-item-active` a flat `rgba(255,255,255,0.12)` fill, with an explicit
+`:hover` counterpart at `0.16` — `.rail-item:hover` is (0,3,1) and would otherwise beat
+the (0,3,0) active rule and make the current screen go *dimmer* under the pointer. This
+was a live instance of the specificity trap below: `:root[data-theme="dark"] .rail-item`
+had been silently eating `.rail-item-active` (0,1,0) since dark mode shipped, which nobody
+noticed while the rail had exactly one, permanently-active item.
+
+**Every visual effect is switched off in dark**, each with an explicit `none` rather than
+being left to a shorthand — the wave photograph, `.glass-card`'s `backdrop-filter`, every
+decorative `box-shadow` (rail, cards, export dropdown, the active phase-icon halo, the
+failed-label dot), the `.rail-brand` gradient tile, `.rail-item:hover`'s `translateY` lift,
+and `.brand-mark`'s `drop-shadow`. A new dark surface gets a flat colour and a border,
+nothing else.
+
+Two things are deliberately **not** treated as effects and must stay: the focus rings
+(`box-shadow: 0 0 0 4px`) and the loading spinner. The input `:hover, :focus` rules were
+split precisely so hover could go flat while focus keeps its ring — recombining them and
+setting `none` would be an accessibility regression wearing a style change's clothes.
+
+The green-tinted recommendations card and the gradient logo tile are gone from dark for
+the same reason. `--shadow` resolves to `none` in the dark block, so anything reading that
+token is already flat.
+
+**A specificity trap has bitten four times in this stylesheet, so assume it will
 again.** The dark rules are written `:root[data-theme="dark"] .foo`, which is specificity
-(0,3,0) — exactly the same as a state rule like `.progress-step.complete .phase-icon` — and
-the dark block sits later in the file, so it silently wins and erases the state. It flattened
-the required asterisk to grey, then every error-screen phase pip, then every completed and
-in-progress step in the run list. Each now has an explicit dark counterpart. **Any state
-class you add needs one too**, and the symptom is never an error: it is a state that renders
-identically to its neutral.
+(0,3,0) — the same as or higher than a state rule like `.progress-step.complete
+.phase-icon` (0,3,0) or `.rail-item-active` (0,1,0) — and the dark block sits later in the
+file, so it silently wins and erases the state. It flattened the required asterisk to grey,
+then every error-screen phase pip, then every completed and in-progress step in the run
+list, and it had been eating the rail's active item the whole time without anyone
+noticing. Each now has an explicit dark counterpart. **Any state class you add needs one
+too**, and the symptom is never an error: it is a state that renders identically to its
+neutral, so it only surfaces when someone looks at the right screen in the right theme.
 
 Styling is unchanged from the React build and is **global, not component-scoped**:
 `src/styles.css` imports `styles/fonts.css`, `styles/theme.css` and `styles/globals.css`
@@ -533,16 +701,25 @@ weights (400/500/600/700, ~165 KB), the rest are declared so a weight change jus
 Ghawar is licensed rather than open source — see that README for the still-open question of
 whether the binaries belong in git.
 
-There are **four** screens — `submit`, `running`, `report`, and `error`, one component each
-under `src/app/screens/`. The History screen
-was removed along with `GET /api/history` and the Postgres layer behind it; it had never
-shown anything on the default path, since only the retired legacy pipeline ever wrote a run.
-Nothing persists client-side either, so a completed report is gone once you start another
-search. The `buildReport` helper that used to sit near the top of the file is **gone** as
-of the redesign (it had been dead code since the Phase 3 rework); `startRunning` builds
-the report inline from the `result` event.
+There are **six** screens — `login`, `submit`, `running`, `report`, `history`, and `error`,
+one component each under `src/app/screens/`. `login` is outside the `screen` signal
+entirely: `app.ts` branches on `auth.signedIn()` before the `@switch`, so there is no way
+to reach a signed-in screen without a token. The `buildReport` helper that used to sit near
+the top of the file is **gone** as of the redesign (it had been dead code since the Phase 3
+rework); `startRunning` builds the report inline from the `result` event.
 
-`error` is the newest of the four and the only screen not in the original design handoff.
+**Nothing persists client-side, and `history` is not an exception.** The server is the only
+record of a past run; `HistoryScreen` refetches every time it is opened, and `signOut()`
+clears the cached list along with the current report — leaving either one rendered behind a
+login screen would leak the previous user's data to the next one. `startRunning` also drops
+the cached list on completion, since the backend stored that run before sending the result.
+
+`HistoryScreen` keeps loading, failed, and genuinely-empty as three distinct states.
+Collapsing a failed fetch into "no searches yet" would report a broken database as an
+ordinary empty list — the same substitution the backend's zero-tolerance policy forbids,
+just moved into the UI.
+
+`error` is the newest of the six and the only screen not in the original design handoff.
 A failed run used to fire a native `alert()` and drop the user back on `submit`, which
 threw away everything the stream had already said. `ErrorScreen` now renders the backend's
 `error` detail **verbatim** in a mono block, names the phase it died in, and shows how many
@@ -619,8 +796,9 @@ Validation as live graph nodes, plus embedding-based ranking with no TF-IDF fall
 the SSE stream at all today, so there is no `PHASES` array to extend in lockstep — see the
 SSE contract note earlier in this file) and the full P3.8 failure-path test matrix (a
 handful of focused tests exist per new agent; a dedicated outage-injection suite does
-not). Phase 2 (PostgreSQL caching and persisted history) has not started. Two constraints
-govern all of it:
+not). **Phase 2 is now half-landed**: persisted history is live (Postgres, `reports.py`,
+`GET /api/history`, the History screen), caching is not and is deliberately open — see the
+Persistence section above for the line between them. Two constraints govern all of it:
 
 - **Zero-tolerance failure policy**: no fallback, ever. If a step can't produce a genuine
   result, it must fail the request with a clear `error` event — never substitute

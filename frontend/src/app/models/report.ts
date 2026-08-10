@@ -61,6 +61,27 @@ export const PHASE_ICONS: Record<Phase, string> = {
   analyze: 'PenLine',
 };
 
+/**
+ * One entry from `GET /api/history` (backend/reports.py's `list_history`).
+ *
+ * Deliberately NOT an `AnalysisReport`. The backend's `result` event carries a
+ * truncated `title` and the literal string `"Today"` as its date -- display
+ * values, not stored state -- so a history entry ships the real `description`
+ * and a real ISO `created_at` instead, and `services/history.ts` derives the
+ * title and date from those the same way a live run does.
+ */
+export interface HistoryEntry {
+  id: string;
+  description: string;
+  created_at: string;
+  concepts: string[];
+  patents: PatentMatch[];
+  top_score: number;
+  verdict: Verdict;
+  recommendations: string[];
+  query_count: number;
+}
+
 export type StreamEvent =
   | { type: 'progress'; phase: Phase; message: string }
   | { type: 'result'; data: AnalysisReport }

@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import server
+from auth import issue_token
 from tests.test_pipeline_contract import (
     CLAIMS,
     DESCRIPTION,
@@ -34,14 +35,22 @@ def _frames(response) -> list[dict]:
 
 @pytest.fixture
 def langgraph_client():
-    """A client with both external boundaries pinned.
+    """A client with both external boundaries pinned, and signed in.
 
     No pipeline patching: there is one pipeline now, and ``server.py`` calls
     ``run_graph_pipeline`` directly.
+
+    The token is a real one from ``auth.issue_token``, not a bypassed
+    dependency: minting one needs no database (tokens are stateless HMAC), so
+    these tests exercise the same header path the browser uses. That the
+    endpoints reject a request *without* it is covered in ``test_auth.py``.
     """
     with patch("llm._llm_chat", side_effect=_fake_llm_chat), \
          patch("search.search.SOURCES", FAKE_SOURCES):
-        yield TestClient(server.app)
+        yield TestClient(
+            server.app,
+            headers={"Authorization": f"Bearer {issue_token('testnovelty@gmail.com')}"},
+        )
 
 
 def test_stream_endpoint_emits_wellformed_frames(langgraph_client):

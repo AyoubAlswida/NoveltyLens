@@ -63,6 +63,7 @@ def test_the_key_does_not_reach_the_sse_error_frame():
     from fastapi.testclient import TestClient
 
     import server
+    from auth import issue_token
 
     def broken(query: str, size: int):
         _raise_for_status(_response(429), f"search for {query!r}")
@@ -73,9 +74,10 @@ def test_the_key_does_not_reach_the_sse_error_frame():
 
     with patch("llm._llm_chat", return_value=analysis), \
          patch("search.search.SOURCES", (("Google Patents", broken),)):
-        response = TestClient(server.app).post(
-            "/api/analyze/stream", json={"description": "a widget", "claims": None}
-        )
+        response = TestClient(
+            server.app,
+            headers={"Authorization": f"Bearer {issue_token('testnovelty@gmail.com')}"},
+        ).post("/api/analyze/stream", json={"description": "a widget", "claims": None})
 
     body = response.text
     assert "error" in body, "expected the provider failure to surface"

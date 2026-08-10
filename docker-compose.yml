@@ -1,22 +1,52 @@
 # Local development infrastructure.
 #
-# Brings up Qdrant, the vector store backing the graph's semantic-search branch.
-# It is required to run the backend at all: `semantic_search` reads it and
-# `index_patents` writes it, and neither has a fallback path.
+# Brings up the two services the backend needs to serve a single request:
 #
-#   docker compose up -d --wait # from the repository root; returns once healthy
+#   - Qdrant, the vector store backing the graph's semantic-search branch.
+#     `semantic_search` reads it and `index_patents` writes it, with no fallback
+#     path on either side.
+#   - PostgreSQL, which holds the login accounts and every completed run. A run
+#     is stored before its result is sent (graph/pipeline.py's persist_run) and
+#     GET /api/history reads it back, again with no fallback.
+#
+#   docker compose up -d --wait # from the repository root; returns once both are healthy
 #   docker compose ps           # show status
 #   docker compose down         # stop, keep data
-#   docker compose down -v      # stop, wipe the indexed patent corpus
+#   docker compose down -v      # stop, wipe the stored reports AND the indexed corpus
 #
-# PostgreSQL used to live here too, for the legacy pipeline's caches and stored
-# reports. Both the legacy pipeline and Postgres have been retired; the corpus in
-# Qdrant is now the only persistent state this project keeps.
+# After the first `up`, apply the schema once: `cd backend && python migrate.py`.
+# That also seeds the demo login (testnovelty@gmail.com / ABC123).
 #
 # The backend and frontend are NOT containerized; keep running them with
 # `python server.py` and `npm run dev` as before.
+#
+# Credentials below are local-development only and deliberately committed. Real
+# credentials belong in backend/.env, which is gitignored.
 
 services:
+  postgres:
+    image: postgres:17.10-alpine
+    container_name: agenticai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: agenticai
+      POSTGRES_PASSWORD: agenticai
+      POSTGRES_DB: agenticai
+    ports:
+      # Bound to loopback so the database is not exposed on the local network.
+      # If you already run PostgreSQL on 5432, change the host side to 5433 here
+      # and set DATABASE_URL in backend/.env to match.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agenticai -d agenticai"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+
   qdrant:
     # Keep this in step with the qdrant-client version in backend/requirements.txt.
     # The client warns (and can misbehave) when the server is more than a minor
@@ -48,4 +78,5 @@ services:
       start_period: 10s
 
 volumes:
+  postgres-data:
   qdrant-data:

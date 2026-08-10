@@ -1,8 +1,14 @@
 """FastAPI transport layer for the patent novelty-search pipeline.
 
-Pure transport: it owns the HTTP surface and the SSE framing, and nothing else.
-All pipeline behavior lives in ``backend/graph/``. There is one pipeline - the
-legacy generator and its ``PIPELINE`` flag were retired along with Postgres.
+Pure transport: it owns the HTTP surface, the SSE framing, and the auth
+boundary, and nothing else. All pipeline behavior lives in ``backend/graph/``,
+all persistence in ``backend/reports.py``, all credential handling in
+``backend/auth.py``.
+
+Every endpoint except ``POST /api/auth/login`` requires a session token. The
+pipeline endpoints are gated because a single run spends real, small, metered
+SerpAPI and HuggingFace quota; ``GET /api/history`` because the stored reports
+are other people's invention descriptions.
 """
 
 import json
@@ -10,14 +16,17 @@ import logging
 from typing import Iterator, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 load_dotenv(override=True)  # see config.py's load_dotenv(override=True) for why
 
+import db
+from auth import authenticate, issue_token, require_user
 from graph.pipeline import run_graph_pipeline
+from reports import list_history
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -25,14 +34,53 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
+HISTORY_LIMIT = 50
+"""How many past runs GET /api/history returns. The response inlines every
+match of every run, so this is the one thing keeping the payload bounded."""
+
 
 class InventionRequest(BaseModel):
     description: str
     claims: Optional[str] = None
 
 
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/api/auth/login")
+async def login(request: LoginRequest) -> dict[str, str]:
+    """Exchange credentials for a session token.
+
+    There is no signup counterpart, by design: accounts are rows inserted by
+    migration or by hand (see ``migrations/0004.create-users.sql``).
+
+    A wrong password and an unknown address produce the identical 401, so the
+    response cannot be used to enumerate which addresses have accounts.
+    """
+    with db.connect() as conn:
+        email = authenticate(conn, request.email, request.password)
+    if email is None:
+        raise HTTPException(status_code=401, detail="Incorrect email or password.")
+    return {"token": issue_token(email), "email": email}
+
+
+@app.get("/api/auth/me")
+async def whoami(email: str = Depends(require_user)) -> dict[str, str]:
+    """Confirm a stored token is still valid.
+
+    The frontend calls this on load to decide whether to restore the session or
+    show the login screen, rather than trusting a token in localStorage that may
+    have expired while the tab was closed.
+    """
+    return {"email": email}
+
+
 @app.post("/api/analyze/stream")
-async def analyze_stream(request: InventionRequest) -> StreamingResponse:
+async def analyze_stream(
+    request: InventionRequest, email: str = Depends(require_user)
+) -> StreamingResponse:
     def sse() -> Iterator[str]:
         try:
             for event in run_graph_pipeline(request.description, request.claims):
@@ -44,7 +92,9 @@ async def analyze_stream(request: InventionRequest) -> StreamingResponse:
 
 
 @app.post("/api/analyze")
-async def analyze_invention(request: InventionRequest) -> dict[str, object]:
+async def analyze_invention(
+    request: InventionRequest, email: str = Depends(require_user)
+) -> dict[str, object]:
     try:
         for event in run_graph_pipeline(request.description, request.claims):
             if event["type"] == "result":
@@ -57,6 +107,18 @@ async def analyze_invention(request: InventionRequest) -> dict[str, object]:
         logger.exception("Analysis pipeline error")
         raise HTTPException(status_code=502, detail=str(error)) from error
     raise HTTPException(status_code=500, detail="Analysis produced no result.")
+
+
+@app.get("/api/history")
+async def history(email: str = Depends(require_user)) -> list[dict[str, object]]:
+    """The most recent stored runs, newest first.
+
+    Not caught and softened into an empty list: a database that cannot be read
+    is not the same answer as "you have not run a search yet," and the History
+    screen must not show the second when the first is true.
+    """
+    with db.connect() as conn:
+        return list_history(conn, limit=HISTORY_LIMIT)
 
 
 if __name__ == "__main__":

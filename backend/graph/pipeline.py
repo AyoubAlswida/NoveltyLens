@@ -20,12 +20,21 @@ SSE contract rather than about any one agent's work.
 :func:`run_graph_pipeline`; ``server.py``'s existing wrapper turns it into a
 single ``error`` event.  That is the whole design - there is no point at which a
 partial result can be assembled and sent.
+
+That extends to persistence: :func:`persist_run` writes the finished report to
+Postgres *before* the ``result`` event is yielded, and is not wrapped in a
+``try``.  A database that cannot store the run fails the request, rather than
+telling the user the search succeeded and then dropping the report on the floor
+where History would never show it.
 """
 
 from functools import lru_cache
 from typing import Iterator, Optional
 
 from langgraph.graph import END, START, StateGraph
+
+import db
+from reports import save_report
 
 # from graph.fusion import fuse_node  # TEMP: disabled - see module docstring above
 from graph.ranking import explain_node, format_matches, rank_node, verdict_for
@@ -160,6 +169,35 @@ def build_result_event(state: GraphState) -> dict[str, object]:
     )
 
 
+def persist_run(state: GraphState, result: dict[str, object]) -> None:
+    """Store the finished report in Postgres so History can show it later.
+
+    Called before the ``result`` event is yielded, and deliberately not wrapped
+    in a ``try`` - see the module docstring.
+
+    A run that found nothing is stored too. "We searched and there was no prior
+    art" is a real answer and belongs in the history alongside the others; the
+    empty ``patents``/``matches`` lists below are that answer, not a failure to
+    record one.
+    """
+    data: dict = result["data"]  # type: ignore[assignment]
+    comparisons = state.get("comparisons") or []
+
+    with db.connect() as conn:
+        save_report(
+            conn,
+            description=state["description"],
+            claims=state.get("claims"),
+            concepts=data["concepts"],
+            query_count=data["query_count"],
+            top_score=data["top_score"],
+            verdict=data["verdict"],
+            recommendations=data["recommendations"],
+            matches=data["patents"],
+            patents=[comparison.patent for comparison in comparisons],
+        )
+
+
 def run_graph_pipeline(
     description: str, claims: Optional[str]
 ) -> Iterator[dict[str, object]]:
@@ -180,4 +218,6 @@ def run_graph_pipeline(
         else:
             final_state = chunk
 
-    yield build_result_event(final_state)
+    result = build_result_event(final_state)
+    persist_run(final_state, result)
+    yield result

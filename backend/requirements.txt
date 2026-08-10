@@ -5,5 +5,7 @@ pydantic
 python-dotenv
 langgraph
 qdrant-client
+psycopg[binary]
+yoyo-migrations
 httpx
 pytest

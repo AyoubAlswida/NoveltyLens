@@ -1,14 +1,23 @@
-"""Deterministic stand-ins for the network-backed semantic layer -- embeddings
-and Qdrant -- shared by every test module so the suite keeps making zero real
-network calls even though ``compare.py`` and semantic search are unconditionally
-on the pipeline's happy path.
+"""Deterministic stand-ins for the two stateful boundaries -- the network-backed
+semantic layer (embeddings and Qdrant) and Postgres -- shared by every test
+module so the suite keeps making zero real network calls and needs no running
+database, even though ``compare.py``, semantic search and ``persist_run`` are
+all unconditionally on the pipeline's happy path.
 
-The Postgres doubles that used to live here went with the legacy pipeline and
-the Postgres layer itself; Qdrant is the only persistent state left to fake.
+The Postgres double here is a dict, not a SQL engine. It stands in at the
+``reports.py`` seam (``save_report``/``list_history``), so it exercises the
+*call* contract those two functions have with the pipeline and the history
+endpoint -- ordering, shape, what gets stored on an empty run -- and nothing
+about the SQL itself. Schema mistakes (a CHECK constraint, a foreign key, a
+column that does not exist) are invisible to it and only show up against the
+real Compose Postgres.
 """
 
 import hashlib
+import itertools
 import re
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 
 from search.vector_store import QUERY_INSTRUCTION
 
@@ -177,3 +186,62 @@ class FakeQdrantClient:
             scored = [point for point in scored if point.score >= score_threshold]
         scored.sort(key=lambda point: point.score, reverse=True)
         return _FakeQueryResponse(scored[:limit])
+
+
+class FakeReportStore:
+    """In-memory stand-in for ``backend/reports.py``.
+
+    Records runs in call order and reads them back newest-first, matching
+    ``list_history``'s ``ORDER BY created_at DESC``. Timestamps are synthetic
+    and strictly increasing, so ordering is deterministic rather than dependent
+    on how fast the test ran.
+
+    ``patents`` is stored as a title lookup only. The real ``list_history``
+    JOINs ``search_run_matches`` to ``patents`` for each match's title, and a
+    match whose patent row is missing would silently vanish from that JOIN --
+    so the fake resolves titles the same way instead of echoing back whatever
+    was in ``matches``.
+    """
+
+    def __init__(self) -> None:
+        self.runs: list[dict] = []
+        self.patent_titles: dict[str, str] = {}
+        self._ids = itertools.count(1)
+        self._clock = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    def save_report(self, conn: object, **fields: object) -> str:
+        matches: list[dict] = list(fields.pop("matches"))  # type: ignore[arg-type]
+        patents: list = list(fields.pop("patents"))  # type: ignore[arg-type]
+        for patent in patents:
+            self.patent_titles[patent.id.strip().upper()] = patent.title
+
+        run_id = f"run-{next(self._ids)}"
+        self._clock += timedelta(minutes=1)
+        self.runs.append({"id": run_id, "created_at": self._clock, "matches": matches, **fields})
+        return run_id
+
+    def list_history(self, conn: object, limit: int = 50) -> list[dict]:
+        entries = []
+        for run in reversed(self.runs[-limit:] if limit else self.runs):
+            entries.append({
+                "id": run["id"],
+                "description": run["description"],
+                "created_at": run["created_at"].isoformat(),
+                "concepts": run["concepts"],
+                "query_count": run["query_count"],
+                "top_score": run["top_score"],
+                "verdict": run["verdict"],
+                "recommendations": run["recommendations"],
+                "patents": [
+                    {**match, "title": self.patent_titles[str(match["num"]).strip().upper()]}
+                    for match in run["matches"]
+                ],
+            })
+        return entries
+
+    @contextmanager
+    def connect(self):
+        """Stands in for ``db.connect()``. Yields a sentinel: nothing in the
+        fake touches the connection, and handing back something that is not a
+        psycopg object makes an accidental real query fail loudly."""
+        yield "fake-connection"

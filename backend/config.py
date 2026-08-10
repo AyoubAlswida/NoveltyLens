@@ -27,6 +27,24 @@ class Settings:
     qdrant_url: str = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
     qdrant_api_key: str = os.getenv("QDRANT_API_KEY", "")
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-en-v1.5")
+    database_url: str = os.getenv(
+        "DATABASE_URL", "postgresql://agenticai:agenticai@127.0.0.1:5432/agenticai"
+    )
+    """PostgreSQL connection string. The default matches docker-compose.yml's
+    `postgres` service, whose credentials are local-development-only and
+    deliberately committed."""
+
+    auth_secret: str = os.getenv("AUTH_SECRET", "novelty-lens-local-development-secret")
+    """HMAC key the session tokens in ``backend/auth.py`` are signed with.
+
+    The default is a known constant, so anyone can mint a valid token against a
+    backend that did not set AUTH_SECRET. That is acceptable for local
+    development and is exactly why it must be set to a real random value before
+    this is exposed to anything but localhost."""
+
+    auth_session_hours: int = int(os.getenv("AUTH_SESSION_HOURS", "12"))
+    """How long an issued session token stays valid. Tokens are stateless, so
+    this is the only thing bounding a leaked one - there is no revocation list."""
 
 
 settings = Settings()
