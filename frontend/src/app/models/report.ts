@@ -24,14 +24,20 @@ export interface AnalysisReport {
   query_count: number;
 }
 
-/** This order must remain aligned with backend/graph/events.py. */
+/**
+ * This order must remain aligned with backend/graph/events.py's `PHASES` tuple
+ * MINUS `semantic_search` and `fuse`. Those two nodes are currently commented
+ * out of `graph/pipeline.py` (search runs keyword-only), so the backend never
+ * emits those phases - listing them here would let the checklist's
+ * `complete: index < activeIndex` logic mark them done once `validate` fires,
+ * showing steps as finished that never ran. Re-add both, in this same
+ * position, the day `graph/pipeline.py` re-enables those nodes.
+ */
 export const PHASE_ORDER = [
   'understand',
   'queries',
   'search',
   'enrich',
-  'semantic_search',
-  'fuse',
   'validate',
   'compare',
   'analyze',
@@ -44,8 +50,6 @@ export const PHASE_LABELS: Record<Phase, string> = {
   queries: 'Expanding into search queries…',
   search: 'Searching patent databases…',
   enrich: 'Fetching full patent text…',
-  semantic_search: 'Searching indexed patents by meaning…',
-  fuse: 'Combining keyword and semantic results…',
   validate: 'Checking relevance of candidates…',
   compare: 'Scoring patent similarities…',
   analyze: 'Writing detailed analysis…',
@@ -56,8 +60,6 @@ export const PHASE_ICONS: Record<Phase, string> = {
   queries: 'Search',
   search: 'Database',
   enrich: 'FileText',
-  semantic_search: 'Radar',
-  fuse: 'Network',
   validate: 'ShieldCheck',
   compare: 'BarChart3',
   analyze: 'PenLine',
