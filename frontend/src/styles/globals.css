@@ -998,12 +998,22 @@ button {
   min-width: 420px;
 }
 
+/* Sticky rather than independently-scrolling: one scrollbar (the page's),
+   and the shorter right column (summary + concepts) rides along pinned near
+   the top of the viewport while the longer left column (patent matches)
+   scrolls underneath it, then unsticks and scrolls away itself once the
+   left column -- which sets .report-columns's overall height -- runs out.
+   align-self: flex-start is required for sticky to size to its own content
+   instead of being stretched to match the left column's height. */
 .report-col-right {
   flex: 1 1 0%;
   min-width: 320px;
   display: flex;
   flex-direction: column;
   gap: 20px;
+  position: sticky;
+  top: 20px;
+  align-self: flex-start;
 }
 
 .summary-card,
@@ -1489,9 +1499,16 @@ button {
     flex-direction: column;
   }
 
-  .report-col-left {
+  .report-col-left,
+  .report-col-right {
     flex: none;
     width: 100%;
+  }
+
+  /* Stacked layout: a sticky column mid-page would pin itself as you scroll
+     past it, which only makes sense in the two-column desktop layout. */
+  .report-col-right {
+    position: static;
   }
 }
 
