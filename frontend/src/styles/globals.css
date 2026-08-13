@@ -998,13 +998,22 @@ button {
   min-width: 420px;
 }
 
-/* Sticky rather than independently-scrolling: one scrollbar (the page's),
-   and the shorter right column (summary + concepts) rides along pinned near
-   the top of the viewport while the longer left column (patent matches)
-   scrolls underneath it, then unsticks and scrolls away itself once the
-   left column -- which sets .report-columns's overall height -- runs out.
-   align-self: flex-start is required for sticky to size to its own content
-   instead of being stretched to match the left column's height. */
+/* Sticky rather than independently-scrolling: one scrollbar (the page's) in
+   the common case, and the shorter right column (summary + concepts) rides
+   along pinned near the top of the viewport while the longer left column
+   (patent matches) scrolls underneath it, then unsticks and scrolls away
+   itself once the left column -- which sets .report-columns's overall
+   height -- runs out. align-self: flex-start is required for sticky to size
+   to its own content instead of being stretched to match the left column's
+   height.
+
+   max-height + overflow-y is the fallback for when the sticky column's own
+   content (a long concept list) is taller than the viewport has room for at
+   its stuck position: without a cap, the overflow just renders below the
+   fold with no way to reach it until the column unsticks near the very
+   bottom of the left column's list -- "Detected concepts" would be
+   invisible until you'd scrolled through every patent match. Capped to the
+   viewport, it gets its own scrollbar only when it actually needs one. */
 .report-col-right {
   flex: 1 1 0%;
   min-width: 320px;
@@ -1014,6 +1023,17 @@ button {
   position: sticky;
   top: 20px;
   align-self: flex-start;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+}
+
+.report-col-right::-webkit-scrollbar {
+  width: 8px;
+}
+
+.report-col-right::-webkit-scrollbar-thumb {
+  background: rgba(17, 91, 176, 0.16);
+  border-radius: 999px;
 }
 
 .summary-card,
