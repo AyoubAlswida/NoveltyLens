@@ -59,13 +59,14 @@ services:
       - "127.0.0.1:6334:6334"  # gRPC
     volumes:
       - qdrant-data:/qdrant/storage
-    # Qdrant keeps vectors in RAM by default (1024-dim float32 = 4 KB/point, so
-    # ~0.4 GB per 100k patents) and the container was previously unbounded - a
-    # runaway corpus would have taken the host down with it rather than failing
-    # in one place. 2 GB leaves headroom for roughly 400k patents; raise it
-    # deliberately rather than removing it. Note payloads are on disk
-    # (`on_disk_payload`) and store full patent text at ~273 KB average, so disk
-    # grows much faster than memory - that is the number to watch.
+    # Qdrant keeps vectors in RAM by default (Qwen3-Embedding-4B is 2560-dim
+    # float32 = 10 KB/point, so ~1 GB per 100k patents) and the container was
+    # previously unbounded - a runaway corpus would have taken the host down with
+    # it rather than failing in one place. 2 GB now leaves headroom for roughly
+    # 200k patents, down from 400k when the project embedded at 1024 dims with
+    # bge-large; raise it deliberately rather than removing it. Note payloads are
+    # on disk (`on_disk_payload`) and store full patent text at ~273 KB average,
+    # so disk grows much faster than memory - that is the number to watch.
     mem_limit: 2g
     healthcheck:
       # The image ships no curl/wget/nc, but it does have bash, so probe /readyz

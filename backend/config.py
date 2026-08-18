@@ -23,10 +23,27 @@ class Settings:
     epo_secret: str = os.getenv("EPO_SECRET", os.getenv("EPO_CONSUMER_SECRET", ""))
     llm_api_url: str = os.getenv("LLM_API_URL", "https://router.huggingface.co/v1/chat/completions")
     llm_model: str = os.getenv("LLM_MODEL", "meta-llama/Llama-3.1-8B-Instruct:novita")
+    llm_api_key: str = os.getenv("LLM_API_KEY", os.getenv("HF_TOKEN", ""))
+    """Bearer token for ``llm_api_url``. Defaults to HF_TOKEN so the HuggingFace
+    Router keeps working unchanged; set LLM_API_KEY separately when pointing
+    llm_api_url at a different provider (e.g. an internal OpenAI-compatible
+    endpoint) that needs its own credential."""
     uspto_api_key: str = os.getenv("PATENTSVIEW_API_KEY", "")
     qdrant_url: str = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
     qdrant_api_key: str = os.getenv("QDRANT_API_KEY", "")
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-en-v1.5")
+    embedding_api_url: str = os.getenv("EMBEDDING_API_URL", "")
+    """OpenAI-compatible ``/v1/embeddings`` endpoint. Required - there is no
+    default, because embeddings.py speaks the OpenAI request/response shape
+    unconditionally (``{"input": [...]}`` -> ``{"data": [{"embedding": [...]}]}``),
+    which the HuggingFace Router's feature-extraction pipeline this project used
+    to call does not speak. Point this at whatever OpenAI-compatible embeddings
+    endpoint backs ``embedding_model``."""
+    embedding_api_key: str = os.getenv("EMBEDDING_API_KEY", os.getenv("LLM_API_KEY", os.getenv("HF_TOKEN", "")))
+    """Bearer token for ``embedding_api_url``. Defaults to LLM_API_KEY (falling
+    further back to HF_TOKEN) since both calls typically go through the same
+    gateway and key; set EMBEDDING_API_KEY separately only if the embeddings
+    provider needs its own credential."""
     database_url: str = os.getenv(
         "DATABASE_URL", "postgresql://agenticai:agenticai@127.0.0.1:5432/agenticai"
     )

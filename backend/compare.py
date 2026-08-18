@@ -154,8 +154,8 @@ def compare_invention_to_patents(
 ) -> list[ComparisonResult]:
     """Rank normalized patents by semantic similarity to the invention.
 
-    Raises whatever the embedding call raises (e.g. HF_TOKEN not configured, or
-    the embedding API failed) rather than degrading to a lexical fallback - a
+    Raises whatever the embedding call raises (e.g. EMBEDDING_API_URL not
+    configured, or the embedding API failed) rather than degrading to a lexical fallback - a
     similarity score computed by a different method than the one the user was
     told is being used is exactly the kind of untrue "good enough" result the
     zero-tolerance policy forbids.

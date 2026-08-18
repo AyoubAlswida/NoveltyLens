@@ -19,9 +19,12 @@ COLLECTION_NAME = "patents"
 MAX_INDEX_WORDS = 600
 """Words of each document actually sent to the embedding API.
 
-BAAI/bge-large-en-v1.5 has a 512-token limit and the HF endpoint truncates
-silently past it, so everything beyond roughly the first 400 words never
-reaches the model. This project's indexed patents average **273,000 characters**
+Sized for BAAI/bge-large-en-v1.5's 512-token limit, past which the endpoint
+truncated silently, so everything beyond roughly the first 400 words never
+reached the model. Qwen3-Embedding-4B accepts far more (32k tokens), so this cap
+is now a deliberate cost/latency bound rather than a model limit - raising it
+would change stored vectors and require re-indexing, so it is left alone.
+This project's indexed patents average **273,000 characters**
 (median 156,000; largest observed 3.2 MB), which meant a 20-patent batch shipped
 ~5.5 MB over HTTP to compute vectors that only ever reflected each document's
 first ~2,000 characters - 99.3% of the payload was uploaded and discarded.
@@ -47,38 +50,38 @@ regardless of how far away they actually are - on a small or unrelated corpus
 that means "the least-bad options available," not "genuinely similar," and
 those would flow into validation and ranking looking like real candidates.
 
-Calibrated against one real probe (BAAI/bge-large-en-v1.5, live Qdrant, ~80
-water-bottle/UV-sterilization patents indexed from this project's own manual
-testing): a genuinely unrelated query ("tractor gearbox") scored 0.51-0.56;
-closely related queries scored 0.68-0.76. There is no exact-zero baseline for
-this model - any two pieces of English text land somewhere above 0, so a
-threshold has to clear that floor, not sit at 0. 0.6 sits in the gap between
-the two observed clusters. This is one data point on one narrow corpus, not a
-rigorous calibration - revisit once there's real cross-domain usage data."""
+**This number is stale and has to be re-calibrated.** It was measured against
+BAAI/bge-large-en-v1.5 on a live Qdrant holding ~80 water-bottle/UV-sterilization
+patents: an unrelated query ("tractor gearbox") scored 0.51-0.56 and closely
+related queries scored 0.68-0.76, so 0.6 sat in the gap between the two clusters.
+The project now embeds with Qwen3-Embedding-4B, whose scores occupy a different
+range entirely, and there is no exact-zero baseline for either model - any two
+pieces of English text land above 0, so the threshold has to clear whatever that
+model's floor turns out to be rather than sit at 0. Re-run the same probe (an
+obviously unrelated query and a few obviously related ones against a populated
+collection) and move this into the observed gap before trusting semantic search.
+Semantic search is currently disabled in ``graph/pipeline.py``, which is the only
+reason a stale threshold is not affecting live results today."""
 
-QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
-"""Instruction prefix BAAI/bge-large-en-v1.5 expects on the *query* side.
+QUERY_INSTRUCTION = (
+    "Instruct: Given a description of an invention, retrieve prior-art patents "
+    "describing similar technology\nQuery: "
+)
+"""Instruction prefix Qwen3-Embedding expects on the *query* side.
 
-The bge family is asymmetric: it was trained with this exact sentence prepended
-to short queries and nothing prepended to the indexed passages. Embedding a
-query bare puts it in a slightly different region of the space than the one the
-retrieval objective trained against, and the cost shows up precisely where it
-hurts - a short query against long full-text documents.
+Qwen3-Embedding is asymmetric the same way bge was, but its trained format is an
+``Instruct:``/``Query:`` pair naming the retrieval task, not a fixed sentence -
+so the task description above is part of the contract, not decoration. Documents
+are still embedded bare; ``store_patents`` deliberately does not prefix them, and
+adding it there would pull every stored vector toward a shared region and flatten
+the gap MIN_SIMILARITY_SCORE has to cut through.
 
-Measured on this project's live corpus (67 patents, mixed AI-agent and
-UV-sterilization domains), query "ai agent":
-
-    hit                                          bare     prefixed
-    US20250259041A1 Ai agent decision platform   0.6563 -> 0.6810
-    US20250259082A1 Ai agent decision platform   0.6445 -> 0.6689
-    US11763143B2    Deep-learning based AI ctrl  0.6166 -> 0.6203
-    US9527211B2     Multi-robot control arch     0.5897 -> 0.5610  (unrelated)
-    US11467590B2    Uncertainty in AI models     0.5752 -> 0.5794  (unrelated)
-
-Relevant hits move up, the unrelated tail stays flat or drops, so the gap
-MIN_SIMILARITY_SCORE sits in gets wider - which is the point. It is applied to
-queries only; ``store_patents`` deliberately does not prefix documents, and
-adding it there would degrade retrieval rather than improve it."""
+**Not yet measured on this project's corpus.** The bge-era prefix it replaced was
+backed by a live probe (relevant hits rose ~0.02-0.03, the unrelated tail stayed
+flat or fell). Nothing equivalent has been run against Qwen3-Embedding-4B, and
+the old numbers do not carry over - they were a different model in a different
+space. Re-probe alongside MIN_SIMILARITY_SCORE once there is an indexed corpus
+to probe against."""
 
 client = QdrantClient(
     url=settings.qdrant_url,

@@ -81,8 +81,8 @@ def _llm_chat(
             that class.
         RuntimeError: if every transport attempt failed.
     """
-    if not settings.hf_token:
-        raise RuntimeError("HF_TOKEN is not configured")
+    if not settings.llm_api_key:
+        raise RuntimeError("LLM_API_KEY (or HF_TOKEN) is not configured")
     payload: dict[str, object] = {
         "model": settings.llm_model,
         "messages": [{"role": "user", "content": prompt}],
@@ -95,7 +95,7 @@ def _llm_chat(
     last_error: Exception | None = None
     for attempt in range(retries + 1):
         try:
-            response = requests.post(settings.llm_api_url, headers={"Authorization": f"Bearer {settings.hf_token}"}, json=payload, timeout=timeout)
+            response = requests.post(settings.llm_api_url, headers={"Authorization": f"Bearer {settings.llm_api_key}"}, json=payload, timeout=timeout)
             response.raise_for_status()
             choice = response.json()["choices"][0]
         except Exception as error:

@@ -294,25 +294,28 @@ def _mock_enrich(patents: list[PatentRecord]) -> list[PatentRecord]:
     return patents
 
 
-EMBED_DIM = 1024
-"""Must match the real model's output width (BAAI/bge-large-en-v1.5 is 1024).
+EMBED_DIM = 2560
+"""Must match the real model's output width (Qwen3-Embedding-4B is 2560).
 
 Not a free choice: a Qdrant collection fixes its vector size on creation, so a
-narrower mock vector fails outright against a `patents` collection any earlier
-real run already created. Indexing is currently disabled in the graph
+mock vector of the wrong width fails outright against a `patents` collection any
+earlier real run already created. Indexing is currently disabled in the graph
 (``graph/pipeline.py``), so nothing writes today - this is what stops that from
-becoming a confusing failure the day it is switched back on.
+becoming a confusing failure the day it is switched back on. It was 1024 while
+the project embedded with BAAI/bge-large-en-v1.5; a collection built then is
+unusable now and has to be dropped, not migrated.
 """
 
 _HASH_DIM = 64
 """The width the hashing trick actually works in, before tiling up to EMBED_DIM.
 
-Hashing a short abstract straight into 1024 buckets leaves vectors so sparse
+Hashing a short abstract straight into 2560 buckets leaves vectors so sparse
 that almost every pair is orthogonal, and the whole report would come out at 0%
 - technically honest for a fake embedder, but useless for looking at how scores
-render. Tiling a dense 64-dim vector 16 times leaves cosine similarity exactly
-unchanged (both dot product and both norms scale by 16) while producing the
+render. Tiling a dense 64-dim vector 40 times leaves cosine similarity exactly
+unchanged (both dot product and both norms scale by 40) while producing the
 width Qdrant expects, so the spread is realistic and the dimension is correct.
+EMBED_DIM must stay an exact multiple of this.
 """
 
 _STOPWORDS = {

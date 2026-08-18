@@ -1,6 +1,7 @@
-"""Semantic text embeddings via the Hugging Face Inference Router.
+"""Semantic text embeddings via an OpenAI-compatible /v1/embeddings endpoint.
 
-Reuses the same HF_TOKEN already configured for chat completions in llm.py.
+Configured by ``settings.embedding_api_url`` / ``embedding_api_key``, which
+default to the same gateway and key as the chat completions in llm.py.
 """
 
 import logging
@@ -14,7 +15,6 @@ from tracing import trace
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_URL_TEMPLATE = "https://router.huggingface.co/hf-inference/models/{model}/pipeline/feature-extraction"
 BATCH_SIZE = 8
 MAX_BATCH_WORKERS = 8
 """Batch size and concurrency for embedding round trips.
@@ -80,33 +80,38 @@ def chunk_text(text: str, max_words: int = 180, overlap_words: int = 20, max_chu
 
 
 def _embed_batch(texts: list[str], timeout: int = 60, retries: int = 2) -> list[list[float]]:
-    """Embed one batch. HF Inference Router can 503 while a model cold-starts,
-    so this retries with backoff the same way llm.py's chat helper does.
+    """Embed one batch. A hosted endpoint can 503 while a model cold-starts, so
+    this retries with backoff the same way llm.py's chat helper does.
 
     The timeout is 60s rather than 30s because a retry here is expensive in a way
     a retry usually isn't: the request that times out has already burned the full
     timeout doing work the server may well have completed. Waiting a little
     longer for a slow batch beats paying 30s to throw one away. See BATCH_SIZE.
     """
-    if not settings.hf_token:
-        raise RuntimeError("HF_TOKEN is not configured")
-    url = EMBEDDING_URL_TEMPLATE.format(model=settings.embedding_model)
+    if not settings.embedding_api_url:
+        raise RuntimeError("EMBEDDING_API_URL is not configured")
+    if not settings.embedding_api_key:
+        raise RuntimeError("EMBEDDING_API_KEY (or LLM_API_KEY) is not configured")
     trace("embeddings.batch.request", model=settings.embedding_model, batch_size=len(texts))
     last_error: Exception | None = None
     for attempt in range(retries + 1):
         try:
             response = requests.post(
-                url,
-                headers={"Authorization": f"Bearer {settings.hf_token}"},
-                json={"inputs": texts},
+                settings.embedding_api_url,
+                headers={"Authorization": f"Bearer {settings.embedding_api_key}"},
+                json={"model": settings.embedding_model, "input": texts},
                 timeout=timeout,
             )
             response.raise_for_status()
-            data = response.json()
-            if isinstance(data, dict) and "error" in data:
-                raise RuntimeError(str(data["error"]))
-            if not isinstance(data, list) or (data and not isinstance(data[0], list)):
-                raise RuntimeError(f"Unexpected embedding response shape: {type(data)}")
+            payload = response.json()
+            if isinstance(payload, dict) and "error" in payload:
+                raise RuntimeError(str(payload["error"]))
+            # The provider is free to return the batch out of order; `index` is
+            # what it guarantees, and callers zip vectors against their input.
+            rows = sorted(payload["data"], key=lambda row: row["index"])
+            data = [row["embedding"] for row in rows]
+            if len(data) != len(texts):
+                raise RuntimeError(f"Embedding count mismatch: sent {len(texts)}, got {len(data)}")
             trace("embeddings.batch.response", attempt=attempt, vectors=len(data), dims=len(data[0]) if data else 0)
             return data
         except Exception as error:
