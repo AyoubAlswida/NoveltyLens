@@ -1,6 +1,5 @@
 import { Component, ChangeDetectionStrategy, input, output, signal, ElementRef, viewChild } from '@angular/core';
 import { Icon } from '../shared/icon';
-import { BrandHeader } from '../shared/chrome';
 
 /** Every file type accepted here is parsed to plain text entirely in the
  * browser -- .txt/.md via FileReader.readAsText, .pdf via pdfjs-dist, and
@@ -13,11 +12,9 @@ const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.pdf', '.docx'];
 @Component({
   selector: 'app-submit-screen',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Icon, BrandHeader],
+  imports: [Icon],
   template: `
     <div class="screen screen-scroll">
-      <app-brand-header />
-
       <section class="form-card glass-card" aria-label="Patent search input">
         <div class="field-heading">
           <div class="field-title">

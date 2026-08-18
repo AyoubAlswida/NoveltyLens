@@ -216,6 +216,31 @@ Invention:
     return analysis
 
 
+CLAIMS_EXCERPT_CHARS = 1500
+"""How much of each patent's full text goes into the rationale prompt, per
+patent. Every provider (search/google.py, search/epo.py, search/lens.py)
+builds ``full_text`` as ``description + claims``, claims last - so the *tail*
+of full_text is where a patent's actual structure (what connects to what,
+what triggers what) is specified, not the abstract. Using the abstract here
+was the bug: compare.py's similarity score already reads full text, but this
+prompt - the one writing "why this overlaps" - was reading a 350-character
+marketing-style summary instead, which structurally cannot describe
+architecture it was never shown. ~1500 chars covers a claim or two without
+blowing up prompt size across up to MAX_CANDIDATES patents in one batched call."""
+
+
+def _rationale_source_text(patent: PatentRecord) -> str:
+    """The text this prompt reasons about for one patent: the tail of full
+    text (claims) when available, else the abstract as a last resort - never
+    both truncated together, since that would dilute the claims with however
+    much of the description fits first."""
+    if not patent.full_text:
+        return patent.abstract
+    if len(patent.full_text) <= CLAIMS_EXCERPT_CHARS:
+        return patent.full_text
+    return patent.full_text[-CLAIMS_EXCERPT_CHARS:]
+
+
 def analyze_all_matches(invention: str, patents: list[PatentRecord]) -> MatchAnalysis:
     """Rationalize every patent and propose recommendations in one LLM call.
 
@@ -229,7 +254,7 @@ def analyze_all_matches(invention: str, patents: list[PatentRecord]) -> MatchAna
         return MatchAnalysis(rationales=[], key_overlaps=[], recommendations=[])
 
     patent_block = "\n".join(
-        f"[{index}] Number: {patent.id}\n    Title: {patent.title}\n    Abstract: {patent.abstract[:350]}"
+        f"[{index}] Number: {patent.id}\n    Title: {patent.title}\n    Excerpt: {_rationale_source_text(patent)}"
         for index, patent in enumerate(patents, start=1)
     )
     prompt = f'''You are an expert patent examiner comparing a user's invention against {count} prior-art patents.

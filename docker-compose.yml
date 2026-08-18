@@ -17,8 +17,11 @@
 # After the first `up`, apply the schema once: `cd backend && python migrate.py`.
 # That also seeds the demo login (testnovelty@gmail.com / ABC123).
 #
-# The backend and frontend are NOT containerized; keep running them with
-# `python server.py` and `npm run dev` as before.
+# The backend and frontend ARE containerized too (backend/Dockerfile,
+# frontend/Dockerfile) - `docker compose up --build` brings up the whole
+# stack. Running them natively with `python server.py` / `npm run dev` still
+# works fine for hot-reload during active development; nothing requires the
+# containerized versions.
 #
 # Credentials below are local-development only and deliberately committed. Real
 # credentials belong in backend/.env, which is gitignored.
@@ -77,6 +80,41 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+
+  backend:
+    build:
+      context: ./backend
+    container_name: agenticai-backend
+    restart: unless-stopped
+    env_file:
+      - backend/.env
+    environment:
+      # Reach the other containers by service name instead of the .env
+      # file's 127.0.0.1 defaults - everything else (HF_TOKEN, SERPAPI_KEY,
+      # AUTH_SECRET, ...) still comes from backend/.env above.
+      DATABASE_URL: postgresql://agenticai:agenticai@postgres:5432/agenticai
+      QDRANT_URL: http://qdrant:6333
+    ports:
+      - "127.0.0.1:8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: agenticai-frontend
+    restart: unless-stopped
+    environment:
+      # Where the BROWSER should reach the backend - not the Docker network,
+      # since the browser runs outside it.
+      API_URL: "${FRONTEND_API_URL:-http://localhost:8001}"
+    ports:
+      - "127.0.0.1:4200:80"
+    depends_on:
+      - backend
 
 volumes:
   postgres-data:

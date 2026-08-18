@@ -6,6 +6,12 @@
     <base href="/" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" type="image/svg+xml" href="/novelty-lens-favicon.svg" />
+    <!-- Written at container start by frontend/docker-entrypoint.sh from $API_URL.
+         Absent in local dev (ng serve never creates it) - a 404 here is silent
+         and harmless, and config.ts's window.NOVELTY_LENS_API_URL fallback to
+         127.0.0.1:8001 covers that case exactly as before. Must load before
+         the Angular bundle, which is why it's in <head>. -->
+    <script src="/env-config.js"></script>
   </head>
   <body>
     <app-root></app-root>

@@ -1,17 +1,14 @@
 import { Component, ChangeDetectionStrategy, input, output, computed } from '@angular/core';
 import { Icon } from '../shared/icon';
-import { BrandHeader } from '../shared/chrome';
 import { ExportMenu } from '../shared/export-menu';
 import { AnalysisReport, Risk, Verdict } from '../models/report';
 
 @Component({
   selector: 'app-report-screen',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Icon, BrandHeader, ExportMenu],
+  imports: [Icon, ExportMenu],
   template: `
     <div class="screen screen-scroll report-screen">
-      <app-brand-header />
-
       <section class="report-toolbar glass-card">
         <button
           class="secondary-button icon-button"
