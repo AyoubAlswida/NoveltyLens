@@ -49,6 +49,42 @@ class LoginRequest(BaseModel):
     password: str
 
 
+@app.get("/healthz")
+async def healthz() -> dict[str, str]:
+    """Liveness probe: is this process up. Deliberately unauthenticated and
+    deliberately touching nothing else - a probe that needed a token could not
+    be called by the platform, and one that hit the database would restart a
+    healthy pod every time Postgres blinked.
+
+    This is the one endpoint outside the auth gate besides login, and it is safe
+    there because it reveals nothing: no version, no config, no counts."""
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+async def readyz() -> dict[str, str]:
+    """Readiness probe: can this pod serve a real request yet.
+
+    Unlike ``/healthz`` this *does* check Postgres, because a backend that
+    cannot reach its database cannot serve a single endpoint - every route
+    either persists a run or reads one. Failing readiness pulls the pod out of
+    the Service's endpoints until the database is back, which is the correct
+    response; failing *liveness* would kill and restart it, which would not fix
+    a database outage and would lose in-flight SSE streams for no reason.
+
+    Raises:
+        HTTPException: 503 when the database is unreachable, which is what marks
+            the pod not-ready.
+    """
+    try:
+        with db.connect() as conn:
+            conn.execute("SELECT 1")
+    except Exception as error:
+        logger.warning("readiness probe failed: %s", error)
+        raise HTTPException(status_code=503, detail="database unavailable")
+    return {"status": "ready"}
+
+
 @app.post("/api/auth/login")
 async def login(request: LoginRequest) -> dict[str, str]:
     """Exchange credentials for a session token.
@@ -138,4 +174,10 @@ async def delete_history(email: str = Depends(require_user)) -> dict[str, int]:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8001)
+
+    from config import settings
+
+    # Host/port come from settings so a container can bind 0.0.0.0 without a
+    # code change; the defaults are still 127.0.0.1:8001, so running this file
+    # on a laptop behaves exactly as it always has. See config.server_host.
+    uvicorn.run(app, host=settings.server_host, port=settings.server_port)

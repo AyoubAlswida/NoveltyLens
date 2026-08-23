@@ -1,0 +1,103 @@
+# Qdrant, the vector store.
+#
+# NOTHING READS IT TODAY. The three nodes that touch it - semantic_search,
+# index_patents and fuse - are all commented out in graph/pipeline.py, so a
+# request never calls it. It is deployed anyway because the client is
+# constructed at import time in search/vector_store.py (lazily, so an absent
+# server costs nothing until a call is made) and because re-enabling that branch
+# should be a code change, not a code change plus an infrastructure request.
+#
+# If the cluster is tight on storage, this is the one component that can be
+# dropped until semantic search is switched back on.
+#
+# CAPACITY: vectors live in RAM. Qwen3-Embedding-4B is 2560-dim float32 =
+# 10 KB/point, so the 2Gi limit below holds roughly 200k patents. DISK grows far
+# faster: payloads are on disk and store each patent's full text at ~273 KB
+# average, i.e. ~2.7 GB per 10k patents. The PVC, not the memory limit, is what
+# will run out first.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qdrant-data
+  labels:
+    app.kubernetes.io/part-of: noveltylens
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qdrant
+  labels:
+    app.kubernetes.io/name: qdrant
+    app.kubernetes.io/part-of: noveltylens
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # single ReadWriteOnce volume - see postgres for why
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qdrant
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: qdrant
+    spec:
+      containers:
+        - name: qdrant
+          # Keep this in step with qdrant-client in backend/requirements.txt.
+          # The client warns when the server is more than a minor version away.
+          image: docker.io/qdrant/qdrant:v1.18.3
+          ports:
+            - containerPort: 6333
+              name: http
+            - containerPort: 6334
+              name: grpc
+          env:
+            # Qdrant writes to ./storage relative to its workdir by default.
+            # Pinning it to the mount point makes the PVC the only writable
+            # path it needs, which is what keeps it working under an arbitrary
+            # UID without extra permissions.
+            - name: QDRANT__STORAGE__STORAGE_PATH
+              value: /qdrant/storage
+          volumeMounts:
+            - name: data
+              mountPath: /qdrant/storage
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 6333
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              # Bounds a runaway corpus to this pod instead of the node. See the
+              # capacity note above before raising it.
+              memory: 2Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: qdrant-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+  labels:
+    app.kubernetes.io/part-of: noveltylens
+spec:
+  selector:
+    app.kubernetes.io/name: qdrant
+  ports:
+    - name: http
+      port: 6333
+      targetPort: 6333
+    - name: grpc
+      port: 6334
+      targetPort: 6334

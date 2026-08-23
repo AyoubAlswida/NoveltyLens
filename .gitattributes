@@ -1,0 +1,28 @@
+# Line endings. This repository is edited on Windows and its containers run on
+# Linux, so the two must be kept apart deliberately.
+#
+# The shell script is the one that actually breaks: a checkout with CRLF gives
+# the container `#!/bin/sh\r`, and Linux reports it as
+# `bad interpreter: /bin/sh^M` - an error that names a file that looks correct
+# in every editor. Dockerfiles, YAML and nginx config are pinned for the same
+# reason, being read only inside Linux images.
+* text=auto
+
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+*.yaml      text eol=lf
+*.yml       text eol=lf
+*.conf      text eol=lf
+
+# Binary assets: never touched, never diffed as text.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.svg   text
+*.otf   binary
+*.ttf   binary
+*.woff  binary
+*.woff2 binary
+*.pptx  binary
+*.docx  binary
+*.pdf   binary

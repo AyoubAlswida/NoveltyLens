@@ -1,0 +1,103 @@
+# PostgreSQL. Holds the login accounts and every completed run - the backend
+# cannot serve a single request without it, so this must be ready first.
+#
+# IMAGE CHOICE IS DELIBERATE. The Docker Hub `postgres` image does not work
+# under OpenShift's default SCC: its entrypoint chowns the data directory as
+# root, and the container is an arbitrary non-root UID. Red Hat's image is built
+# for exactly this constraint. If registry.redhat.io is not reachable from the
+# cluster, the alternatives in order of preference are: a mirror of this image
+# in the internal registry, then bitnami/postgresql (also arbitrary-UID safe),
+# and only as a last resort granting the `anyuid` SCC to a dedicated service
+# account - which weakens the whole namespace and should be argued for, not
+# assumed.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  labels:
+    app.kubernetes.io/part-of: noveltylens
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      # Reports are small rows; this is generous. The corpus that actually grows
+      # is Qdrant's, not this.
+      storage: 5Gi
+  # storageClassName: <cluster default>   # set if the cluster has no default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: noveltylens
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate: two Postgres pods would attach the same
+  # ReadWriteOnce volume, and the second would fail to start while the first
+  # still holds it. There is no clustering here.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: registry.redhat.io/rhel9/postgresql-16:latest
+          env:
+            - name: POSTGRESQL_USER
+              value: agenticai
+            - name: POSTGRESQL_DATABASE
+              value: agenticai
+            - name: POSTGRESQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: noveltylens-secrets
+                  key: POSTGRES_PASSWORD
+          ports:
+            - containerPort: 5432
+              name: postgres
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/pgsql/data
+          readinessProbe:
+            exec:
+              command: ["/usr/bin/pg_isready", "-U", "agenticai", "-d", "agenticai"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgres-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels:
+    app.kubernetes.io/part-of: noveltylens
+spec:
+  # No Route, on purpose: the database is reachable only from inside the
+  # namespace. Nothing outside the cluster has any business talking to it.
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432

@@ -63,5 +63,18 @@ class Settings:
     """How long an issued session token stays valid. Tokens are stateless, so
     this is the only thing bounding a leaked one - there is no revocation list."""
 
+    server_host: str = os.getenv("SERVER_HOST", "127.0.0.1")
+    """Interface uvicorn binds to. Defaults to loopback so a laptop running this
+    does not expose an unauthenticated-by-default backend to its whole network.
+
+    **A container must override this to 0.0.0.0.** Inside a pod, loopback is
+    reachable only from that pod, so a container left on the default answers its
+    own health probe and nothing else - the symptom is a Service with no ready
+    endpoints, not a crash. The OpenShift Deployment sets it explicitly."""
+
+    server_port: int = int(os.getenv("SERVER_PORT", "8001"))
+    """Port uvicorn listens on. Kept above 1024 because OpenShift runs
+    containers as an arbitrary non-root UID that cannot bind privileged ports."""
+
 
 settings = Settings()

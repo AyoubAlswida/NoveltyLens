@@ -1,0 +1,92 @@
+# The frontend: Angular built to static files, served by nginx on 8080.
+#
+# API_BASE_URL is the one value that cannot be baked into the image - it is the
+# backend Route's hostname, which does not exist until the backend Route is
+# created. The container entrypoint writes it into /env.js at start-up and
+# index.html loads that before the bundle. Fill it in after applying
+# 04-backend.yaml:
+#
+#   oc set env deployment/frontend \
+#       API_BASE_URL="https://$(oc get route backend -o jsonpath='{.spec.host}')"
+#
+# It must be the absolute https:// URL. The frontend and backend sit behind two
+# different Routes, so a relative path would resolve against the frontend's own
+# host and 404.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  labels:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/part-of: noveltylens
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: frontend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: image-registry.openshift-image-registry.svc:5000/noveltylens/frontend:latest
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            # Placeholder. Overwritten by the `oc set env` above; if it is left
+            # empty the entrypoint writes no env.js at all and the UI falls back
+            # to http://127.0.0.1:8001, which fails visibly rather than silently.
+            - name: API_BASE_URL
+              value: ""
+          # Static files - if nginx is listening it can serve. No readiness
+          # distinction is meaningful here, unlike the backend.
+          livenessProbe:
+            httpGet:
+              path: /index.html
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /index.html
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  labels:
+    app.kubernetes.io/part-of: noveltylens
+spec:
+  selector:
+    app.kubernetes.io/name: frontend
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: frontend
+  labels:
+    app.kubernetes.io/part-of: noveltylens
+spec:
+  to:
+    kind: Service
+    name: frontend
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

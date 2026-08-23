@@ -6,6 +6,16 @@
     <base href="/" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" type="image/svg+xml" href="/novelty-lens-favicon.svg" />
+    <!-- Runtime backend address, read by src/app/config.ts as
+         window.NOVELTY_LENS_API_URL. Loaded BEFORE the bundle so the constant
+         is already set when config.ts evaluates.
+
+         In dev this file does not exist and the 404 is harmless - config.ts
+         falls back to http://127.0.0.1:8001. In a container the entrypoint
+         writes it from $API_BASE_URL, which is what lets one built image point
+         at any backend Route without a rebuild. Keep it non-blocking-safe:
+         never put application logic in env.js. -->
+    <script src="/env.js"></script>
   </head>
   <body>
     <app-root></app-root>
