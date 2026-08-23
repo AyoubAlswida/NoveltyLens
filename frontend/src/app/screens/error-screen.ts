@@ -1,17 +1,14 @@
 import { Component, ChangeDetectionStrategy, input, output, computed } from '@angular/core';
 import { Icon } from '../shared/icon';
-import { BrandHeader } from '../shared/chrome';
 import { Phase, PHASE_ORDER, PHASE_LABELS } from '../models/report';
 import { API_BASE_URL } from '../config';
 
 @Component({
   selector: 'app-error-screen',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Icon, BrandHeader],
+  imports: [Icon],
   template: `
     <div class="screen screen-scroll">
-      <app-brand-header />
-
       <section class="intro-copy error-intro">
         <div class="failed-label"><span></span> RUN FAILED</div>
         <h1>The analysis could not be completed</h1>

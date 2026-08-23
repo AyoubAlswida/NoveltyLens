@@ -21,6 +21,10 @@ class Settings:
     serpapi_key: str = os.getenv("SERPAPI_KEY", "")
     epo_key: str = os.getenv("EPO_KEY", os.getenv("EPO_CONSUMER_KEY", ""))
     epo_secret: str = os.getenv("EPO_SECRET", os.getenv("EPO_CONSUMER_SECRET", ""))
+    lens_api_key: str = os.getenv("LENS_API_KEY", "")
+    """Bearer token for the Lens.org Patent API (api.lens.org), created from
+    the Subscriptions tab of a Lens user profile. Currently a 14-day
+    non-commercial trial token - see search/lens.py's module docstring."""
     llm_api_url: str = os.getenv("LLM_API_URL", "https://router.huggingface.co/v1/chat/completions")
     llm_model: str = os.getenv("LLM_MODEL", "meta-llama/Llama-3.1-8B-Instruct:novita")
     llm_api_key: str = os.getenv("LLM_API_KEY", os.getenv("HF_TOKEN", ""))

@@ -1,6 +1,5 @@
 import { Component, ChangeDetectionStrategy, input, output } from '@angular/core';
 import { Icon } from '../shared/icon';
-import { BrandHeader } from '../shared/chrome';
 import { HistoryEntry, Verdict } from '../models/report';
 
 /**
@@ -14,11 +13,9 @@ import { HistoryEntry, Verdict } from '../models/report';
 @Component({
   selector: 'app-history-screen',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Icon, BrandHeader],
+  imports: [Icon],
   template: `
     <div class="screen screen-scroll">
-      <app-brand-header />
-
       <section class="intro-copy submit-intro">
         <p>Every completed search, stored server-side and newest first.</p>
       </section>

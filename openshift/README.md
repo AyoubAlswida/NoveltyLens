@@ -19,10 +19,12 @@ These are the failure modes that waste a day if discovered late:
    `PIP_INDEX_URL` / `NPM_REGISTRY`). Ask before building, not after.
 2. **Can pods reach `dev-metabrain-api.aramco.com.sa`?** The whole pipeline
    depends on it. Verify from inside the cluster, not from a laptop.
-3. **Can pods reach `serpapi.com`?** This one is likely to be **no**, and it has
-   no fallback — Google Patents is the only enabled provider, so a blocked
-   SerpAPI means no real search regardless of everything else working. Settle
-   the egress policy question before promising a demo date.
+3. **Can pods reach `api.lens.org`?** Lens.org is now the only enabled patent
+   provider — Google Patents/SerpAPI is commented out of `SOURCES`. There is no
+   fallback, so if that host is blocked there is no real search regardless of
+   everything else working. `serpapi.com` is DNS-blocked from Aramco machines;
+   test whether Lens shares that fate before promising a demo date. Note also
+   that `LENS_API_KEY` is a **14-day non-commercial trial** token.
 
 ## Deploy
 
@@ -61,7 +63,7 @@ oc apply -f 04-backend.yaml
 oc rollout status deployment/backend
 oc apply -f 05-frontend.yaml
 oc set env deployment/frontend \
-    API_BASE_URL="https://$(oc get route backend -o jsonpath='{.spec.host}')"
+    API_URL="https://$(oc get route backend -o jsonpath='{.spec.host}')"
 
 oc get route frontend -o jsonpath='{.spec.host}{"\n"}'
 ```

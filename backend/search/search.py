@@ -9,16 +9,22 @@ from models import PatentRecord
 from tracing import trace
 from .epo import search_epo
 from .google import enrich_with_full_text, search_google
+from .lens import search_lens
 
 logger = logging.getLogger(__name__)
 Provider = Callable[[str, int], list[PatentRecord]]
 SOURCES: tuple[tuple[str, Provider], ...] = (
-    ("Google Patents", search_google),
+    # ("Google Patents", search_google),  # TEMP: disabled - swapped out for
+    # Lens.org while trialling it as a replacement source. Not removed - see
+    # search/google.py, which is untouched and fully functional.
     # ("European Patent Office", search_epo),  # TEMP: disabled - EPO's search casts a
     # wide net across every national office, but its full-text service only covers
     # EP/WO-family documents, so most EPO finds get dropped by keyword_search_node's
     # "no full text = drop" rule anyway, wasting filter slots. Not removed - see
     # search/epo.py, which is untouched and fully functional.
+    ("Lens.org", search_lens),  # TEMP: LENS_API_KEY is a 14-day non-commercial
+    # trial token (see search/lens.py's module docstring) - every call here
+    # spends against that trial.
 )
 
 MAX_SEARCH_WORKERS = 8
