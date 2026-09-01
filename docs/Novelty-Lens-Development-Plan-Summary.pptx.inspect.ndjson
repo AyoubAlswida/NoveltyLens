@@ -1,0 +1,113 @@
+{"kind":"deck","id":"pr/ih7za6","name":"Deck"}
+{"kind":"layout","layoutId":"caf9bf03-a559-45ed-b533-d98f16d329ef","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"b895d3b7-cae2-4c55-876a-502a011b0666","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/q0jyxh","slide":1,"title":"NOVELTY LENS","textShapes":5}
+{"kind":"shape","id":"sh/65s7e98n","slide":1,"bbox":[58,52,86,10]}
+{"kind":"textbox","id":"sh/t8jq94ry","slide":1,"text":"NOVELTY LENS","textPreview":"NOVELTY LENS","textChars":12,"textLines":1,"bbox":[58,78,420,32]}
+{"kind":"textbox","id":"sh/s7apgzqd","slide":1,"text":"From search tool to\nauditable novelty workflow","textPreview":"From search tool to | auditable novelty workflow","textChars":46,"textLines":2,"bbox":[58,166,1000,182]}
+{"kind":"textbox","id":"sh/fu18be94","slide":1,"text":"Five-slide executive summary of the comprehensive development plan","textPreview":"Five-slide executive summary of the comprehensive development plan","textChars":66,"textLines":1,"bbox":[62,384,820,42]}
+{"kind":"shape","id":"sh/uts7i98j","slide":1,"bbox":[58,540,1164,1]}
+{"kind":"textbox","id":"sh/hw3qdora","slide":1,"text":"Product • Retrieval • Evidence • Delivery","textPreview":"Product • Retrieval • Evidence • Delivery","textChars":41,"textLines":1,"bbox":[58,565,600,30]}
+{"kind":"textbox","id":"sh/gvapkjqp","slide":1,"text":"AUGUST 2026","textPreview":"AUGUST 2026","textChars":11,"textLines":1,"bbox":[930,565,292,30]}
+{"kind":"notes","id":"nt/q0jyxh","slide":1,"text":"[Sources]\n- Novelty-Lens-Comprehensive-Development-Plan-EN.docx (internal source document)\n[/Sources]"}
+{"kind":"slide","id":"sl/c4oyn2","slide":2,"title":"STRATEGIC GAP","textShapes":10}
+{"kind":"shape","id":"sh/nap8z2ho","slide":2,"bbox":[54,46,64,8]}
+{"kind":"textbox","id":"sh/obyps7i9","slide":2,"text":"STRATEGIC GAP","textPreview":"STRATEGIC GAP","textChars":13,"textLines":1,"bbox":[54,64,300,26]}
+{"kind":"textbox","id":"sh/9c7q1czu","slide":2,"text":"The foundation is strong—but the workflow is still opaque","textPreview":"The foundation is strong—but the workflow is still opaque","textChars":57,"textLines":1,"bbox":[54,94,1170,92]}
+{"kind":"textbox","id":"sh/adg7uh0f","slide":2,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[1170,46,54,28]}
+{"kind":"shape","id":"sh/bep83mh0","slide":2,"bbox":[54,215,554,380]}
+{"kind":"textbox","id":"sh/wfy9wril","slide":2,"text":"CURRENT FOUNDATION","textPreview":"CURRENT FOUNDATION","textChars":18,"textLines":1,"bbox":[82,238,480,28]}
+{"kind":"textbox","id":"sh/x0rq5wz6","slide":2,"text":"Reliable orchestration","textPreview":"Reliable orchestration","textChars":22,"textLines":1,"bbox":[82,282,470,36]}
+{"kind":"textbox","id":"sh/qhw7id0b","slide":2,"text":"• LangGraph workflow with streamed SSE events\n• Live patent retrieval, validation, and ranking\n• PostgreSQL history and resumable backend state\n• Clear failure policy: no fabricated or degraded output","textPreview":"• LangGraph workflow with streamed SSE events | • Live patent retrieval, validation, and ranking | • PostgreSQL history and resumable bac...","textChars":200,"textLines":4,"bbox":[82,332,476,190]}
+{"kind":"shape","id":"sh/ri58rihw","slide":2,"bbox":[632,215,592,380]}
+{"kind":"textbox","id":"sh/r21cva9c","slide":2,"text":"TARGET CAPABILITY","textPreview":"TARGET CAPABILITY","textChars":17,"textLines":1,"bbox":[660,238,500,28]}
+{"kind":"textbox","id":"sh/61sb25sr","slide":2,"text":"Reviewable evidence","textPreview":"Reviewable evidence","textChars":19,"textLines":1,"bbox":[660,282,510,36]}
+{"kind":"textbox","id":"sh/t43ux0r2","slide":2,"text":"• Human review checkpoints before costly searches\n• Calibrated semantic + Boolean hybrid retrieval\n• Patent families, citations, and non-patent literature\n• Feature-to-reference evidence matrix with provenance","textPreview":"• Human review checkpoints before costly searches | • Calibrated semantic + Boolean hybrid retrieval | • Patent families, citations, and ...","textChars":209,"textLines":4,"bbox":[660,332,516,190]}
+{"kind":"shape","id":"sh/s3ut4fqx","slide":2,"bbox":[54,620,1170,50]}
+{"kind":"textbox","id":"sh/jy1srq90","slide":2,"text":"Priority: improve retrieval quality and provenance before copying surface-level UI.","textPreview":"Priority: improve retrieval quality and provenance before copying surface-level UI.","textChars":83,"textLines":1,"bbox":[80,628,1118,34]}
+{"kind":"notes","id":"nt/c4oyn2","slide":2,"text":"[Sources]\n- Novelty-Lens-Comprehensive-Development-Plan-EN.docx (internal source document)\n[/Sources]"}
+{"kind":"slide","id":"sl/kma5ju","slide":3,"title":"TARGET EXPERIENCE","textShapes":17}
+{"kind":"shape","id":"sh/7eh0zql4","slide":3,"bbox":[54,46,64,8]}
+{"kind":"textbox","id":"sh/8fa1sbmp","slide":3,"text":"TARGET EXPERIENCE","textPreview":"TARGET EXPERIENCE","textChars":17,"textLines":1,"bbox":[54,64,300,26]}
+{"kind":"textbox","id":"sh/tgji1g3a","slide":3,"text":"One search becomes a reviewable evidence workflow","textPreview":"One search becomes a reviewable evidence workflow","textChars":49,"textLines":1,"bbox":[54,94,1170,92]}
+{"kind":"textbox","id":"sh/yp8zm14n","slide":3,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[1170,46,54,28]}
+{"kind":"shape","id":"sh/jqh0v6l8","slide":3,"bbox":[104,322,1070,6]}
+{"kind":"shape","id":"sh/krq1obmt","slide":3,"bbox":[54,242,246,160]}
+{"kind":"shape","id":"sh/lczixg3e","slide":3,"bbox":[72,300,40,40]}
+{"kind":"textbox","id":"sh/alozi14b","slide":3,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[72,301,40,38]}
+{"kind":"textbox","id":"sh/bmx0r6lw","slide":3,"text":"REVIEW","textPreview":"REVIEW","textChars":6,"textLines":1,"bbox":[126,263,154,28]}
+{"kind":"textbox","id":"sh/b2l8badg","slide":3,"text":"Confirm the technical summary, core features, and cutoff date.","textPreview":"Confirm the technical summary, core features, and cutoff date.","textChars":62,"textLines":1,"bbox":[72,350,210,94]}
+{"kind":"shape","id":"sh/q1cri5cv","slide":3,"bbox":[354,242,246,160]}
+{"kind":"shape","id":"sh/d43qdkv6","slide":3,"bbox":[372,300,40,40]}
+{"kind":"textbox","id":"sh/c3u9kful","slide":3,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[372,301,40,38]}
+{"kind":"textbox","id":"sh/zq58fudc","slide":3,"text":"PLAN","textPreview":"PLAN","textChars":4,"textLines":1,"bbox":[426,263,154,28]}
+{"kind":"textbox","id":"sh/ypwrmpcr","slide":3,"text":"Inspect terms, IPC/CPC classes, data sources, cost, and search strategy.","textPreview":"Inspect terms, IPC/CPC classes, data sources, cost, and search strategy.","textChars":72,"textLines":1,"bbox":[372,350,210,94]}
+{"kind":"shape","id":"sh/lsnqhkvi","slide":3,"bbox":[654,242,246,160]}
+{"kind":"shape","id":"sh/0re9ofux","slide":3,"bbox":[672,300,40,40]}
+{"kind":"textbox","id":"sh/fu183qd8","slide":3,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[672,301,40,38]}
+{"kind":"textbox","id":"sh/e9s7alwn","slide":3,"text":"RETRIEVE","textPreview":"RETRIEVE","textChars":8,"textLines":1,"bbox":[726,263,154,28]}
+{"kind":"textbox","id":"sh/ip0bitwb","slide":3,"text":"Run semantic, Boolean, family, citation, and literature searches.","textPreview":"Run semantic, Boolean, family, citation, and literature searches.","textChars":65,"textLines":1,"bbox":[672,350,210,94]}
+{"kind":"shape","id":"sh/jq9cbyxg","slide":3,"bbox":[954,242,246,160]}
+{"kind":"shape","id":"sh/kritk3e1","slide":3,"bbox":[972,300,40,40]}
+{"kind":"textbox","id":"sh/5srud8fm","slide":3,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[972,301,40,38]}
+{"kind":"textbox","id":"sh/algbetwz","slide":3,"text":"PROVE","textPreview":"PROVE","textChars":5,"textLines":1,"bbox":[1026,263,154,28]}
+{"kind":"textbox","id":"sh/vmps7exk","slide":3,"text":"Compare references feature-by-feature and generate an auditable report.","textPreview":"Compare references feature-by-feature and generate an auditable report.","textChars":71,"textLines":1,"bbox":[972,350,210,94]}
+{"kind":"textbox","id":"sh/wnytgje5","slide":3,"text":"Every transition is explicit, resumable, and visible through the existing SSE contract.","textPreview":"Every transition is explicit, resumable, and visible through the existing SSE contract.","textChars":87,"textLines":1,"bbox":[90,516,1100,38]}
+{"kind":"textbox","id":"sh/xoru9ofq","slide":3,"text":"The result is not just a ranked list—it is a traceable chain from invention features to cited evidence.","textPreview":"The result is not just a ranked list—it is a traceable chain from invention features to cited evidence.","textChars":103,"textLines":1,"bbox":[126,566,1028,48]}
+{"kind":"notes","id":"nt/kma5ju","slide":3,"text":"[Sources]\n- Novelty-Lens-Comprehensive-Development-Plan-EN.docx (internal source document)\n[/Sources]"}
+{"kind":"slide","id":"sl/op0bpt","slide":4,"title":"DELIVERY ROADMAP","textShapes":22}
+{"kind":"shape","id":"sh/5snm1ob6","slide":4,"bbox":[54,46,64,8]}
+{"kind":"textbox","id":"sh/ipw369cf","slide":4,"text":"DELIVERY ROADMAP","textPreview":"DELIVERY ROADMAP","textChars":16,"textLines":1,"bbox":[54,64,300,26]}
+{"kind":"textbox","id":"sh/jq54zet0","slide":4,"text":"Four releases build capability in the right order","textPreview":"Four releases build capability in the right order","textChars":49,"textLines":1,"bbox":[54,94,1170,92]}
+{"kind":"textbox","id":"sh/wnul4zu9","slide":4,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[1170,46,54,28]}
+{"kind":"shape","id":"sh/xonmx4bu","slide":4,"bbox":[98,334,1074,5]}
+{"kind":"shape","id":"sh/alc329cj","slide":4,"bbox":[66,236,248,88]}
+{"kind":"textbox","id":"sh/vml4vuto","slide":4,"text":"R0–R1","textPreview":"R0–R1","textChars":5,"textLines":1,"bbox":[82,248,70,26]}
+{"kind":"textbox","id":"sh/gjy5g3ut","slide":4,"text":"MEASURE + REVIEW","textPreview":"MEASURE + REVIEW","textChars":16,"textLines":1,"bbox":[82,278,210,24]}
+{"kind":"shape","id":"sh/hk7m98by","slide":4,"bbox":[176,318,28,28]}
+{"kind":"textbox","id":"sh/1kn6dcj2","slide":4,"text":"Benchmark set, quality gates, checkpoints, and review workspace","textPreview":"Benchmark set, quality gates, checkpoints, and review workspace","textChars":63,"textLines":1,"bbox":[72,370,236,104]}
+{"kind":"shape","id":"sh/0jep472h","slide":4,"bbox":[366,236,248,88]}
+{"kind":"textbox","id":"sh/fi5ob21w","slide":4,"text":"R2","textPreview":"R2","textChars":2,"textLines":1,"bbox":[382,248,70,26]}
+{"kind":"textbox","id":"sh/ehw72xkr","slide":4,"text":"RETRIEVE","textPreview":"RETRIEVE","textChars":8,"textLines":1,"bbox":[382,278,210,24]}
+{"kind":"shape","id":"sh/dgn69cj6","slide":4,"bbox":[476,318,28,28]}
+{"kind":"textbox","id":"sh/sfep072l","slide":4,"text":"Calibrate Qwen/Qdrant, hybrid fusion, reranking, and semantic beta","textPreview":"Calibrate Qwen/Qdrant, hybrid fusion, reranking, and semantic beta","textChars":66,"textLines":1,"bbox":[372,370,236,104]}
+{"kind":"shape","id":"sh/rulo7210","slide":4,"bbox":[666,236,248,88]}
+{"kind":"textbox","id":"sh/qtc7yxkf","slide":4,"text":"R3","textPreview":"R3","textChars":2,"textLines":1,"bbox":[682,248,70,26]}
+{"kind":"textbox","id":"sh/xc7qlwja","slide":4,"text":"EVIDENCE","textPreview":"EVIDENCE","textChars":8,"textLines":1,"bbox":[682,278,210,24]}
+{"kind":"shape","id":"sh/cbypcrip","slide":4,"bbox":[776,318,28,28]}
+{"kind":"textbox","id":"sh/wv69ovq1","slide":4,"text":"Families, citations, quotations, locators, and claim-feature mapping","textPreview":"Families, citations, quotations, locators, and claim-feature mapping","textChars":68,"textLines":1,"bbox":[672,370,236,104]}
+{"kind":"shape","id":"sh/hwfah0rm","slide":4,"bbox":[966,236,248,88]}
+{"kind":"textbox","id":"sh/atorm58v","slide":4,"text":"R4–R5","textPreview":"R4–R5","textChars":5,"textLines":1,"bbox":[982,248,70,26]}
+{"kind":"textbox","id":"sh/vuxsfa9g","slide":4,"text":"REPORT + SCALE","textPreview":"REPORT + SCALE","textChars":14,"textLines":1,"bbox":[982,278,210,24]}
+{"kind":"shape","id":"sh/8r69kvqp","slide":4,"bbox":[1076,318,28,28]}
+{"kind":"textbox","id":"sh/9sfad0ra","slide":4,"text":"NPL, governance, observability, cost controls, and SLOs","textPreview":"NPL, governance, observability, cost controls, and SLOs","textChars":55,"textLines":1,"bbox":[972,370,236,104]}
+{"kind":"shape","id":"sh/mp4ril8z","slide":4,"bbox":[54,527,1170,122]}
+{"kind":"textbox","id":"sh/nqx8bq94","slide":4,"text":"FIRST 90 DAYS","textPreview":"FIRST 90 DAYS","textChars":13,"textLines":1,"bbox":[78,548,180,24]}
+{"kind":"textbox","id":"sh/0nm9gbqt","slide":4,"text":"Weeks 1–2","textPreview":"Weeks 1–2","textChars":9,"textLines":1,"bbox":[280,546,130,28]}
+{"kind":"textbox","id":"sh/lovq9gre","slide":4,"text":"Baseline + data decision","textPreview":"Baseline + data decision","textChars":24,"textLines":1,"bbox":[280,578,190,38]}
+{"kind":"textbox","id":"sh/3ytsj6t0","slide":4,"text":"Weeks 3–7","textPreview":"Weeks 3–7","textChars":9,"textLines":1,"bbox":[528,546,130,28]}
+{"kind":"textbox","id":"sh/2xkrqlcf","slide":4,"text":"Review workspace","textPreview":"Review workspace","textChars":16,"textLines":1,"bbox":[528,578,190,38]}
+{"kind":"textbox","id":"sh/pkvalgb6","slide":4,"text":"Weeks 8–13","textPreview":"Weeks 8–13","textChars":10,"textLines":1,"bbox":[776,546,140,28]}
+{"kind":"textbox","id":"sh/ozmtsbul","slide":4,"text":"Hybrid beta + go/no-go","textPreview":"Hybrid beta + go/no-go","textChars":22,"textLines":1,"bbox":[776,578,230,38]}
+{"kind":"notes","id":"nt/op0bpt","slide":4,"text":"[Sources]\n- Novelty-Lens-Comprehensive-Development-Plan-EN.docx (internal source document)\n[/Sources]"}
+{"kind":"slide","id":"sl/fs3q9w","slide":5,"title":"EXECUTION","textShapes":14}
+{"kind":"shape","id":"sh/3uh4nat4","slide":5,"bbox":[54,46,64,8]}
+{"kind":"textbox","id":"sh/ovq5wfap","slide":5,"text":"EXECUTION","textPreview":"EXECUTION","textChars":9,"textLines":1,"bbox":[54,64,300,26]}
+{"kind":"textbox","id":"sh/pwzmpkba","slide":5,"text":"Three decisions unlock the roadmap","textPreview":"Three decisions unlock the roadmap","textChars":34,"textLines":1,"bbox":[54,94,1170,92]}
+{"kind":"textbox","id":"sh/epo3q5sn","slide":5,"text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[1170,46,54,28]}
+{"kind":"shape","id":"sh/fqx4jat8","slide":5,"bbox":[54,220,360,250]}
+{"kind":"textbox","id":"sh/gr6lsfat","slide":5,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[76,240,74,60]}
+{"kind":"textbox","id":"sh/1sfmlkbe","slide":5,"text":"DATA RIGHTS","textPreview":"DATA RIGHTS","textChars":11,"textLines":1,"bbox":[76,310,300,28]}
+{"kind":"textbox","id":"sh/ylsn2psr","slide":5,"text":"Choose the patent data provider and confirm indexing, storage, and redistribution rights.","textPreview":"Choose the patent data provider and confirm indexing, storage, and redistribution rights.","textChars":89,"textLines":1,"bbox":[76,354,312,94]}
+{"kind":"shape","id":"sh/zm14vutc","slide":5,"bbox":[444,220,360,250]}
+{"kind":"textbox","id":"sh/725knylk","slide":5,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[466,240,74,60]}
+{"kind":"textbox","id":"sh/61c3ut4z","slide":5,"text":"QUALITY GATES","textPreview":"QUALITY GATES","textChars":13,"textLines":1,"bbox":[466,310,300,28]}
+{"kind":"textbox","id":"sh/t4n2p83a","slide":5,"text":"Approve the benchmark corpus, known-reference recall target, and regression policy.","textPreview":"Approve the benchmark corpus, known-reference recall target, and regression policy.","textChars":83,"textLines":1,"bbox":[466,354,312,94]}
+{"kind":"shape","id":"sh/83elw32p","slide":5,"bbox":[834,220,360,250]}
+{"kind":"textbox","id":"sh/v65krilg","slide":5,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[856,240,74,60]}
+{"kind":"textbox","id":"sh/u5w3ydkv","slide":5,"text":"OPERATING BOUNDARY","textPreview":"OPERATING BOUNDARY","textChars":18,"textLines":1,"bbox":[856,310,300,28]}
+{"kind":"textbox","id":"sh/hsn2t83m","slide":5,"text":"Set cost/latency budgets and define the product-versus-legal-advice boundary.","textPreview":"Set cost/latency budgets and define the product-versus-legal-advice boundary.","textChars":77,"textLines":1,"bbox":[856,354,312,94]}
+{"kind":"textbox","id":"sh/grel0n21","slide":5,"text":"SUCCESS LOOKS LIKE","textPreview":"SUCCESS LOOKS LIKE","textChars":18,"textLines":1,"bbox":[54,515,230,26]}
+{"kind":"textbox","id":"sh/3up4vilc","slide":5,"text":"Recall improves • zero post-cutoff leakage • every judgment has a quote + locator • no fabricated references • runs remain resumable","textPreview":"Recall improves • zero post-cutoff leakage • every judgment has a quote + locator • no fabricated references • runs remain resumable","textChars":132,"textLines":1,"bbox":[54,552,1170,72]}
+{"kind":"shape","id":"sh/itw32dk7","slide":5,"bbox":[54,648,1170,5]}
+{"kind":"notes","id":"nt/fs3q9w","slide":5,"text":"[Sources]\n- Novelty-Lens-Comprehensive-Development-Plan-EN.docx (internal source document)\n[/Sources]"}

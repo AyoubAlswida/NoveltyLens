@@ -38,6 +38,26 @@ RUN chgrp -R 0 /app && chmod -R g=u /app
 USER 1001
 EXPOSE 8001
 
+# THE IMAGE SERVES TWO WORKLOADS, and the CMD below is only the first of them.
+#
+#   API     python -m uvicorn server:app --host 0.0.0.0 --port 8001   (the CMD)
+#   WORKER  python -m workflow.worker                                 (same image,
+#                                                                      command overridden)
+#
+# The worker is the durable executor (backend/workflow/executor.py). Verified
+# runs pause for human review measured in minutes to days, so they cannot be
+# driven by an HTTP request; a second, database-driven process drives them, and
+# it has never heard of the HTTP connection. Deploy it as its own workload with
+# the same image and environment, overriding the command - see
+# openshift/06-worker.yaml. Running the API alone leaves verified runs QUEUED
+# forever; running two API replicas does not help, because the API never
+# executes a graph.
+#
+# The schema has TWO owners and both must be applied before either workload
+# serves traffic:
+#   python migrate.py            yoyo, backend/migrations/
+#   python checkpointer.py setup LangGraph's four checkpoint tables
+#
 # uvicorn is invoked directly rather than `python server.py`: config.py defaults
 # SERVER_HOST to 127.0.0.1 so a laptop does not expose an unauthenticated
 # backend to its network, and inside a container that default is reachable only

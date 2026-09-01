@@ -1,0 +1,25 @@
+-- depends: 0021.create-invention-understanding
+-- transactional: false
+
+-- The SEARCH STRATEGY stage's gate value, and NOTHING ELSE in this migration.
+--
+-- ## Why this is its own migration, and why it is not transactional
+--
+-- `ALTER TYPE ... ADD VALUE` is special in PostgreSQL: the new label cannot be
+-- USED by any statement in the transaction that added it ("unsafe use of new
+-- value of enum type"). yoyo wraps each migration in a transaction, so an
+-- additive value and the first row that stores it must not share one.
+--
+-- Two things follow, and both are deliberate:
+--
+--   1. `-- transactional: false` tells yoyo to run this outside a transaction,
+--      which is the form that is safe on every PostgreSQL a deployment might be
+--      on, not only on 12+ where the ADD VALUE itself became transactional.
+--   2. This migration adds the label and stops. `0023` creates the tables and
+--      the runtime writes `current_gate = 'STRATEGY'`, both in later
+--      transactions, so the label is always already committed before use.
+--
+-- `IF NOT EXISTS` makes it idempotent, which matters because a non-transactional
+-- migration cannot be rolled back by aborting: re-applying it after a partial
+-- run has to be a no-op rather than a duplicate-label error.
+ALTER TYPE workflow_gate ADD VALUE IF NOT EXISTS 'STRATEGY';

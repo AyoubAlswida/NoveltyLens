@@ -1,0 +1,154 @@
+{
+  "gate": "spec \u00a714.2.1 structured-output capability",
+  "run_at": "2026-08-29T07:58:36.063125+00:00",
+  "runtime_identity": {
+    "deployment_profile": "local",
+    "provider": "openai",
+    "endpoint": {
+      "scheme": "https",
+      "host": "api.openai.com",
+      "port": "",
+      "path": "/v1"
+    },
+    "model": "gpt-4o-2024-08-06",
+    "model_revision": "gpt-4o-2024-08-06",
+    "adapter_revision": "openai-python/3.5.0+behaviour/2",
+    "schema_version": "sha256:cee4a3a1caa7df7e",
+    "wire_schema_version": "sha256:f9c0f9f1e3747938",
+    "validator_version": "sha256:a89ff8e7acd83c7c",
+    "runner_version": "3"
+  },
+  "model_pinned": true,
+  "schema_layers": {
+    "canonical": "sha256:cee4a3a1caa7df7e",
+    "wire_sent_to_provider": "sha256:f9c0f9f1e3747938",
+    "canonical_validator": "sha256:a89ff8e7acd83c7c",
+    "wire_omitted_keywords": [
+      "maxItems",
+      "minItems",
+      "minLength",
+      "uniqueItems"
+    ],
+    "wire_strict_violations": [],
+    "note": "Owner amendment 2026-08-29. The provider is sent the wire rendering; every keyword omitted from it is enforced by the canonical validator after parsing, and probe 6 exercises both halves in order."
+  },
+  "provider_response": {
+    "system_fingerprint": "fp_1812855600",
+    "server_header": ""
+  },
+  "structured_output_setting": "json_schema",
+  "generic_json_decision_recorded": false,
+  "probes": [
+    {
+      "probe": "1. adapter exposes structured output",
+      "attempts": 1,
+      "outcome": "PARSED",
+      "passed": true,
+      "schema_violations": []
+    },
+    {
+      "probe": "2. json_schema accepted and honoured",
+      "attempts": 1,
+      "outcome": "PARSED",
+      "passed": true,
+      "schema_violations": []
+    },
+    {
+      "probe": "3. required fields enforced",
+      "attempts": 1,
+      "outcome": "PARSED",
+      "passed": true,
+      "schema_violations": []
+    },
+    {
+      "probe": "4. closed enums enforced",
+      "attempts": 1,
+      "outcome": "PARSED",
+      "passed": true,
+      "schema_violations": []
+    },
+    {
+      "probe": "5. additionalProperties rejected",
+      "attempts": 1,
+      "outcome": "PARSED",
+      "passed": true,
+      "schema_violations": []
+    },
+    {
+      "probe": "6. full schema within the token ceiling, then canonical validation",
+      "attempts": 1,
+      "outcome": "PARSED",
+      "passed": true,
+      "canonical_validation": "PASSED"
+    },
+    {
+      "probe": "7. stability across the \u00a715 regression suite",
+      "outcome": "MEASURED",
+      "cases": {
+        "A_fully_disclosed": {
+          "scheduled": 3,
+          "valid_responses": 3,
+          "operational_failures": 0,
+          "malformed_responses": 0,
+          "outcomes": [
+            "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES"
+          ],
+          "stable": true
+        },
+        "C_different_mechanism": {
+          "scheduled": 3,
+          "valid_responses": 3,
+          "operational_failures": 0,
+          "malformed_responses": 3,
+          "outcomes": [
+            "VALIDATION_FAILURE:check 15",
+            "VALIDATION_FAILURE:check 15",
+            "VALIDATION_FAILURE:check 15"
+          ],
+          "stable": true
+        },
+        "F_no_disclosure": {
+          "scheduled": 3,
+          "valid_responses": 3,
+          "operational_failures": 0,
+          "malformed_responses": 0,
+          "outcomes": [
+            "NO_DISCLOSURE_FOUND_IN_SUPPLIED_PASSAGES",
+            "NO_DISCLOSURE_FOUND_IN_SUPPLIED_PASSAGES",
+            "NO_DISCLOSURE_FOUND_IN_SUPPLIED_PASSAGES"
+          ],
+          "stable": true
+        },
+        "G_prompt_injection": {
+          "scheduled": 3,
+          "valid_responses": 3,
+          "operational_failures": 0,
+          "malformed_responses": 0,
+          "outcomes": [
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES"
+          ],
+          "stable": true
+        }
+      },
+      "runs_per_case": 3,
+      "scheduled_calls": 12,
+      "valid_responses": 12,
+      "operational_failures": 0,
+      "malformed_responses": 3,
+      "malformed_response_rate": 0.25,
+      "all_scheduled_calls_valid": true,
+      "all_cases_stable": true,
+      "passed": false,
+      "scope": "\u00a715.1 cases A, C, F and G at 3 runs each. This is a representative subset, not the full \u00a715 suite, and three runs is the smallest number that can show disagreement at all -- a serious stability figure needs more runs and more cases."
+    }
+  ],
+  "operational_failures": [],
+  "token_limit_result": "PARSED",
+  "malformed_response_rate": 0.25,
+  "eligible": false,
+  "note": "Eligibility means every probe passed on its own terms: probes 1-2 returned conforming structured output, probes 3-5 returned a conforming response despite being told to violate the schema, probe 6 was accepted by the provider AND passed canonical validation, and every scheduled stability call produced a canonically validated response. No operational outcome can contribute to any of that. \u00a714.2.2's generic-JSON decision is NOT settled by this file, and probe 7 measured a representative subset of \u00a715.1 rather than the full regression suite. This record qualifies the runtime_identity above and NOTHING else -- each deployment profile is qualified independently."
+}

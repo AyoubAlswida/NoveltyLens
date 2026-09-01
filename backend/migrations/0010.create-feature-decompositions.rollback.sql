@@ -1,0 +1,7 @@
+DROP TRIGGER decomposition_relationships_requirement_ids ON decomposition_relationships;
+DROP TRIGGER decomposition_elements_requirement_ids ON decomposition_elements;
+DROP FUNCTION sync_decomposition_requirement_ids();
+DROP TABLE decomposition_requirement_ids;
+DROP TABLE decomposition_relationships;
+DROP TABLE decomposition_elements;
+DROP TABLE feature_decompositions;

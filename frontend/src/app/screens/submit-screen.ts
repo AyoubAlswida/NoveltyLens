@@ -85,7 +85,52 @@ const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.pdf', '.docx'];
             <span>Run Novelty Lens</span>
             <span aria-hidden="true">&rarr;</span>
           </button>
+          <button
+            class="secondary-button verify-action"
+            type="button"
+            (click)="verify.emit()"
+            [disabled]="!description().trim()"
+          >
+            <app-icon name="ShieldCheck" [size]="20" />
+            <span>Run with feature verification</span>
+          </button>
         </div>
+        <p class="verify-note">
+          Feature verification pauses for your review at each step — the invention
+          understanding, the candidate publications, the evidence, and the report
+          — and nothing is searched for or verified against until you approve it.
+        </p>
+
+        <!-- Optional context for a verified run. Both steer the analysis; neither
+             is ever treated as evidence, which the note below says plainly rather
+             than leaving an inventor to assume their own claim was tested by
+             being repeated back to them. -->
+        <details class="advanced-context">
+          <summary>Add context for feature verification (optional)</summary>
+
+          <label for="problem-solved">What problem does this solve?</label>
+          <textarea
+            id="problem-solved"
+            class="summary-input"
+            rows="3"
+            [value]="problemSolved()"
+            (input)="problemSolvedChange.emit($any($event.target).value)"
+          ></textarea>
+
+          <label for="novelty-statement">What do you believe is new about it?</label>
+          <textarea
+            id="novelty-statement"
+            class="summary-input"
+            rows="3"
+            [value]="noveltyStatement()"
+            (input)="noveltyStatementChange.emit($any($event.target).value)"
+          ></textarea>
+
+          <p class="verify-note">
+            These help the system understand your invention. What you believe is
+            new is treated as a claim to be tested, never as a finding.
+          </p>
+        </details>
       </section>
 
     </div>
@@ -94,7 +139,13 @@ const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.pdf', '.docx'];
 export class SubmitScreen {
   readonly description = input.required<string>();
   readonly descriptionChange = output<string>();
+  readonly problemSolved = input<string>('');
+  readonly problemSolvedChange = output<string>();
+  readonly noveltyStatement = input<string>('');
+  readonly noveltyStatementChange = output<string>();
   readonly run = output<void>();
+  /** A verified run: the four-gate workflow, rather than a search on its own. */
+  readonly verify = output<void>();
 
   readonly fileInputRef = viewChild<ElementRef<HTMLInputElement>>('fileInput');
 

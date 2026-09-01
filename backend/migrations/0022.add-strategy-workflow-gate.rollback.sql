@@ -1,0 +1,20 @@
+-- **PostgreSQL cannot remove a value from an enum type.** There is no
+-- `ALTER TYPE ... DROP VALUE`, and the only way to take one away is to build a
+-- replacement type, re-point every dependent column *and every function
+-- signature* at it (`pause_run_for_review` takes a `workflow_gate` parameter),
+-- then drop the original. That is a destructive rewrite of the run table in the
+-- rollback of a purely additive change, and it would fail outright against any
+-- row that had already been parked at this gate.
+--
+-- So this rollback deliberately does nothing, and says so rather than pretending
+-- otherwise. It is safe and complete for the reason that matters: the label is
+-- inert with no row using it and no code path reaching it, and
+-- `0006`'s own rollback drops `workflow_gate` wholesale, which is what
+-- `tests/test_migrations.py` exercises when it reverses the workflow schema.
+--
+-- Re-applying `0022` after this is a no-op by its `IF NOT EXISTS`.
+--
+-- (yoyo reads directives from the forward file only and pairs rollback statements
+-- with forward ones positionally, so this file carries one statement to pair with
+-- the one above and no directives of its own.)
+SELECT 1;

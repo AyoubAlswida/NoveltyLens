@@ -1,0 +1,110 @@
+# The durable workflow executor: the SECOND workload, same image as the backend.
+#
+# Why it exists. A LangGraph Postgres checkpoint stores state; it does not
+# continue execution. Nothing in LangGraph restarts a run after the process
+# driving `graph.stream()` goes away, and for verified runs that driver cannot be
+# an HTTP request: those runs pause for human review measured in minutes to days,
+# so a closed browser tab would end them. This process polls the database,
+# acquires a lease, reconciles, and executes. It has never heard of any HTTP
+# connection, which is precisely why a client disconnect cannot cancel, fail or
+# pause a run.
+#
+# Without it, `POST /api/runs` still returns 201 and the run sits QUEUED forever.
+# Adding backend replicas does not help: the API never executes a graph.
+#
+# `POST /api/analyze` and `POST /api/analyze/stream` are unaffected. They still
+# run inline in the API process with no run row, no lease and no event log.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: noveltylens-checkpointer-setup
+  labels:
+    app.kubernetes.io/part-of: noveltylens
+  annotations:
+    # The schema has TWO owners. yoyo (noveltylens-migrate, in 04-backend.yaml)
+    # owns backend/migrations/; PostgresSaver.setup() owns `checkpoints`,
+    # `checkpoint_blobs`, `checkpoint_writes` and `checkpoint_migrations` and
+    # tracks its own version in the last of them. Giving both systems the same
+    # tables would conflict the first time either side changed a column, so this
+    # is a separate, idempotent Job. Run it after noveltylens-migrate.
+    description: "Creates LangGraph's checkpoint tables. Idempotent; re-create to upgrade."
+spec:
+  backoffLimit: 4
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: checkpointer-setup
+          image: image-registry.openshift-image-registry.svc:5000/noveltylens/backend:latest
+          command: ["python", "checkpointer.py", "setup"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: noveltylens-db-url
+                  key: DATABASE_URL
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  labels:
+    app.kubernetes.io/name: worker
+    app.kubernetes.io/part-of: noveltylens
+spec:
+  # One replica is enough and more than one is safe. The lease makes at most one
+  # worker the authorized writer for any given run: a second replica that reaches
+  # the same run gets NULL from acquire_run_lease and returns to its poll. Scale
+  # for throughput across runs, not for redundancy within one.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: worker
+    spec:
+      containers:
+        - name: worker
+          image: image-registry.openshift-image-registry.svc:5000/noveltylens/backend:latest
+          # The same image as the backend, with the command overridden. Set
+          # WORKFLOW_GRAPH_ADAPTER in the ConfigMap; with it unset the worker
+          # REFUSES TO START rather than claiming runs it cannot advance, and
+          # that refusal is deliberate -- a default adapter would silently run
+          # the wrong graph.
+          command: ["python", "-m", "workflow.worker"]
+          envFrom:
+            - configMapRef:
+                name: noveltylens-config
+            - secretRef:
+                name: noveltylens-secrets
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: noveltylens-db-url
+                  key: DATABASE_URL
+            - name: WORKFLOW_EXECUTOR
+              value: worker
+          # No probes and no Service: this workload serves no traffic. A liveness
+          # probe would need an HTTP endpoint, and adding one would put a socket
+          # back in front of an executor whose whole point is not having one.
+          # Health is observable through the run rows and workflow_events.
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+      # A killed worker does NOT lose its run: the lease expires, the reclaim
+      # sweep hands the run to a replacement, and the replacement continues from
+      # the committed checkpoint. The grace period is generous anyway so an
+      # ordinary rollout releases its lease cleanly instead of leaving a run to
+      # wait out LEASE_TTL_SECONDS.
+      #
+      # Recovery is at-least-once for EXTERNAL calls: a worker can lose its lease
+      # while blocked inside a provider request, and that request still completes
+      # and is still billed. The lease guarantees one authorized writer and one
+      # committed result -- never that an outbound call happens exactly once.
+      terminationGracePeriodSeconds: 90

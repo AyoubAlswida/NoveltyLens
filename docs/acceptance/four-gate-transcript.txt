@@ -1,0 +1,126 @@
+==============================================================================
+GATE ACCEPTANCE — real graph, real gates, mocked providers only
+==============================================================================
+reviewer: fourgate-26aa6331@example.invalid
+
+--- start `python run_mock.py --workflow --fast` (API + in-process executor)
+    pid 5752; server log -> four-gate-server.log
+    healthy on http://127.0.0.1:8097; outbound HTTP to any non-local host is blocked
+    signed in (token held in memory, never printed)
+
+--- CREATE the run
+  $ POST /api/runs  {"description": "four-gate acceptance 26aa6331: closed-loop exhaust heat recovery", "cutoff_date": "2024-01-01
+    -> 201 {"run_id": "3a0505d2-d810-4ede-9051-01a1178f377e", "status": "QUEUED", "stream_url": "/api/runs/3a0505d2-d810-4ede-9051-01a1178f377e/stream", "capability_qualified": false}
+    capability_qualified: false  <- deferred and recorded as UNQUALIFIED
+
+--- INVENTION UNDERSTANDING
+    parked at gate A (last_event_id=7)
+  $ GET /api/runs/3a0505d2-d810-4ede-9051-01a1178f377e/gates/A
+    -> 200 {"original_description": "four-gate acceptance 26aa6331: closed-loop exhaust heat recovery", "problem_solved": "", "inventor_novelty_statement": "", "candidate_decomposition": {"component": 
+    editable=True, rules=7
+    original description preserved (64 chars)
+  $ GET /api/runs/3a0505d2-d810-4ede-9051-01a1178f377e/gates/A
+    -> 404 {"code": "RUN_NOT_FOUND", "detail": "No run 3a0505d2-d810-4ede-9051-01a1178f377e was found for this account."}
+    a second account gets 404 RUN_NOT_FOUND
+  $ POST /api/runs/3a0505d2-d810-4ede-9051-01a1178f377e/gates/A/approve  {"idempotency_key": "<redacted>", "decomposition": {"version": 1, "summary": "", "features": [{"feature_id": "
+    -> 409 {"code": "GATE_BLOCKED", "detail": "an unexpected GateBlocked occurred.", "blocking": [{"code": "NO_SUMMARY", "reason": "the technical summary is the system's interpretation of the invention
+    an empty summary is refused with NO_SUMMARY
+  $ POST /api/runs/3a0505d2-d810-4ede-9051-01a1178f377e/gates/A/approve  {"idempotency_key": "<redacted>", "decomposition": {"version": 1, "summary": "A closed-loop controller recover
+    -> 200 {"decomposition_version": 1, "understanding_version": 1, "status": "RESUMING"}
+    approved as understanding_version=1
+  $ POST /api/runs/3a0505d2-d810-4ede-9051-01a1178f377e/gates/A/approve  {"idempotency_key": "<redacted>", "decomposition": {"version": 1, "summary": "A closed-loop controller recover
+    -> 200 {"status": "RESUMING", "decomposition_version": 1, "understanding_version": 1}
+    the identical approval replayed the stored response (no second mutation)
+
+--- SEARCH STRATEGY - the queries, before any provider is called
+    parked at gate STRATEGY (last_event_id=13)
+  $ GET /api/runs/3a0505d2-d810-4ede-9051-01a1178f377e/gates/STRATEGY
+    -> 200 {"candidate_search_strategy": {"component": "graph.strategy.propose_search_strategy", "queries": [{"query_id": "Q1", "query_text": "mock query 1 for F2", "rationale": "Retrieves prior art fo
+    1 proposed quer(ies), 2 core element(s) to cover
+  $ GET /api/runs/3a0505d2-d810-4ede-9051-01a1178f377e/gates/STRATEGY
+    -> 404 {"code": "RUN_NOT_FOUND", "detail": "No run 3a0505d2-d810-4ede-9051-01a1178f377e was found for this account."}
+    a second account gets 404 RUN_NOT_FOUND
+  $ POST /api/runs/3a0505d2-d810-4ede-9051-01a1178f377e/gates/STRATEGY/approve  {"idempotency_key": "<redacted>", "strategy": {"version": 1, "understanding_version": 1, "queries": [{"query_i
+    -> 409 {"code": "GATE_BLOCKED", "detail": "an unexpected GateBlocked occurred.", "blocking": [{"code": "NO_ENABLED_QUERY", "reason": "every query is switched off, so nothing would be dispatched and
+    switching off a search that covers a core element is refused
+  $ POST /api/runs/3a0505d2-d810-4ede-9051-01a1178f377e/gates/STRATEGY/approve  {"idempotency_key": "<redacted>", "strategy": {"version": 1, "understanding_version": 1, "queries": [{"query_i
+    -> 200 {"strategy_version": 1, "queries_approved": 1, "queries_enabled": 1, "status": "RESUMING"}
+    approved strategy v1: 1 of 1 searches will run
+  $ POST /api/runs/3a0505d2-d810-4ede-9051-01a1178f377e/gates/STRATEGY/approve  {"idempotency_key": "<redacted>", "strategy": {"version": 1, "understanding_version": 1, "queries": [{"query_i
+    -> 200 {"status": "RESUMING", "queries_enabled": 1, "queries_approved": 1, "strategy_version": 1}
+    the identical approval replayed the stored response (no second mutation)
+    1 enabled quer(ies) recorded as approved
+
+--- WORKFLOW GATE B — candidates and exclusions
+    parked at gate B (last_event_id=34)
+  $ GET /api/runs/3a0505d2-d810-4ede-9051-01a1178f377e/gates/B
+    -> 200 {"ranked_candidates": [{"publication_number": "EP2987654", "normalized_number": "EP2987654", "passages_built": 3, "sections_retrieved": ["CLAIMS", "DESCRIPTION"], "publication_date": "2019-0
+    8 eligible candidate(s), 0 exclusion(s)
+
+--- MANUAL CANDIDATE — added, then processed BY THE WORKER
+  $ POST /api/runs/3a0505d2-d810-4ede-9051-01a1178f377e/candidates  {"idempotency_key": "<redacted>", "publication_number": "EP3218319"}
+    -> 202 {"publication_number": "EP3218319", "accepted": true, "already_requested": false, "note": "Queued for the same normalization, date screening, enrichment and eligibility checks a discovered c
+    202 accepted — queued for the SAME pipeline, not approved
+  $ POST /api/runs/3a0505d2-d810-4ede-9051-01a1178f377e/gates/B/approve  {"idempotency_key": "<redacted>", "publication_numbers": ["EP2987654", "EP3218319", "US10442712", "US11002233"
+    -> 200 {"candidate_set_version": 8, "status": "RESUMING"}
+    waiting for the worker to consume the manual candidate…
+    parked at gate B (last_event_id=40)
+    manual_candidates rows: [('EP3218319', True)]
+    the WORKER claimed and processed it (processed_at stamped)
+    Gate B now offers 7 candidate(s) for a second approval
+  $ POST /api/runs/3a0505d2-d810-4ede-9051-01a1178f377e/gates/B/approve  {"idempotency_key": "<redacted>", "publication_numbers": ["EP2987654", "US10442712", "US11002233", "US7654321"
+    -> 200 {"candidate_set_version": 7, "status": "RESUMING"}
+    approved as candidate_set_version=7
+
+--- WORKFLOW GATE C — evidence and verification cells
+    parked at gate C (last_event_id=52)
+    7 cell(s); blocking=0
+      3a0505d2-d810-4ede-9051-01a1178f377e:F2:EP2987654: state=VERIFIED v1
+      3a0505d2-d810-4ede-9051-01a1178f377e:F2:US10442712: state=VERIFIED v1
+      3a0505d2-d810-4ede-9051-01a1178f377e:F2:US11002233: state=VERIFIED v1
+      3a0505d2-d810-4ede-9051-01a1178f377e:F2:US7654321: state=VERIFIED v1
+    cell detail: 3 passage(s) with locators
+      claim 1 [CLAIM_NUMBER]
+      claim 2 [CLAIM_NUMBER]
+
+--- CELL RERUN — requested, then processed BY THE WORKER
+  $ POST /api/runs/3a0505d2-d810-4ede-9051-01a1178f377e/cells/3a0505d2-d810-4ede-9051-01a1178f377e:F2:EP2987654/rerun  {"idempotency_key": "<redacted>", "context_requests": [], "source_result_version": 1}
+    -> 202 {"cell_id": "3a0505d2-d810-4ede-9051-01a1178f377e:F2:EP2987654", "result_version": 2, "source_result_version": 1, "already_requested": false, "note": "The existing result is unchanged and st
+    202 accepted — will produce v2, superseding v1
+    Gate C completion -> 200 (the rerun loop takes over)
+    waiting for the worker to re-run the cell…
+    parked at gate C (last_event_id=57)
+    verification_results for that cell: [(1, None), (2, 1)]
+    cell_rerun_requests claimed: [(True,)]
+    LINEAGE: the new version points back at the one it superseded, and the old row is still there
+
+--- resolve or waive every blocking cell, then complete Gate C
+  $ POST /api/runs/3a0505d2-d810-4ede-9051-01a1178f377e/gates/C/complete  {"idempotency_key": "<redacted>"}
+    -> 200 {"status": "RESUMING"}
+
+--- WORKFLOW GATE D — the draft report
+    parked at gate D (last_event_id=62)
+    report version 1 status=DRAFT
+    the draft is NOT approved before Gate D  <- case AC
+    draft carries: matrix=7, exclusions=1, waivers=0
+  $ POST /api/runs/3a0505d2-d810-4ede-9051-01a1178f377e/gates/D/approve  {"idempotency_key": "<redacted>", "report_version": 1, "comments": "Acceptance approval."}
+    -> 200 {"status": "RESUMING", "report_version": 1}
+
+--- TERMINAL — exactly one result, and the report is APPROVED
+    run is COMPLETED (last_event_id=64)
+    64 events: ['progress', 'progress', 'progress', 'progress', 'progress', 'review_required', 'paused', 'resumed', 'progress', 'progress', 'progress', 'review_required', 'paused', 'resumed', 'progress', 'progress', 'progress', 'progress', 'progress', 'progress', 'progress', 'progress', 'progress', 'progress', 'progress', 'progress', 'progress', 'progress', 'progress', 'progress', 'progress', 'progress', 'review_required', 'paused', 'resumed', 'progress', 'progress', 'progress', 'review_required', 'paused', 'resumed', 'progress', 'progress', 'progress', 'progress', 'progress', 'progress', 'progress', 'progress', 'progress', 'review_required', 'paused', 'resumed', 'progress', 'progress', 'review_required', 'paused', 'resumed', 'progress', 'progress', 'review_required', 'paused', 'resumed', 'result']
+    EXACTLY ONE terminal `result` event, and no `error`
+    human-gate events in the log: 7 review_required, 7 paused, 7 resumed
+    final report: version=1 status=APPROVED
+
+--- SSE replay after the fact
+    reconnect at 33 -> [34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64]
+    reconnect at the terminal delivers nothing and closes
+
+==============================================================================
+RESULT: every gate driven through the real workflow. Zero paid calls.
+==============================================================================
+
+--- teardown
+  mock server stopped (process tree)
+  test data removed; database backends still open: 0

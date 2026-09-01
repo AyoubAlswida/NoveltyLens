@@ -1,0 +1,12 @@
+DROP TRIGGER verification_runs_status_rules ON verification_runs;
+DROP FUNCTION enforce_run_status_rules();
+DROP TABLE run_status_transitions;
+DROP TABLE verification_runs;
+DROP TYPE text_version_source;
+DROP TYPE locator_type;
+DROP TYPE date_certainty;
+DROP TYPE review_status;
+DROP TYPE exclusion_state;
+DROP TYPE cell_state;
+DROP TYPE run_status;
+DROP TYPE workflow_gate;

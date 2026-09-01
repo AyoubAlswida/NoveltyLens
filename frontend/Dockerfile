@@ -39,6 +39,13 @@ USER root
 RUN chmod +x /docker-entrypoint.d/40-novelty-lens-env.sh \
  && chgrp -R 0 /usr/share/nginx/html \
  && chmod -R g=u /usr/share/nginx/html
-USER 101
+# `101:0`, not `101`. The lines above grant write to GROUP 0, and under OpenShift
+# that is enough because the arbitrary UID it assigns is always a member of group
+# 0. Plain Docker is not so generous: `USER 101` runs with gid 101, which is not
+# in group 0, so the entrypoint's `env-config.js` write failed with "Permission
+# denied" and nginx never started -- a crash loop that appeared only outside
+# OpenShift. Naming the group explicitly makes the runtime match the permissions
+# the image was built with, on both platforms, and keeps the user unprivileged.
+USER 101:0
 
 EXPOSE 8080

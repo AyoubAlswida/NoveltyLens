@@ -4,8 +4,11 @@ requests
 pydantic
 python-dotenv
 langgraph
+langgraph-checkpoint-postgres
+psycopg-pool
 qdrant-client
 psycopg[binary]
 yoyo-migrations
 httpx
 pytest
+openai

@@ -1,0 +1,126 @@
+{
+  "gate": "spec \u00a714.2.1 structured-output capability",
+  "run_at": "2026-08-28T20:22:32.089342+00:00",
+  "runtime_identity": {
+    "deployment_profile": "local",
+    "provider": "openai",
+    "endpoint": {
+      "scheme": "https",
+      "host": "api.openai.com",
+      "port": "",
+      "path": "/v1"
+    },
+    "model": "gpt-4o-2024-08-06",
+    "model_revision": "gpt-4o-2024-08-06",
+    "adapter_revision": "openai-python/3.5.0",
+    "schema_version": "sha256:cee4a3a1caa7df7e",
+    "runner_version": "2"
+  },
+  "model_pinned": true,
+  "provider_response": {
+    "system_fingerprint": "fp_1812855600",
+    "server_header": ""
+  },
+  "structured_output_setting": "json_schema",
+  "generic_json_decision_recorded": false,
+  "probes": [
+    {
+      "probe": "1. adapter exposes structured output",
+      "outcome": "PARSED",
+      "response": {
+        "requirement_type": "ELEMENT",
+        "status": "FOUND",
+        "note": "The requirement specifies the need for a user authentication system to ensure secure access to the application."
+      }
+    },
+    {
+      "probe": "2. json_schema accepted and honoured",
+      "outcome": "PARSED",
+      "response": {
+        "requirement_type": "ELEMENT",
+        "status": "FOUND",
+        "note": "The requirement specifies the need for a user authentication system to ensure secure access to the application."
+      }
+    },
+    {
+      "probe": "3. required fields enforced",
+      "outcome": "PARSED",
+      "response": {
+        "requirement_type": "ELEMENT",
+        "status": "FOUND",
+        "note": "The requirement was clearly identified in the provided information."
+      }
+    },
+    {
+      "probe": "4. closed enums enforced",
+      "outcome": "PARSED",
+      "response": {
+        "requirement_type": "ELEMENT",
+        "status": "UNCLEAR",
+        "note": "The status value 'DEFINITELY_DISCLOSED' is not recognized within the current framework. Please verify the status value or provide additional context."
+      }
+    },
+    {
+      "probe": "5. additionalProperties rejected",
+      "outcome": "REJECTED",
+      "detail": "an unexpected RuntimeError occurred."
+    },
+    {
+      "probe": "6. full schema within the token ceiling",
+      "outcome": "REJECTED",
+      "detail": "an upstream call returned HTTP 400."
+    },
+    {
+      "probe": "7. stability across the \u00a715 regression suite",
+      "outcome": "MEASURED",
+      "cases": {
+        "A_fully_disclosed": {
+          "runs": 3,
+          "outcomes": [
+            "ERROR:RuntimeError",
+            "ERROR:RuntimeError",
+            "ERROR:RuntimeError"
+          ],
+          "stable": true
+        },
+        "C_different_mechanism": {
+          "runs": 3,
+          "outcomes": [
+            "ERROR:RuntimeError",
+            "ERROR:RuntimeError",
+            "ERROR:RuntimeError"
+          ],
+          "stable": true
+        },
+        "F_no_disclosure": {
+          "runs": 3,
+          "outcomes": [
+            "ERROR:RuntimeError",
+            "ERROR:RuntimeError",
+            "ERROR:RuntimeError"
+          ],
+          "stable": true
+        },
+        "G_prompt_injection": {
+          "runs": 3,
+          "outcomes": [
+            "ERROR:RuntimeError",
+            "ERROR:RuntimeError",
+            "ERROR:RuntimeError"
+          ],
+          "stable": true
+        }
+      },
+      "runs_per_case": 3,
+      "calls": 12,
+      "malformed_responses": 0,
+      "malformed_response_rate": 0.0,
+      "all_cases_stable": true,
+      "scope": "\u00a715.1 cases A, C, F and G at 3 runs each. This is a representative subset, not the full \u00a715 suite, and three runs is the smallest number that can show disagreement at all -- a serious stability figure needs more runs and more cases."
+    }
+  ],
+  "token_limit_result": "REJECTED",
+  "malformed_response_rate": 0.0,
+  "eligible": false,
+  "note": "Eligibility here means probes 1-6 behaved and the stability probe produced no malformed response. \u00a714.2.2's generic-JSON decision is NOT settled by this file, and probe 7 measured a representative subset of \u00a715.1 rather than the full regression suite. This record qualifies the runtime_identity above and NOTHING else -- each deployment profile is qualified independently."
+}

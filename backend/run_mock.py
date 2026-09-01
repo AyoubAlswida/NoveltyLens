@@ -10,7 +10,8 @@ allowance; this costs nothing.
 
 **What is faked** - and it is exactly the three things that cost money:
 
-    llm._llm_chat                       the LLM calls (understand/validate/analyze)
+    llm._llm_chat                       the LLM calls (understand/validate/analyze,
+                                        plus feature-disclosure verification)
     compare.embed_texts                 ranking embeddings
     search.vector_store.embed_texts     indexing embeddings
     search.search.SOURCES               the patent providers
@@ -50,10 +51,59 @@ import json
 import re
 import time
 from copy import deepcopy
+import os
+import sys
+
+# --- workflow mode is configured BEFORE anything imports `config` ----------
+#
+# `config.Settings` reads the environment in its class body, which runs the first
+# time any module here imports it. Setting these in `main()` was too late: the
+# settings object already existed, `WORKFLOW_EXECUTOR` still said `worker`, and
+# the in-process executor never started -- the API served, the run sat QUEUED
+# for ever, and nothing said why.
+#
+# `sys.argv` is read directly rather than through argparse because argparse runs
+# in `main()`, which is after the imports this has to precede.
+if "--workflow" in sys.argv:
+    # Not invented here: the two policies and their decisions are the values the
+    # owner approved on 2026-08-28 (docs/decisions/2026-08-28-evidence-layer-policies.md),
+    # and the capability deferral is the owner decision of 2026-08-29. A deferral
+    # RECORDS that this runtime is not qualified; it never claims it is, and no
+    # eligible artifact is fabricated.
+    os.environ.setdefault("DATE_SCREENING_POLICY", "publication_lt_cutoff")
+    os.environ.setdefault(
+        "DATE_SCREENING_DECISION",
+        "owner, 2026-08-28, docs/decisions/2026-08-28-evidence-layer-policies.md",
+    )
+    os.environ.setdefault("TEXT_VERSION_POLICY", "provider_publication_date")
+    os.environ.setdefault(
+        "TEXT_VERSION_DECISION",
+        "owner, 2026-08-28, docs/decisions/2026-08-28-evidence-layer-policies.md",
+    )
+    os.environ.setdefault("VERIFIER_CAPABILITY_ENFORCEMENT", "deferred")
+    os.environ.setdefault(
+        "VERIFIER_CAPABILITY_DEFERRAL_DECISION",
+        "mock mode: paid qualification deferred by owner decision 2026-08-29",
+    )
+    # The REAL executor, on a daemon thread in THIS process. That is the
+    # documented `inprocess` mode, and it is what makes the provider patches
+    # below apply to the worker too -- a separate worker process would not see
+    # them, and the mocking would have to be duplicated into it.
+    os.environ["WORKFLOW_EXECUTOR"] = "inprocess"
+    os.environ["WORKFLOW_GRAPH_ADAPTER"] = "graph.adapter:ADAPTER"
+
+
+from contextlib import ExitStack
 from unittest.mock import patch
 
 from models import PatentRecord
 from search.vector_store import QUERY_INSTRUCTION
+from llm import (
+    DECOMPOSITION_PROMPT_MARKER,
+    RELATIONSHIP_PROMPT_MARKER,
+    STRATEGY_PROMPT_MARKER,
+)
+from verification.prompt import PROMPT_MARKER as VERIFIER_MARKER
 
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0"})
 
@@ -294,6 +344,142 @@ def _mock_enrich(patents: list[PatentRecord]) -> list[PatentRecord]:
     return patents
 
 
+# --- the evidence layer's provider boundary (verified runs) -----------------
+#
+# `search/enrichment.py`'s `enrich_publication` is the ONE outbound call the
+# evidence branch makes: EPO OPS, over HTTP, for full text. Standing in for it
+# here is the same discipline as `_mock_provider` -- mock at the provider
+# boundary, and let every rule above it run for real. Normalization, date
+# screening, passage segmentation, locator construction and eligibility are all
+# the production code paths.
+#
+# The text below is SYNTHETIC and says so. It is not patent text: it is written
+# for this file, it names an invented publication, and the quotes the verifier
+# double cites are substrings of it -- which is what makes §9 check 10 (every
+# quotation is a verbatim substring of a supplied passage) pass honestly rather
+# than by being switched off.
+
+MOCK_CLAIMS_TEXT = (
+    "1. A waste heat recovery system comprising a heat exchanger disposed within "
+    "an exhaust duct, and a controller configured to vary a coolant flow rate "
+    "through the heat exchanger. "
+    "2. The system of claim 1, wherein a temperature sensor is positioned "
+    "upstream of the heat exchanger and the controller varies the coolant flow "
+    "rate in response to an output of the temperature sensor."
+)
+
+MOCK_DESCRIPTION_TEXT = (
+    "[0031] In one embodiment, heat exchanger 120 is mounted inside exhaust duct "
+    "110 and receives coolant from pump 130. Controller 140 adjusts the coolant "
+    "flow rate according to a stored duty schedule. "
+    "[0032] The synthetic example above exists only to exercise the passage "
+    "builder and the locator types; it describes no real product."
+)
+
+# One publication in the mock corpus is deliberately un-enrichable, so a verified
+# run always produces at least one EXCLUDED_NO_FULL_TEXT and the exclusion table,
+# the "not evaluated" wording and the report's coverage note are all exercised by
+# a real exclusion rather than by an empty list.
+MOCK_NO_TEXT_PUBLICATION = "US0000002"
+
+
+def _mock_enrich_publication(publication: str, **kwargs: object):
+    """Stand in for `search/enrichment.py`'s EPO full-text call.
+
+    Returns a `TEXT` result for every publication except one, which returns
+    `NO_TEXT` -- the provider answering that it has none, which is a real answer
+    about the document and becomes `EXCLUDED_NO_FULL_TEXT`. A provider *failure*
+    is deliberately not simulated here: that fails the run, and this path exists
+    to let a run succeed.
+    """
+    from evidence.normalize import normalize
+    from models import (
+        EnrichmentResult,
+        EnrichmentStatus,
+        ProviderClaim,
+        SectionText,
+        TextVersionSource,
+    )
+
+    # `normalize` returns a `PublicationNumber`, not a string: `.normalized` is
+    # the epodoc form (country + number, no kind code) the provider is asked for.
+    parsed = normalize(publication)
+    normalized = parsed.normalized
+    now = _now_iso()
+
+    if normalized.upper().startswith(MOCK_NO_TEXT_PUBLICATION):
+        return EnrichmentResult(
+            requested_publication=publication,
+            normalized_publication=normalized,
+            served_publication=normalized,
+            source_document_id=parsed.source_document_id,
+            status=EnrichmentStatus.NO_TEXT,
+            sections_available=("ABSTRACT",),
+            sections_retrieved=(),
+            language_attempted="en",
+            retrieved_at=now,
+            attempts=1,
+        )
+
+    claims = SectionText(
+        section="CLAIMS",
+        text=MOCK_CLAIMS_TEXT,
+        text_sha256=_sha256(MOCK_CLAIMS_TEXT),
+        language="en",
+        claims=(
+            ProviderClaim(
+                number=1,
+                text=MOCK_CLAIMS_TEXT.split("2. ")[0].strip(),
+                char_start=0,
+                char_end=len(MOCK_CLAIMS_TEXT.split("2. ")[0].strip()),
+            ),
+            ProviderClaim(
+                number=2,
+                text="2. " + MOCK_CLAIMS_TEXT.split("2. ")[1],
+                char_start=MOCK_CLAIMS_TEXT.index("2. "),
+                char_end=len(MOCK_CLAIMS_TEXT),
+            ),
+        ),
+    )
+    description = SectionText(
+        section="DESCRIPTION",
+        text=MOCK_DESCRIPTION_TEXT,
+        text_sha256=_sha256(MOCK_DESCRIPTION_TEXT),
+        language="en",
+    )
+
+    return EnrichmentResult(
+        requested_publication=publication,
+        normalized_publication=normalized,
+        served_publication=normalized,
+        source_document_id=parsed.source_document_id,
+        status=EnrichmentStatus.TEXT,
+        sections=(claims, description),
+        sections_available=("CLAIMS", "DESCRIPTION"),
+        sections_retrieved=("CLAIMS", "DESCRIPTION"),
+        language_attempted="en",
+        # A real date, so date screening is exercised rather than skipped. Well
+        # before any plausible cutoff, so the run is not accidentally excluded.
+        text_version_original="2019-03-14",
+        text_version_normalized="2019-03-14",
+        text_version_source=TextVersionSource.PROVIDER_PUBLICATION_DATE,
+        retrieved_at=now,
+        attempts=1,
+    )
+
+
+def _sha256(text: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
 EMBED_DIM = 2560
 """Must match the real model's output width (Qwen3-Embedding-4B is 2560).
 
@@ -352,16 +538,206 @@ def _mock_embed_texts(texts: list[str], batch_size: int | None = None) -> list[l
     return vectors
 
 
+def _verification_requirement_ids(prompt: str) -> tuple[list[str], list[str]]:
+    """Read the approved element and relationship IDs back out of a verifier prompt.
+
+    The blocks are sliced rather than pattern-matched across the whole prompt
+    because passage text sits in the same string. Canonicalization (spec section
+    8) collapses every passage to a single line, so a passage cannot introduce a
+    line that looks like a requirement - but slicing means the double does not
+    have to rely on that.
+    """
+    elements = prompt.split("Required technical elements:\n", 1)[1].split("\n\nRequired relationships:", 1)[0]
+    relationships = prompt.split("Required relationships:\n", 1)[1].split("\n</approved_feature>", 1)[0]
+    element_ids = [line.split(":", 1)[0] for line in elements.splitlines() if line.strip()]
+    relationship_ids = (
+        [] if relationships.strip() == "NONE"
+        else [line.split(":", 1)[0] for line in relationships.splitlines() if line.strip()]
+    )
+    return element_ids, relationship_ids
+
+
+def _mock_verification(prompt: str) -> str:
+    """A valid, honest feature-disclosure verification response.
+
+    Every requirement comes back ``NOT_FOUND_IN_SUPPLIED_PASSAGES`` with an empty
+    evidence array. That is not laziness: a double that fabricated a ``FOUND``
+    would have to fabricate a verbatim quotation to go with it, and mock mode's
+    whole claim is that it fakes *inputs* rather than manufacturing findings. This
+    response passes all eighteen section 9 checks, which is what the double owes.
+    """
+    element_ids, relationship_ids = _verification_requirement_ids(prompt)
+
+    def entry(key: str, requirement_id: str) -> dict:
+        return {
+            key: requirement_id,
+            "status": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+            "evidence": [],
+            "combination_basis": [],
+            "note": "MOCK DATA - no model was called for this verification.",
+        }
+
+    return json.dumps({
+        "feature_id": re.search(r"^Feature ID: (.+)$", prompt, re.MULTILINE).group(1),
+        "feature_version": re.search(r"^Feature version: (.+)$", prompt, re.MULTILINE).group(1),
+        "publication_number": re.search(r"^Publication number: (.+)$", prompt, re.MULTILINE).group(1),
+        "verification_scope": "SUPPLIED_PASSAGES_ONLY",
+        "outcome": "NO_DISCLOSURE_FOUND_IN_SUPPLIED_PASSAGES",
+        "elements": [entry("element_id", value) for value in element_ids],
+        "relationships": [entry("relationship_id", value) for value in relationship_ids],
+        "missing_element_ids": element_ids,
+        "missing_relationship_ids": relationship_ids,
+        "ambiguities": [],
+        "requests_for_more_context": [],
+    })
+
+
+def _mock_relationships(prompt: str) -> str:
+    """Relationships for whatever elements the prompt actually lists.
+
+    Reads the element ids out of the rendered prompt rather than returning a
+    fixed set, because the whole reason this call exists is that a human just
+    changed the elements. A double that returned `E1`-`E4` regardless would
+    manufacture exactly the dangling reference `workflow/review.py` refuses, and
+    the mock would fail a rule production would pass.
+
+    Two elements or fewer produce one relationship; a single element produces
+    none, which is a real answer rather than an empty stand-in.
+    """
+    ids = re.findall(r"^- (E\d{1,3}):", prompt, flags=re.MULTILINE)
+    if len(ids) < 2:
+        return json.dumps({"relationships": []})
+    return json.dumps({
+        "relationships": [
+            {
+                "relationship_id": "R1",
+                "text": f"{ids[0]} is operatively coupled to {ids[1]}",
+                "order": 1,
+            }
+        ]
+    })
+
+
+def _mock_decomposition() -> str:
+    """A **candidate** decomposition, and nothing more.
+
+    Deliberately a plausible decomposition of the same fabricated invention the
+    rest of this file describes, so the Workflow Gate A panel has something real
+    to render -- and deliberately *unapproved*, because mock mode fakes inputs
+    and an approval is not an input. Nothing here reaches `verify_features`
+    without a human, or `tests/harness.py`, approving it first.
+    """
+    return json.dumps({
+        # The technical summary the understanding stage shows as the system's
+        # interpretation. Present here because `llm.propose_understanding` raises
+        # on an empty one: a stage whose whole purpose is showing the inventor
+        # what the machine understood cannot render "nothing".
+        "summary": (
+            "A portable water treatment device that filters a stream through a "
+            "graphene-oxide membrane and sterilises the filtrate with a UV-C "
+            "emitter. A downstream flow sensor detects membrane fouling and "
+            "triggers a cleaning cycle without user intervention."
+        ),
+        "features": [
+            {
+                "feature_id": "F1",
+                "feature_version": "1",
+                "feature_text": "flow-triggered self-cleaning of a filtration membrane",
+                "elements": [
+                    {"element_id": "E1", "text": "a graphene-oxide filtration membrane", "core": True, "order": 1},
+                    {"element_id": "E2", "text": "a flow rate sensor downstream of the membrane", "core": True, "order": 2},
+                    {"element_id": "E3", "text": "a cleaning cycle actuator", "core": False, "order": 3},
+                ],
+                "relationships": [
+                    {"relationship_id": "R1", "text": "the actuator initiates a cleaning cycle when the sensor reports a flow drop", "order": 1},
+                ],
+            },
+            {
+                "feature_id": "F2",
+                "feature_version": "1",
+                "feature_text": "ultraviolet sterilisation of the filtered stream",
+                "elements": [
+                    {"element_id": "E1", "text": "a UV-C emitter downstream of the membrane", "core": True, "order": 1},
+                    {"element_id": "E2", "text": "a treatment chamber enclosing the emitter", "core": True, "order": 2},
+                ],
+                "relationships": [
+                    {"relationship_id": "R1", "text": "the emitter irradiates water that has passed through the membrane", "order": 1},
+                ],
+            },
+        ]
+    })
+
+
+def _mock_strategy(prompt: str) -> str:
+    """Stand in for `llm.propose_search_strategy`, keyed off the real prompt.
+
+    **The element ids are read out of the prompt rather than hardcoded**, for the
+    same reason the screening double reads its candidate count out of its own
+    prompt: the reviewer edits the understanding, so the elements this stage is
+    asked to cover are whatever they approved, and a fixed list would either miss
+    a core element (failing an honest coverage check for the wrong reason) or
+    claim coverage of ids the run does not have.
+
+    Every element is covered, grouped by feature, so a mock run passes the
+    coverage rule the way a real proposal would rather than by the rule being
+    skipped. It is a stub at the network boundary, not a bypass of the stage.
+    """
+    grouped: dict[str, list[str]] = {}
+    for line in prompt.splitlines():
+        match = re.match(r"^\s+((F[^.\s]+)\.[^:\s]+)(\s+\[core\])?:", line)
+        if match:
+            grouped.setdefault(match.group(2), []).append(match.group(1))
+
+    queries = []
+    for index, (feature_id, element_ids) in enumerate(sorted(grouped.items()), start=1):
+        queries.append({
+            "query_id": f"Q{index}",
+            "query_text": f"mock query {index} for {feature_id}",
+            "rationale": (
+                f"Retrieves prior art for the elements of {feature_id}. "
+                "(Mock rationale - no model was called.)"
+            ),
+            "covered_element_ids": element_ids,
+        })
+    if not queries:
+        # No elements in the prompt at all. Returning an empty list is the honest
+        # answer and `propose_search_strategy` refuses it loudly, which is what
+        # should happen: a strategy over nothing is not a strategy.
+        return json.dumps({"queries": []})
+    return json.dumps({"queries": queries})
+
+
 def _mock_llm_chat(prompt: str, **kwargs: object) -> str:
     """Stand in for the HTTP call inside ``llm._llm_chat``.
 
     Keyed off the real prompt text, so the real prompt-building code still runs
     and a prompt change that breaks these markers shows up here rather than
-    passing silently. The three branches are ordered as they are because
-    ``validate_relevance``'s prompt also contains "expert patent examiner" --
-    the "screening" check has to come first.
+    passing silently. The three novelty-search branches are ordered as they are
+    because ``validate_relevance``'s prompt also contains "expert patent examiner"
+    -- the "screening" check has to come first.
+
+    The feature-disclosure verifier is checked first and separately, because its
+    marker lives in the *system* message rather than the user prompt (spec section
+    17.5's split). Without this branch a verification call would fall through to
+    the AssertionError below, or - worse, if the double were ever loosened - reach
+    the outbound-HTTP guard.
     """
     _pause(1.4)  # a real call to the HF Router is 3-12s
+
+    if VERIFIER_MARKER in str(kwargs.get("system", "")):
+        return _mock_verification(prompt)
+
+    # Checked FIRST: both prompts open with DECOMPOSITION_PROMPT_MARKER, because
+    # they are the same component doing the same job, so matching only on that
+    # would answer a relationship request with a whole decomposition.
+    if RELATIONSHIP_PROMPT_MARKER in prompt:
+        return _mock_relationships(prompt)
+
+    if DECOMPOSITION_PROMPT_MARKER in prompt:
+        return _mock_decomposition()
+
+    if STRATEGY_PROMPT_MARKER in prompt:
+        return _mock_strategy(prompt)
 
     if "PatentScout AI" in prompt:
         return json.dumps({
@@ -449,11 +825,21 @@ def main() -> None:
     parser.add_argument("--pace", type=float, default=1.0,
                         help="scale the artificial delays (default 1.0, a ~8s run). "
                              "1.3 gives roughly 10s. Ignored when --fast is passed.")
+    parser.add_argument(
+        "--workflow",
+        action="store_true",
+        help="also serve the VERIFIED workflow: host the durable executor in "
+             "this process and mock the evidence layer's provider boundary, so "
+             "a run pauses at all four workflow gates with no credentials and "
+             "no outbound HTTP. Without this flag the behaviour is exactly what "
+             "it has always been -- the search workflow only.",
+    )
     args = parser.parse_args()
 
     # --fast wins: it is the "I do not want to wait" switch, so a stale --pace in
     # a shell alias must not quietly reintroduce the wait it exists to remove.
     SLOWDOWN = 0.0 if args.fast else max(args.pace, 0.0)
+
 
     import uvicorn
 
@@ -468,17 +854,44 @@ def main() -> None:
     print(" Patent data is fabricated and every record is stamped:")
     print(f"   {MOCK_SOURCE}")
     print(" Postgres and Qdrant are REAL; mock runs are stored in your history.")
+    if args.workflow:
+        print("")
+        print(" WORKFLOW MODE: the verified branch is served too.")
+        print("   * the durable executor runs in THIS process (inprocess mode)")
+        print("   * the real graph, gates, lease, checkpointer and event log")
+        print("   * a run pauses at Workflow Gates A, B, C and D for a human")
+        print("   * the capability qualification is DEFERRED and recorded as")
+        print("     unqualified -- gpt-5.1 remains measured and INELIGIBLE")
     print("=" * 72)
 
     # Patched at each consuming module's import site, not at the origin, because
     # `from embeddings import embed_texts` binds a local name a patch on the
     # origin module would never reach. Same reasoning as tests/conftest.py.
-    with patch("llm._llm_chat", side_effect=_mock_llm_chat), \
-         patch("search.search.SOURCES", MOCK_SOURCES), \
-         patch("compare.embed_texts", side_effect=_mock_embed_texts), \
-         patch("search.vector_store.embed_texts", side_effect=_mock_embed_texts), \
-         patch("graph.searching.enrich_with_full_text", side_effect=_mock_enrich), \
-         patch("graph.searching.enrich_epo_full_text", side_effect=_mock_enrich):
+    with ExitStack() as stack:
+        for target, replacement in (
+            ("llm._llm_chat", _mock_llm_chat),
+            # `verification/verify.py` does `from llm import _llm_chat`, which
+            # binds a LOCAL name at import; patching the origin never reaches it.
+            # Without this the verifier called the real provider and the run
+            # failed with `MissingCredential` -- loudly, which is right, but for
+            # a boundary that was supposed to be mocked.
+            ("verification.verify._llm_chat", _mock_llm_chat),
+            ("compare.embed_texts", _mock_embed_texts),
+            ("search.vector_store.embed_texts", _mock_embed_texts),
+            ("graph.searching.enrich_with_full_text", _mock_enrich),
+            ("graph.searching.enrich_epo_full_text", _mock_enrich),
+        ):
+            stack.enter_context(patch(target, side_effect=replacement))
+        stack.enter_context(patch("search.search.SOURCES", MOCK_SOURCES))
+
+        if args.workflow:
+            # The evidence layer's own provider boundary. Patched only in
+            # workflow mode so the search-only behaviour is byte-identical to
+            # what it has always been.
+            stack.enter_context(
+                patch("search.enrichment.enrich_publication",
+                      side_effect=_mock_enrich_publication)
+            )
         uvicorn.run(server.app, host=args.host, port=args.port)
 
 

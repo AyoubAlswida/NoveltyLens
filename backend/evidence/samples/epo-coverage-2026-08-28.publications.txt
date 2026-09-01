@@ -1,0 +1,47 @@
+# The EXACT sample measured in docs/measurements/epo-coverage-2026-08-28.md.
+#
+# Pinned here verbatim so a Lens probe measures the SAME publications EPO was
+# measured against. A different sample would produce a coverage number that
+# cannot be compared to EPO's 17.6%, which is the entire question Phase 3A asks.
+#
+# 34 distinct publications. Jurisdictions: CA=2, CN=2, DK=1, EP=4, KR=6, US=18,
+# WO=1. Twenty-eight of these are KNOWN EPO MISSES (NO_TEXT), including every
+# CN, DK, KR and US entry -- which is why this sample is the right one for
+# asking whether a second enrichment source covers what EPO cannot.
+#
+# The `patents` table on this machine is empty (history was cleared), so this
+# file -- not the database -- is the sample of record.
+US11002233
+US7654321
+EP3218319
+WO2020115432
+US9789456
+US10442712
+EP2987654
+US8123999
+US6401657
+CN104221898
+KR200429492
+KR20110066580
+KR20110067001
+US10743517
+EP3010333
+US6988465
+US12376562
+CA3113249
+CN113615590
+US9358508
+US9346687
+CA2919371
+EP3071523
+US10954151
+US10000304
+DK2323952
+US9387268
+US20210308305
+KR101046185
+KR20090027908
+US10058842
+KR101199558
+US10988389
+US10736978

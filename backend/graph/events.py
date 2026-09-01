@@ -31,6 +31,38 @@ PHASES: tuple[str, ...] = (
     "validate",
     "compare",
     "analyze",
+    # --- Verification workflow (Implementation Gate C) ---
+    #
+    # Emitted ONLY on a run with `verification_requested`. A search-only run
+    # traverses exactly the nodes it did before and emits exactly the ten phases
+    # above -- these names existing in the vocabulary does not put them in a
+    # search-only stream.
+    "decompose",
+    # The SEARCH STRATEGY stage. Emitted between the approved understanding and
+    # the search that uses it: `strategy` while the queries are being proposed,
+    # `gate_strategy` (below, with the other gate phases) while the run waits for
+    # a person to approve them.
+    "strategy",
+    "normalize",
+    "screen_dates",
+    "enrich_epo",
+    "build_passages",
+    "confirm_eligibility",
+    "rank_candidates",
+    "verify",
+    # --- Human-in-the-Loop gates (Implementation Gate D) ---
+    #
+    # A gate phase is emitted immediately BEFORE the node calls `interrupt()`, so
+    # the checklist shows what the run is waiting for rather than going quiet.
+    # The pause itself is carried by the `review_required` and `paused` SSE event
+    # types, not by a phase -- a phase says "this step is running", and every
+    # one of these steps is running: it is waiting for a person.
+    "gate_a",
+    "gate_strategy",
+    "gate_b",
+    "gate_c",
+    "draft_report",
+    "gate_d",
 )
 """The complete progress vocabulary, in checklist order.
 

@@ -4,13 +4,26 @@ module so the suite keeps making zero real network calls and needs no running
 database, even though ``compare.py``, semantic search and ``persist_run`` are
 all unconditionally on the pipeline's happy path.
 
-The Postgres double here is a dict, not a SQL engine. It stands in at the
-``reports.py`` seam (``save_report``/``list_history``), so it exercises the
-*call* contract those two functions have with the pipeline and the history
-endpoint -- ordering, shape, what gets stored on an empty run -- and nothing
-about the SQL itself. Schema mistakes (a CHECK constraint, a foreign key, a
-column that does not exist) are invisible to it and only show up against the
-real Compose Postgres.
+**Every Postgres double here is a dict, not a SQL engine, and both of them pin
+the call contract and nothing about the SQL.**
+
+``FakeReportStore`` stands in at the ``reports.py`` seam
+(``save_report``/``list_history``), so it exercises the *call* contract those two
+functions have with the pipeline and the history endpoint -- ordering, shape,
+what gets stored on an empty run -- and nothing about the SQL itself. Schema
+mistakes (a CHECK constraint, a foreign key, a column that does not exist) are
+invisible to it and only show up against the real Compose Postgres.
+
+``FakeWorkflowStore`` (bottom of this file) stands in at the
+``workflow.store``/``workflow.lease``/``workflow.events`` seam and is the same
+kind of thing, with higher stakes: it models the *authority* rules that are part
+of the call contract -- fencing, `RUNNING`-only worker events, API ownership,
+terminal-only-from-the-finalizers -- but it cannot exhibit a constraint, a
+trigger, a cascade, a lock-ordering bug, a lost update, a lease race or a
+deadlock, because it executes one call at a time in one process. Those are
+exercised by the ``postgres``-marked tests against the real Compose database, and
+a green run of a *skipped* suite is a skipped suite, not a passing one. Its own
+section header lists exactly what it cannot see.
 """
 
 import hashlib
@@ -258,3 +271,498 @@ class FakeReportStore:
         fake touches the connection, and handing back something that is not a
         psycopg object makes an accidental real query fail loudly."""
         yield "fake-connection"
+
+
+# ===========================================================================
+# The durable-workflow double
+# ===========================================================================
+#
+# READ THIS BEFORE TRUSTING IT.
+#
+# `FakeWorkflowStore` is a dict, not a SQL engine. It stands in at the
+# `workflow.store` / `workflow.lease` / `workflow.events` call seam, so it pins
+# the **call contract** those functions have with the executor and (later) the
+# API -- which arguments each writer requires, which authority each one checks,
+# what each returns, and which `WorkflowError` each refuses with.
+#
+# **It pins nothing about the SQL, and cannot.** Every one of these is invisible
+# to it and must be exercised against the real Compose PostgreSQL, which is what
+# the `postgres`-marked tests do:
+#
+#   * every CHECK constraint (`run_leases_held_consistently`,
+#     `workflow_events_terminal_matches_type`, the cell/result state CHECKs);
+#   * every foreign key and every ON DELETE CASCADE, including the one that is
+#     the only way a lease row ever disappears;
+#   * the partial unique indexes (`workflow_events_one_terminal_idx`,
+#     `node_attempts_one_committed_execution_idx`);
+#   * every trigger -- the run-status insert invariant and transition table,
+#     fence-token monotonicity, terminal agreement, review_audit append-only;
+#   * **the mandatory lock order and everything that depends on it** -- a
+#     takeover racing a validate, a heartbeat racing a sweep, a lost update, a
+#     deadlock. A double that executes one call at a time cannot exhibit a race,
+#     so asserting a race against it would be asserting nothing.
+#   * the `expires_at = now()` equality instant, which is a property of one SQL
+#     predicate and of nothing in Python.
+#
+# CLAUDE.md already says this of `FakeReportStore`; it is equally true here and
+# more consequential, because most of what Gate A exists to guarantee is in that
+# list.
+
+
+def _workflow_types():
+    """Imported lazily so this module stays importable by the existing tests
+    without the workflow package having been imported first."""
+    from workflow import types
+
+    return types
+
+
+class FakeWorkflowStore:
+    """In-memory stand-in for the durable-workflow surface.
+
+    Models the *authority* rules, because those are the call contract: a fenced
+    worker is refused, a worker event outside `RUNNING` is refused, the API
+    writer accepts only `resumed` and only from the owner, terminals come only
+    from the finalizers, and a replay with a different payload conflicts. It
+    models **no** concurrency, constraint or cascade -- see the note above.
+    """
+
+    def __init__(self) -> None:
+        self.runs: dict[str, dict] = {}
+        self.leases: dict[str, dict] = {}
+        self.events: dict[str, list[dict]] = {}
+        self.attempts: dict[str, list[dict]] = {}
+        self._run_ids = itertools.count(1)
+
+    # --- admission ------------------------------------------------------
+
+    def create_run(self, conn: object, **fields: object) -> str:
+        run_id = f"00000000-0000-4000-8000-{next(self._run_ids):012d}"
+        self.runs[run_id] = {
+            "run_id": run_id,
+            "status": "QUEUED",
+            "current_gate": None,
+            "thread_id": run_id,
+            "next_sequence": 0,
+            "events_compacted_below": 0,
+            "failure_code": None,
+            "failure_detail": None,
+            **fields,
+        }
+        # Created unheld at token 0, exactly as create_run() does -- and the fake
+        # has no delete path either, because neither does the application.
+        self.leases[run_id] = {
+            "run_id": run_id,
+            "owner_id": None,
+            "fence_token": 0,
+            "released_at": None,
+            "expires_at": None,
+        }
+        self.events[run_id] = []
+        self.attempts[run_id] = []
+        self._append(
+            run_id, "progress", "queued", {"type": "progress", "phase": "queued"}, "queued"
+        )
+        return run_id
+
+    # --- reads ----------------------------------------------------------
+
+    def get_run(self, conn: object, *, run_id: str, actor_email: str) -> dict:
+        run = self.runs.get(run_id)
+        if run is None or run.get("created_by") != actor_email:
+            raise _workflow_types().RunNotFoundError(f"run {run_id} not found")
+        return dict(run)
+
+    def list_runs(self, conn: object, *, actor_email: str, limit: int = 50) -> list[dict]:
+        owned = [
+            dict(run)
+            for run in reversed(list(self.runs.values()))
+            if run.get("created_by") == actor_email
+        ]
+        return owned[:limit]
+
+    def read_events(
+        self, conn: object, *, run_id: str, after_sequence: int = 0, limit: int = 500
+    ) -> list[dict]:
+        rows = [e for e in self.events.get(run_id, []) if e["sequence"] > after_sequence]
+        return rows[:limit]
+
+    # --- the lease ------------------------------------------------------
+
+    def acquire(self, conn: object, *, run_id: str, owner_id: str, ttl_seconds: float):
+        types = _workflow_types()
+        run = self.runs.get(run_id)
+        if run is None:
+            raise types.RunNotFoundError(f"run {run_id} not found")
+        if run["status"] not in ("QUEUED", "RUNNING", "RESUMING"):
+            return None
+        held = self.leases[run_id]
+        if held["owner_id"] is not None and held["released_at"] is None:
+            return None
+        held["fence_token"] += 1  # ALWAYS up. Never reset, never reused.
+        held["owner_id"] = owner_id
+        held["released_at"] = None
+        return held["fence_token"]
+
+    def heartbeat(
+        self, conn: object, *, run_id: str, owner_id: str, fence_token: int, ttl_seconds: float
+    ) -> bool:
+        held = self.leases.get(run_id)
+        if held is None or held["owner_id"] != owner_id:
+            return False
+        if held["fence_token"] != fence_token or held["released_at"] is not None:
+            return False
+        return True
+
+    def release(self, conn: object, *, run_id: str, owner_id: str, fence_token: int) -> None:
+        types = _workflow_types()
+        held = self.leases.get(run_id)
+        if (
+            held is None
+            or held["owner_id"] != owner_id
+            or held["fence_token"] != fence_token
+            or held["released_at"] is not None
+        ):
+            # A stale or repeated release raises. It is not a harmless no-op: a
+            # worker releasing a lease it no longer holds has been operating on a
+            # false belief about its own authority.
+            raise types.FencedError(f"run {run_id} is not actively leased to {owner_id}")
+        held["owner_id"] = None
+        held["released_at"] = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        # fence_token deliberately untouched: the released token stays burned.
+
+    def _require_lease(self, run_id: str, owner_id: str, fence_token: int) -> None:
+        types = _workflow_types()
+        held = self.leases.get(run_id)
+        if (
+            held is None
+            or held["owner_id"] != owner_id
+            or held["fence_token"] != fence_token
+            or held["released_at"] is not None
+        ):
+            raise types.FencedError(
+                f"run {run_id} is not leased to {owner_id} at token {fence_token}"
+            )
+
+    # --- events ---------------------------------------------------------
+
+    def _append(
+        self, run_id: str, event_type: str, phase, payload: dict, dedupe_key: str
+    ) -> int:
+        types = _workflow_types()
+        digest = hashlib.sha256(repr(sorted(payload.items())).encode()).hexdigest()
+        for existing in self.events[run_id]:
+            if existing["dedupe_key"] == dedupe_key:
+                if existing["payload_sha256"] != digest:
+                    raise types.ReplayConflictError(
+                        f"dedupe key {dedupe_key} replayed with a different payload"
+                    )
+                return existing["sequence"]
+        if any(event["is_terminal"] for event in self.events[run_id]):
+            raise types.TerminalExistsError(f"run {run_id} already has a terminal event")
+        self.runs[run_id]["next_sequence"] += 1
+        sequence = self.runs[run_id]["next_sequence"]
+        self.events[run_id].append(
+            {
+                "sequence": sequence,
+                "event_type": event_type,
+                "phase": phase,
+                "payload": payload,
+                "payload_sha256": digest,
+                "dedupe_key": dedupe_key,
+                "is_terminal": event_type in ("result", "error"),
+            }
+        )
+        return sequence
+
+    def append_worker_event(
+        self,
+        conn: object,
+        *,
+        run_id: str,
+        owner_id: str,
+        fence_token: int,
+        event_type,
+        phase,
+        payload: dict,
+        dedupe_key: str,
+    ) -> int:
+        types = _workflow_types()
+        event_type = str(event_type)
+        if event_type in ("result", "error"):
+            raise types.IllegalStateError(
+                f"use finalize_run_success/failure for {event_type}"
+            )
+        if event_type == "resumed":
+            raise types.IllegalStateError("resumed is an API event, not a worker event")
+        self._require_lease(run_id, owner_id, fence_token)
+        if self.runs[run_id]["status"] != "RUNNING":
+            raise types.IllegalStateError(
+                f"run {run_id} is {self.runs[run_id]['status']}, not RUNNING"
+            )
+        return self._append(run_id, event_type, phase, payload, dedupe_key)
+
+    def append_api_event(
+        self,
+        conn: object,
+        *,
+        run_id: str,
+        actor_email: str,
+        expected_status,
+        payload: dict,
+        dedupe_key: str,
+    ) -> int:
+        types = _workflow_types()
+        run = self.runs.get(run_id)
+        if run is None or run.get("created_by") != actor_email:
+            raise types.RunNotFoundError(f"run {run_id} not found for {actor_email}")
+        if run["status"] != str(expected_status):
+            raise types.IllegalStateError(
+                f"run {run_id} is {run['status']} but the caller expected {expected_status}"
+            )
+        return self._append(run_id, "resumed", None, payload, dedupe_key)
+
+    def pause_run_for_review(
+        self,
+        conn: object,
+        *,
+        run_id: str,
+        owner_id: str,
+        fence_token: int,
+        gate,
+        review_payload: dict,
+        pause_payload: dict,
+        checkpoint_id: str,
+    ) -> int:
+        types = _workflow_types()
+        self._require_lease(run_id, owner_id, fence_token)
+        if self.runs[run_id]["status"] != "RUNNING":
+            raise types.IllegalStateError(f"run {run_id} is not RUNNING; it cannot pause")
+        self._append(
+            run_id,
+            "review_required",
+            None,
+            review_payload,
+            f"review_required:{gate}:{checkpoint_id}",
+        )
+        sequence = self._append(
+            run_id, "paused", None, pause_payload, f"paused:{gate}:{checkpoint_id}"
+        )
+        self.runs[run_id]["status"] = "WAITING_FOR_REVIEW"
+        self.runs[run_id]["current_gate"] = str(gate)
+        self.release(conn, run_id=run_id, owner_id=owner_id, fence_token=fence_token)
+        return sequence
+
+    def _terminal_replay(
+        self, run_id: str, event_type: str, payload: dict, dedupe_key: str, failure_code
+    ):
+        types = _workflow_types()
+        for event in self.events[run_id]:
+            if not event["is_terminal"]:
+                continue
+            digest = hashlib.sha256(repr(sorted(payload.items())).encode()).hexdigest()
+            if (
+                event["dedupe_key"] != dedupe_key
+                or event["event_type"] != event_type
+                or event["payload_sha256"] != digest
+                or self.runs[run_id]["failure_code"] != failure_code
+            ):
+                raise types.ReplayConflictError(
+                    f"run {run_id} already terminated with a different terminal event"
+                )
+            return event["sequence"]
+        return None
+
+    def finalize_run_success(
+        self,
+        conn: object,
+        *,
+        run_id: str,
+        owner_id: str,
+        fence_token: int,
+        payload: dict,
+        dedupe_key: str = "terminal:result",
+    ) -> int:
+        types = _workflow_types()
+        # The replay check comes FIRST, before the lease and the status, for the
+        # same reason it does in SQL: by the time a retry arrives the run is
+        # already COMPLETED and the lease is usually released.
+        replay = self._terminal_replay(run_id, "result", payload, dedupe_key, None)
+        if replay is not None:
+            return replay
+        self._require_lease(run_id, owner_id, fence_token)
+        if self.runs[run_id]["status"] != "RUNNING":
+            raise types.IllegalStateError("only a RUNNING run can succeed")
+        sequence = self._append(run_id, "result", None, payload, dedupe_key)
+        self.runs[run_id]["status"] = "COMPLETED"
+        return sequence
+
+    def finalize_run_failure(
+        self,
+        conn: object,
+        *,
+        run_id: str,
+        owner_id: str,
+        fence_token: int,
+        payload: dict,
+        failure_code: str,
+        dedupe_key: str = "terminal:error",
+    ) -> int:
+        types = _workflow_types()
+        replay = self._terminal_replay(run_id, "error", payload, dedupe_key, failure_code)
+        if replay is not None:
+            return replay
+        self._require_lease(run_id, owner_id, fence_token)
+        if self.runs[run_id]["status"] not in ("QUEUED", "RUNNING", "RESUMING"):
+            raise types.IllegalStateError("this run cannot be failed by its executor")
+        sequence = self._append(run_id, "error", None, payload, dedupe_key)
+        self.runs[run_id]["status"] = "FAILED"
+        self.runs[run_id]["failure_code"] = failure_code
+        return sequence
+
+    # --- transitions ----------------------------------------------------
+
+    def transition_status(
+        self,
+        conn: object,
+        *,
+        run_id: str,
+        owner_id: str,
+        fence_token: int,
+        expected_from,
+        to_status,
+        current_gate=None,
+    ):
+        types = _workflow_types()
+        if str(to_status) in ("COMPLETED", "FAILED"):
+            raise types.IllegalStateError(
+                f"{to_status} is written only by the finalizers, atomically with the event"
+            )
+        self._require_lease(run_id, owner_id, fence_token)
+        run = self.runs[run_id]
+        if run["status"] not in [str(status) for status in expected_from]:
+            raise types.IllegalStateError(
+                f"run {run_id} is {run['status']}, not one of {expected_from}"
+            )
+        permitted = {(str(a), str(b)) for a, b in types.ALLOWED_TRANSITIONS}
+        if (run["status"], str(to_status)) not in permitted:
+            raise types.IllegalStateError(
+                f"illegal run status transition {run['status']} -> {to_status}"
+            )
+        run["status"] = str(to_status)
+        if current_gate is not None:
+            run["current_gate"] = str(current_gate)
+        return run["status"]
+
+    # --- attempts -------------------------------------------------------
+
+    def begin_attempt(
+        self,
+        conn: object,
+        *,
+        run_id: str,
+        node: str,
+        execution_key: str,
+        fence_token: int,
+        owner_id: str,
+    ) -> str:
+        # Fenced, like the real one: a worker that lost the lease may not add
+        # telemetry either. The fake models the *authority rule*; the lock order
+        # that makes it hold under concurrency is the database's, and only the
+        # postgres-marked tests can see it.
+        self._require_lease(run_id, owner_id, fence_token)
+        attempt_id = f"attempt-{len(self.attempts[run_id]) + 1}"
+        self.attempts[run_id].append(
+            {
+                "attempt_id": attempt_id,
+                "node": node,
+                "execution_key": execution_key,
+                "fence_token": fence_token,
+                "owner_id": owner_id,
+                "outcome": "RUNNING",
+            }
+        )
+        return attempt_id
+
+    def commit_attempt(
+        self,
+        conn: object,
+        *,
+        run_id: str,
+        owner_id: str,
+        fence_token: int,
+        attempt_id: str,
+        provider_calls: int = 0,
+        llm_calls: int = 0,
+        detail: str = "",
+    ) -> None:
+        types = _workflow_types()
+        self._require_lease(run_id, owner_id, fence_token)
+        for attempt in self.attempts[run_id]:
+            if attempt["attempt_id"] != attempt_id:
+                continue
+            if attempt["outcome"] != "RUNNING":
+                # A FENCED or FAILED attempt can never become COMMITTED.
+                raise types.FencedError(f"attempt {attempt_id} cannot be committed")
+            already = [
+                other
+                for other in self.attempts[run_id]
+                if other["outcome"] == "COMMITTED"
+                and other["node"] == attempt["node"]
+                and other["execution_key"] == attempt["execution_key"]
+            ]
+            if already:
+                # The fake's stand-in for node_attempts_one_committed_execution_idx.
+                # The real guarantee is the partial unique index, which is the only
+                # thing that holds under concurrency.
+                raise types.FencedError(
+                    f"execution {attempt['execution_key']} already has a committed attempt"
+                )
+            attempt["outcome"] = "COMMITTED"
+            attempt["provider_calls"] = provider_calls
+            attempt["llm_calls"] = llm_calls
+            attempt["detail"] = detail
+            return
+        raise types.FencedError(f"attempt {attempt_id} not found for run {run_id}")
+
+    def fail_attempt(
+        self,
+        conn: object,
+        *,
+        run_id: str,
+        owner_id: str,
+        fence_token: int,
+        attempt_id: str,
+        detail: str = "",
+    ) -> None:
+        types = _workflow_types()
+        self._require_lease(run_id, owner_id, fence_token)
+        for attempt in self.attempts[run_id]:
+            if (
+                attempt["attempt_id"] == attempt_id
+                and attempt["owner_id"] == owner_id
+                and attempt["fence_token"] == fence_token
+                and attempt["outcome"] == "RUNNING"
+            ):
+                attempt["outcome"] = "FAILED"
+                attempt["detail"] = detail
+                return
+        # A stale worker leaves its attempt RUNNING for reconciliation to close as
+        # FENCED. FAILED and FENCED are different facts and a worker that lost the
+        # run does not get to choose between them.
+        raise types.FencedError(f"attempt {attempt_id} cannot be failed by {owner_id}")
+
+    def close_superseded_attempts(
+        self, conn: object, *, run_id: str, owner_id: str, fence_token: int
+    ) -> int:
+        self._require_lease(run_id, owner_id, fence_token)
+        closed = 0
+        for attempt in self.attempts[run_id]:
+            if attempt["outcome"] == "RUNNING" and attempt["fence_token"] < fence_token:
+                attempt["outcome"] = "FENCED"
+                attempt["detail"] = "superseded by a later lease"
+                closed += 1
+        return closed
+
+    def list_attempts(self, conn: object, *, run_id: str) -> list[dict]:
+        return [dict(attempt) for attempt in self.attempts.get(run_id, [])]

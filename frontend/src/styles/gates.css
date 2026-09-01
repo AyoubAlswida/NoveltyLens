@@ -1,0 +1,453 @@
+/* Workflow gate screens and the verification report (Implementation Gates F/G).
+ *
+ * A separate file rather than more of `globals.css` for one reason that matters:
+ * the dark-mode rules for these classes have to come AFTER them, and appending to
+ * a 2,000-line stylesheet where the dark block sits in the middle is how a state
+ * class ends up silently overridden. Here the order is local and visible.
+ *
+ * EVERY state class in this file has an explicit dark counterpart in the block at
+ * the bottom. The dark rules are `:root[data-theme="dark"] .foo` -- specificity
+ * (0,3,0) -- and beat a bare state class, so one without a counterpart renders as
+ * its neutral and nothing errors. CLAUDE.md records that trap biting four times.
+ */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.gate-screen { max-width: 1100px; margin: 0 auto; }
+.gate-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 1rem; margin-bottom: 1.25rem;
+}
+.gate-sub { color: var(--muted); margin-top: 0.25rem; }
+.gate-card { padding: 1.5rem; display: flex; flex-direction: column; gap: 1.25rem; }
+.gate-card h2 { display: flex; align-items: center; gap: 0.5rem; margin: 0; }
+.gate-note { color: var(--muted); font-size: 0.875rem; margin: 0; }
+.gate-empty { color: var(--muted); font-style: italic; }
+.gate-audit { border-top: 1px solid var(--border); padding-top: 0.75rem; }
+.gate-rules ul { margin: 0.5rem 0 0; padding-left: 1.25rem; }
+.gate-rules li { color: var(--muted); font-size: 0.875rem; margin-bottom: 0.25rem; }
+.gate-actions { display: flex; gap: 0.75rem; align-items: center; }
+.gate-body { display: flex; flex-direction: column; gap: 1rem; }
+
+.gate-editor, .version-input, .req-id, .req-text, .waiver-block input, .add-row input {
+  padding: 0.5rem 0.75rem; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--input-bg); color: var(--fg); font-family: inherit;
+}
+.gate-editor { width: 100%; resize: vertical; }
+.mono, .req-id { font-family: var(--font-mono); }
+
+.gate-validation, .gate-blocked {
+  border-left: 3px solid var(--risk-high, #c0392b); padding-left: 0.75rem;
+}
+.blocking-list { margin: 0.5rem 0 0; padding-left: 1.25rem; }
+
+.version-row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.version-input { width: 6rem; }
+.version-note { color: var(--muted); font-size: 0.8125rem; }
+.version-grid { display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 1rem; margin: 0.5rem 0 0; }
+.version-grid dt { color: var(--muted); font-size: 0.8125rem; }
+
+table.requirement-table, table.candidate-table, table.exclusion-table,
+table.matrix-table, table.requirement-result-table {
+  width: 100%; border-collapse: collapse; font-size: 0.875rem;
+}
+.requirement-table th, .requirement-table td,
+.candidate-table th, .candidate-table td,
+.exclusion-table th, .exclusion-table td,
+.matrix-table th, .matrix-table td,
+.requirement-result-table th, .requirement-result-table td {
+  text-align: left; padding: 0.5rem; border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.cell-center { text-align: center; }
+.row-invalid { outline: 2px solid var(--risk-high, #c0392b); outline-offset: -2px; }
+.row-open { background: rgba(38, 168, 171, 0.08); }
+.btn-small { padding: 0.25rem 0.5rem; font-size: 0.8125rem; }
+
+/* Every non-verdict state renders as ITSELF. None may look like a verdict, a
+ * blank, or a neutral -- that would turn "we could not evaluate this" into "we
+ * evaluated it and found nothing", which is a different and stronger claim. */
+.cell-state, .exclusion-state, .human-decision, .machine-status, .cell-class {
+  display: inline-block; font-size: 0.75rem; padding: 0.125rem 0.5rem;
+  border-radius: 999px; border: 1px solid var(--teal); color: var(--teal-ink);
+}
+.cell-state[data-cell-state="VALIDATION_FAILURE"],
+.cell-state[data-cell-state="NOT_EVALUATED"],
+.machine-status[data-status="UNCLEAR"],
+.exclusion-state {
+  border-color: var(--risk-high, #c0392b); color: var(--risk-high, #c0392b);
+}
+.cell-state[data-cell-state="PENDING"] { border-color: var(--muted); color: var(--muted); }
+/* Human decisions are a DIFFERENT hue from every machine state, so the two can
+ * never be mistaken for each other at a glance (constraint 7). */
+.human-decision { border-color: #6d4aff; color: #5a37e0; }
+.human-none { color: var(--muted); font-size: 0.8125rem; font-style: italic; }
+.cell-outcome, .cell-check { display: block; font-size: 0.75rem; color: var(--muted); margin-top: 0.25rem; }
+.exclusion-heading { margin-top: 1.5rem; }
+.exclusion-fixed { color: var(--muted); font-size: 0.8125rem; }
+.exclusion-overridable { color: var(--teal-ink); font-size: 0.8125rem; }
+
+.cell-detail { border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 1rem; }
+.evidence-item { margin-bottom: 0.5rem; }
+.locator { font-family: var(--font-mono); font-size: 0.8125rem; }
+.locator-kind {
+  font-size: 0.6875rem; padding: 0 0.375rem; border-radius: 4px;
+  border: 1px solid var(--muted); color: var(--muted); margin-left: 0.375rem;
+}
+.locator-source { font-size: 0.75rem; color: var(--muted); margin-left: 0.375rem; }
+.exact-quote {
+  margin: 0.25rem 0 0; padding-left: 0.75rem;
+  border-left: 2px solid var(--teal); font-size: 0.8125rem;
+}
+.passage { border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; margin-bottom: 0.5rem; }
+.passage header { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.375rem; }
+.passage-section { font-size: 0.75rem; color: var(--muted); }
+.passage-text { font-size: 0.875rem; line-height: 1.6; margin: 0; }
+mark.quote-hit { background: rgba(38, 168, 171, 0.28); padding: 0 0.125rem; }
+.derived-outcome { font-size: 0.875rem; }
+.cell-actions { display: flex; gap: 0.75rem; margin: 0.75rem 0; flex-wrap: wrap; }
+.waiver-block { border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; }
+.waiver-block input { display: block; width: 100%; margin: 0.25rem 0 0.75rem; }
+
+.add-candidate { margin-top: 1rem; }
+.add-row { display: flex; gap: 0.5rem; margin: 0.375rem 0; }
+.add-row input { flex: 1; }
+.field-error { color: var(--risk-high, #c0392b); font-size: 0.8125rem; margin: 0.375rem 0 0; }
+.field-note { color: var(--teal-ink); font-size: 0.8125rem; margin: 0.375rem 0 0; }
+.spinner-inline { width: 1em; height: 1em; display: inline-block; vertical-align: -0.125em; }
+
+.verification-report { display: flex; flex-direction: column; gap: 1.25rem; }
+.report-banner {
+  padding: 0.5rem 0.75rem; border-radius: 8px;
+  border: 1px solid var(--risk-high, #c0392b); color: var(--risk-high, #c0392b);
+}
+.report-banner[data-report-status="APPROVED"] { border-color: var(--teal); color: var(--teal-ink); }
+.report-approved-by { color: var(--muted); margin-left: 0.5rem; font-size: 0.8125rem; }
+.report-note, .report-audit { color: var(--muted); font-size: 0.875rem; }
+.report-limits { border-top: 1px solid var(--border); padding-top: 0.75rem; }
+.report-disclaimer { font-weight: 600; }
+.waiver-list { list-style: none; padding: 0; margin: 0.5rem 0 0; }
+.waiver-list li {
+  border-bottom: 1px solid var(--border); padding: 0.5rem 0;
+  display: flex; flex-direction: column; gap: 0.25rem;
+}
+.waiver-limitation { font-size: 0.875rem; }
+.waiver-reason { color: var(--muted); font-size: 0.875rem; }
+
+/* Management-readable on paper: controls drop out, content stays. */
+@media print {
+  .gate-head button, .gate-actions, .cell-actions, .brand-rail, .theme-fab { display: none; }
+  .verification-report { gap: 0.75rem; }
+  .report-banner { border-width: 2px; }
+}
+
+
+/* --- Invention understanding --------------------------------------------
+   The stage's own layout. Two read/edit panes and a grouped element editor;
+   the flat requirement table this replaced is gone along with its screen.
+
+   Every class here carries a dark counterpart in the block at the foot of this
+   file. That is not optional maintenance: the dark rules are (0,3,0) and sit
+   later in the file, so a class with a literal colour and no dark rule renders
+   identically to its neutral and only surfaces when somebody looks at the right
+   screen in the right theme. */
+.understanding-body { gap: 1.5rem; }
+
+.understanding-pane {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.understanding-pane h3, .understanding-pane h4 { margin: 0; }
+.understanding-pane h4 { font-size: 0.9375rem; color: var(--muted); }
+
+.pane-note { color: var(--muted); font-size: 0.875rem; margin: 0; }
+
+/* The inventor's own words. A blockquote, never a form control -- an editable
+   box would invite a change the backend would never store. */
+.original-text {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border-left: 3px solid var(--teal);
+  background: rgba(38, 168, 171, 0.06);
+  border-radius: 0 8px 8px 0;
+  white-space: pre-wrap;
+}
+
+.summary-input {
+  width: 100%;
+  font: inherit;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--fg);
+  resize: vertical;
+}
+
+.capability-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.875rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.capability-head { display: flex; gap: 0.75rem; align-items: center; }
+.capability-title {
+  flex: 1;
+  font: inherit;
+  font-weight: 600;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--fg);
+}
+
+.element-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.element-row { display: flex; gap: 0.75rem; align-items: center; }
+.element-text {
+  flex: 1;
+  font: inherit;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--fg);
+}
+.element-core {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.8125rem;
+  color: var(--teal-ink);
+  white-space: nowrap;
+}
+
+.regenerate-pane {
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.regenerate-pane h3 { margin: 0; }
+
+@media (max-width: 720px) {
+  .element-row { flex-wrap: wrap; }
+  .element-text { flex-basis: 100%; }
+}
+
+/* Narrow screens: tables scroll inside their own box rather than the page. */
+@media (max-width: 720px) {
+  .gate-head { flex-direction: column; }
+  .verification-report table,
+  .gate-body table { display: block; overflow-x: auto; }
+}
+
+/* --- Search strategy -----------------------------------------------------
+   Every class below that carries a literal colour or a light-only tint has a
+   dark counterpart at the bottom of this file, written in the same change. A
+   state class without one renders identically to its neutral and nothing
+   errors -- see the note at the top. */
+.strategy-body { gap: 1.5rem; }
+
+.query-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.875rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  margin-bottom: 0.75rem;
+}
+/* A search that will not run. Dimmed rather than hidden: what was deliberately
+   not searched for is part of what is being approved. */
+.query-off { background: rgba(0, 0, 0, 0.03); opacity: 0.75; }
+.query-head { display: flex; gap: 0.75rem; align-items: center; justify-content: space-between; }
+.query-enabled { display: flex; gap: 0.4rem; align-items: center; font-size: 0.875rem; font-weight: 600; }
+.query-text {
+  width: 100%;
+  font: inherit;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--fg);
+}
+.query-rationale { margin: 0; color: var(--muted); font-size: 0.875rem; }
+
+.query-coverage { border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.75rem; margin: 0; }
+.query-coverage legend { font-size: 0.8125rem; color: var(--muted); padding: 0 0.25rem; }
+.coverage-chip {
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
+  font-size: 0.8125rem;
+  padding: 0.2rem 0;
+}
+.chip-core { font-weight: 600; }
+.chip-core-tag {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--teal-ink);
+  border: 1px solid var(--teal);
+  border-radius: 999px;
+  padding: 0 0.4rem;
+}
+
+.coverage-summary { border: 1px solid var(--border); border-radius: 12px; padding: 1rem 1.25rem; }
+.coverage-summary h3 { margin: 0 0 0.5rem; }
+.coverage-list { list-style: none; margin: 0 0 0.5rem; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.coverage-row { display: flex; gap: 0.5rem; align-items: baseline; font-size: 0.875rem; }
+.coverage-tag {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--teal-ink);
+  white-space: nowrap;
+}
+/* An uncovered CORE element is the one thing that blocks approval here, so it
+   reads as the blocking condition it is rather than as a softer warning. */
+.coverage-missing { color: #b3261e; }
+.coverage-missing .coverage-tag { color: #b3261e; font-weight: 600; }
+.coverage-partial .coverage-tag { color: var(--muted); }
+
+/* --- Results and evidence, and the final report --------------------------
+   Phase 4. The screens render a machine code as a sentence and keep the code
+   beside it: the sentence is for the person doing the review, the code is for
+   whoever later reads the same screen against `verification_cells`. So the code
+   is styled as a quiet annotation rather than as the primary value -- small,
+   muted, monospace -- and never hidden, because a report that dropped it would
+   stop being usable as an audit document.
+
+   Every class here carries a dark counterpart in the block below. */
+.machine-code {
+  display: inline-block;
+  margin-left: 0.375rem;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.derived-note { display: block; color: var(--muted); font-size: 0.8125rem; margin-top: 0.25rem; }
+
+/* The draft's own coverage sentence, printed verbatim at the head of the
+   report. It is the difference between "we found no prior art" and "we compared
+   this much", so it is set apart rather than buried in the body copy. */
+.report-coverage {
+  border-left: 3px solid var(--teal);
+  padding: 0.5rem 0.75rem;
+  margin: 0;
+  font-size: 0.9375rem;
+}
+
+.report-caveats, .report-comments { border-top: 1px solid var(--border); padding-top: 0.75rem; }
+.report-caveats h3, .report-comments h3 { margin: 0 0 0.375rem; }
+
+.unresolved-list { list-style: none; padding: 0; margin: 0.5rem 0 0; }
+.unresolved-list li {
+  border-bottom: 1px solid var(--border); padding: 0.5rem 0;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
+}
+
+/* --- dark counterparts, one for every state class above ------------------ */
+:root[data-theme="dark"] .gate-card { box-shadow: none; }
+:root[data-theme="dark"] .gate-editor,
+:root[data-theme="dark"] .version-input,
+:root[data-theme="dark"] .req-id,
+:root[data-theme="dark"] .req-text,
+:root[data-theme="dark"] .summary-input,
+:root[data-theme="dark"] .capability-title,
+:root[data-theme="dark"] .element-text,
+:root[data-theme="dark"] .waiver-block input,
+:root[data-theme="dark"] .add-row input {
+  background: var(--card); border-color: var(--border); color: var(--fg);
+}
+
+/* Invention understanding. `--teal-ink` already flips with the theme, so
+   `.element-core` needs no rule of its own; these three carry literal colours or
+   a light-only tint and would otherwise render as their neutral in dark. */
+:root[data-theme="dark"] .understanding-pane,
+:root[data-theme="dark"] .capability-card,
+:root[data-theme="dark"] .regenerate-pane { border-color: var(--border); }
+:root[data-theme="dark"] .original-text {
+  background: rgba(103, 194, 196, 0.10); border-left-color: var(--teal-70);
+}
+:root[data-theme="dark"] .requirement-table th,
+:root[data-theme="dark"] .requirement-table td,
+:root[data-theme="dark"] .candidate-table th,
+:root[data-theme="dark"] .candidate-table td,
+:root[data-theme="dark"] .exclusion-table th,
+:root[data-theme="dark"] .exclusion-table td,
+:root[data-theme="dark"] .matrix-table th,
+:root[data-theme="dark"] .matrix-table td,
+:root[data-theme="dark"] .requirement-result-table th,
+:root[data-theme="dark"] .requirement-result-table td,
+:root[data-theme="dark"] .gate-audit,
+:root[data-theme="dark"] .cell-detail,
+:root[data-theme="dark"] .passage,
+:root[data-theme="dark"] .waiver-block,
+:root[data-theme="dark"] .waiver-list li,
+:root[data-theme="dark"] .report-limits { border-color: var(--border); }
+:root[data-theme="dark"] .cell-state,
+:root[data-theme="dark"] .machine-status,
+:root[data-theme="dark"] .cell-class { color: var(--teal-70); border-color: var(--teal-70); }
+:root[data-theme="dark"] .cell-state[data-cell-state="VALIDATION_FAILURE"],
+:root[data-theme="dark"] .cell-state[data-cell-state="NOT_EVALUATED"],
+:root[data-theme="dark"] .machine-status[data-status="UNCLEAR"],
+:root[data-theme="dark"] .exclusion-state { color: #ff8a7a; border-color: #ff8a7a; }
+:root[data-theme="dark"] .cell-state[data-cell-state="PENDING"] { color: var(--muted); border-color: var(--muted); }
+:root[data-theme="dark"] .human-decision { color: #b9a5ff; border-color: #b9a5ff; }
+:root[data-theme="dark"] .exclusion-overridable,
+:root[data-theme="dark"] .field-note { color: var(--teal-70); }
+:root[data-theme="dark"] .field-error { color: #ff8a7a; }
+:root[data-theme="dark"] .row-open { background: rgba(103, 194, 196, 0.12); }
+:root[data-theme="dark"] mark.quote-hit { background: rgba(103, 194, 196, 0.3); color: var(--fg); }
+:root[data-theme="dark"] .exact-quote { border-left-color: var(--teal-70); }
+:root[data-theme="dark"] .report-banner { border-color: #ff8a7a; color: #ff8a7a; }
+:root[data-theme="dark"] .report-banner[data-report-status="APPROVED"] {
+  border-color: var(--teal-70); color: var(--teal-70);
+}
+:root[data-theme="dark"] .gate-validation,
+:root[data-theme="dark"] .gate-blocked { border-left-color: #ff8a7a; }
+:root[data-theme="dark"] .row-invalid { outline-color: #ff8a7a; }
+:root[data-theme="dark"] .locator-kind { border-color: var(--muted); color: var(--muted); }
+
+/* Search strategy. `--teal-ink` already flips with the theme, so the chip and
+   tag colours need no rule; these carry literal colours or a light-only tint. */
+:root[data-theme="dark"] .query-card,
+:root[data-theme="dark"] .query-coverage,
+:root[data-theme="dark"] .coverage-summary { border-color: var(--border); }
+:root[data-theme="dark"] .query-text { background: var(--card); border-color: var(--border); color: var(--fg); }
+:root[data-theme="dark"] .query-off { background: rgba(255, 255, 255, 0.05); }
+:root[data-theme="dark"] .chip-core-tag { color: var(--teal-70); border-color: var(--teal-70); }
+:root[data-theme="dark"] .coverage-tag { color: var(--teal-70); }
+:root[data-theme="dark"] .coverage-missing { color: #ff8a7a; }
+:root[data-theme="dark"] .coverage-missing .coverage-tag { color: #ff8a7a; }
+:root[data-theme="dark"] .coverage-partial .coverage-tag { color: var(--muted); }
+
+/* Results and evidence, and the final report. `.machine-code` and
+   `.derived-note` read `--muted`, which flips already; these three carry a
+   literal border or a light-only tint. */
+:root[data-theme="dark"] .report-coverage { border-left-color: var(--teal-70); }
+:root[data-theme="dark"] .report-caveats,
+:root[data-theme="dark"] .report-comments,
+:root[data-theme="dark"] .unresolved-list li { border-color: var(--border); }
+:root[data-theme="dark"] .machine-code { color: var(--muted); }

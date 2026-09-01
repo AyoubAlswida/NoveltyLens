@@ -3,12 +3,25 @@
 import json
 import logging
 import time
+from collections.abc import Sequence
+from contextvars import ContextVar
 
 import requests
 
+import config
 from config import settings
+from deployment import (
+    ConfigError,
+    InferenceConfig,
+    Provider,
+    dialect_version,
+    openai_client_options,
+    read_reasoning_effort,
+    require_llm_credentials,
+)
 from models import InventionAnalysis, MatchAnalysis, PatentRecord
 from tracing import trace
+from workflow import redaction
 
 
 logger = logging.getLogger(__name__)
@@ -60,6 +73,344 @@ class LLMResponseError(RuntimeError):
     """The model returned a complete response that is not usable JSON."""
 
 
+# --- The OpenAI provider ---------------------------------------------------
+#
+# Selected by DEPLOYMENT_PROFILE=local (amendment 2026-08-28). It sits *inside*
+# `_llm_chat` rather than beside it, so every caller -- understand_invention,
+# validate_relevance, analyze_all_matches, decompose_features and the
+# feature-disclosure verifier -- goes through one abstraction and no workflow node
+# knows which provider is live.
+#
+# THE CONTRACT DOES NOT CHANGE BY PROVIDER. Truncation still raises
+# `LLMTruncatedError` and is still never retried at the same ceiling; a strict
+# JSON Schema is still sent as `response_format`; the eighteen §9 checks still run
+# on the way back. Spec §14.1 is categorical that validation strictness does not
+# vary by provider, and a provider-specific relaxation would be exactly the
+# unlabelled degradation the zero-tolerance policy forbids.
+#
+# THERE IS NO FALLBACK. Not to another model, not to another provider, not to a
+# looser output mode. A configured model that fails, fails the request.
+
+OPENAI_ADAPTER = "openai-python"
+"""Named so a capability artifact can record which adapter qualified a model.
+The SDK's structured-output handling is part of what the §14.2.1 gate measures,
+so an SDK upgrade invalidates a capability record the same way a model change
+does."""
+
+OPENAI_ADAPTER_BEHAVIOUR_VERSION = "6"
+"""This module's own behaviour as an OpenAI adapter, versioned separately from
+the SDK.
+
+The SDK version alone does not describe the adapter: what `response_format` is
+built from, which statuses are retried, how a refusal is surfaced and how a
+truncation is classified are all decided *here*, and any of them can change while
+`openai.__version__` stands still. A capability artifact is scoped to the adapter
+that produced it, so this string is part of `adapter_revision` and a bump
+invalidates every prior record.
+
+Version 2 was the 2026-08-29 schema amendment: the provider is sent the **wire**
+schema (`verification/wire.py`) rather than the canonical section 10 schema.
+Version 1 sent section 10 as written, which OpenAI rejected with a deterministic
+HTTP 400.
+
+Version 3 added the **chat dialect** (`deployment.ChatDialect`): the reasoning
+families name their output ceiling `max_completion_tokens`, reject an explicit
+`temperature`, and bill their own reasoning against that ceiling.
+
+Version 4 sends **`reasoning_effort`** when it is configured and the family
+accepts it (owner decision 2026-08-29: `high`, an explicit quality-over-cost
+choice for verifier qualification). It changes what the model does, so it changes
+the request and it changes the identity -- see
+`deployment.InferenceConfig`, which is what admission actually compares.
+
+Version 6 is the 2026-08-31 selection of `gpt-5.4-mini-2026-03-17`. Two things
+changed and each of them changes the request:
+
+* a **`gpt-5.4-mini` dialect row**, whose `reasoning_effort` vocabulary is
+  neither `gpt-5`'s nor `gpt-5.1`'s -- it keeps `none` and adds `xhigh`;
+* **version-boundary matching** in `deployment.dialect_for`. A bare prefix let
+  `gpt-5.4-mini-...` match the `gpt-5` row, and because the families agree on the
+  token parameter and on omitting `temperature`, and `medium` is accepted by
+  both, that would have run under the wrong dialect at the wrong allowance and
+  the wrong timeout floor **without failing anywhere**. An undeclared version now
+  matches nothing and fails loudly at the provider instead.
+
+Version 5 is the `gpt-5.1` dialect (owner decision 2026-08-29:
+`gpt-5.1-2025-11-13` at `reasoning_effort=high`). `gpt-5.1` is **not** `gpt-5`
+with a different name -- it declares its own accepted `reasoning_effort`
+vocabulary (`none` in place of `minimal`), its own reasoning-token allowance and
+its own timeout floor -- and the effort is now checked against the **configured
+model's own** vocabulary before the payload is built rather than only against the
+global one. Every one of those changes what is sent or when it is refused, so it
+is a different adapter and no artifact written under version 4 describes it.
+
+The request this adapter builds is not the same for every model or every
+configuration, and the request is half of what the section 14.2.1 gate measures --
+so nothing qualified under an earlier version says anything about this one.
+"""
+
+
+LAST_COMPLETION: ContextVar[dict] = ContextVar("LAST_COMPLETION", default={})
+"""Non-content facts about the most recent completion on this context.
+
+**Read by the section 14.2.1 capability gate and by nothing else.** The gate has to
+record, per run, which model revision actually served the call and how the token
+budget was spent -- and the verifier is called through
+`verify_feature_disclosure`, which returns a `CellResult` and has no channel for a
+response envelope. Threading one through every layer for a diagnostic would put a
+gate concern into the verifier's signature.
+
+A `ContextVar` rather than a module global: the executor runs work on threads, and
+a global would let one thread's envelope be read as another's.
+
+**It holds no content.** Served model, fingerprint, finish reason and token counts
+-- never the message, never a refusal string, never a provider body. Anything that
+could carry text a model produced stays out, because this dict is written into a
+capability artifact.
+"""
+
+
+def _observe(**facts: object) -> None:
+    LAST_COMPLETION.set({key: value for key, value in facts.items() if value is not None})
+
+
+def _usage_facts(usage) -> dict[str, object]:
+    """Token accounting, if the provider reported any.
+
+    Reasoning models bill invisible reasoning tokens against the completion
+    ceiling, so `completion_tokens` alone does not explain a truncation. When the
+    provider breaks it out, the breakdown is what tells an operator whether to
+    raise the budget or reduce the requirement count.
+    """
+    if usage is None:
+        return {}
+    facts: dict[str, object] = {}
+    for name in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = getattr(usage, name, None)
+        if isinstance(value, int):
+            facts[name] = value
+    details = getattr(usage, "completion_tokens_details", None)
+    reasoning = getattr(details, "reasoning_tokens", None)
+    if isinstance(reasoning, int):
+        facts["reasoning_tokens"] = reasoning
+    return facts
+
+
+def build_chat_payload(
+    target,
+    messages: list[dict[str, str]],
+    *,
+    max_tokens: int,
+    temperature: float,
+) -> dict[str, object]:
+    """The request body, in the dialect the configured model actually accepts.
+
+    **One function, so there is one answer.** `_llm_chat` and the section 14.2.1
+    capability gate both build their request here, because a gate that probed a
+    differently-shaped request would certify something the application never sends
+    -- and the parameter names are exactly what the reasoning families reject.
+
+    Three adaptations, all declared in `deployment.MODEL_DIALECTS` rather than
+    inferred, and all of them naming rather than substituting:
+
+    - **`max_completion_tokens` instead of `max_tokens`.** The reasoning families
+      reject the old name outright; it is not accepted as an alias.
+    - **`temperature` omitted, never rewritten.** Those models accept only their
+      own default and reject an explicit `0.0` with HTTP 400. Omitting leaves the
+      provider's default in force; sending `1` would be this code choosing a
+      sampling setting on the caller's behalf and recording nothing about it. The
+      consequence is stated rather than hidden: on such a model the verifier's
+      `temperature = 0.0` is **not** in effect, and spec section 14 already says
+      temperature 0 is best-effort rather than a determinism guarantee.
+    - **A reasoning allowance added to the ceiling.** Reasoning tokens never appear
+      in `content` and still consume the completion budget, so a budget sized for
+      the answer alone truncates every call. The allowance is *added* to what the
+      caller asked for and never reduces it.
+
+    Nothing here changes the messages, the schema, or the response contract.
+    """
+    dialect = target.chat_dialect
+    payload: dict[str, object] = {"model": target.model, "messages": messages}
+    payload[dialect.token_parameter] = max_tokens + dialect.reasoning_token_allowance
+    if dialect.supports_temperature:
+        payload["temperature"] = temperature
+
+    # Sent explicitly, never emulated in the prompt. Asking a model to "think
+    # harder" in its instructions is a different intervention with a different
+    # failure mode, and it would change the byte-pinned system prompt.
+    #
+    # Read here rather than cached at import so a test can set it, and validated
+    # in `read_reasoning_effort` so an unknown value fails BEFORE the call rather
+    # than being dropped or rejected by the provider.
+    effort = read_reasoning_effort()
+    if effort and dialect.supports_reasoning_effort:
+        if effort not in dialect.reasoning_efforts:
+            # Accepted by *some* family (`read_reasoning_effort` established
+            # that) and not by this one. `gpt-5` takes `minimal`; `gpt-5.1`
+            # replaced it with `none`. Refused here, before the request is
+            # built, rather than sent and rejected by the provider: the
+            # provider's 400 arrives after the call is made, and the failure it
+            # produces is classified BAD_REQUEST -- an operational outcome that
+            # measures nothing and abandons a whole capability record.
+            raise ConfigError(
+                f"OPENAI_REASONING_EFFORT={effort!r} is not accepted by model "
+                f"{target.model!r}. That model's family accepts: "
+                + ", ".join(dialect.reasoning_efforts)
+                + ". It is neither dropped nor downgraded to a neighbouring "
+                "value: a setting the operator chose must either be sent as "
+                "chosen or refused by name, because the capability artifact "
+                "records the effort as part of the runtime identity and a "
+                "substituted one would describe a runtime nobody selected."
+            )
+        payload["reasoning_effort"] = effort
+    elif effort and not dialect.supports_reasoning_effort:
+        # Configured, and this family cannot honour it. Refused rather than
+        # dropped: running at the provider's default while the operator believes
+        # a setting is in force is precisely the silent inheritance the inference
+        # identity exists to make impossible.
+        raise ConfigError(
+            f"OPENAI_REASONING_EFFORT={effort!r} is set, but model "
+            f"{target.model!r} does not accept `reasoning_effort`. Unset it, or "
+            f"select a model whose dialect declares support. It is not dropped: a "
+            f"dropped setting runs at a different effort than the operator "
+            f"believes, and the capability artifact would then describe a runtime "
+            f"nobody tested."
+        )
+    return payload
+
+
+def inference_config(target, *, max_tokens: int, temperature: float) -> InferenceConfig:
+    """Every inference setting that can change what the verifier returns.
+
+    Derived from the **same** dialect and the same environment the payload builder
+    uses, so the identity an artifact records and the request that was actually
+    sent cannot disagree. `verification/capability.py` folds its fingerprint into
+    the runtime identity; the sanitized fields go into the artifact beside it so a
+    mismatch says *what* differed rather than only *that* something did.
+    """
+    dialect = target.chat_dialect
+    sends_temperature = bool(dialect.supports_temperature)
+    return InferenceConfig(
+        reasoning_effort=read_reasoning_effort() if dialect.supports_reasoning_effort else "",
+        temperature_sent=sends_temperature,
+        temperature=temperature if sends_temperature else None,
+        token_parameter=dialect.token_parameter,
+        effective_token_ceiling=max_tokens + dialect.reasoning_token_allowance,
+        dialect_version=dialect_version(dialect),
+        timeout_floor_seconds=dialect.minimum_timeout_seconds,
+    )
+
+
+def _openai_client(api_key: str, timeout: int):
+    """Build the official client for this call.
+
+    Constructed per call rather than cached at import: `base_url` and the
+    optional organization/project scoping come from the environment, and a client
+    pinned at import would silently outlive a configuration change. The SDK
+    pools connections internally, so this is not the cost it looks like.
+
+    `max_retries=0` because `_llm_chat` owns retry policy for every provider. Two
+    retry loops stacked on each other turn a bounded 3 attempts into 9 and make
+    the timeout budget unreadable.
+    """
+    from openai import OpenAI
+
+    return OpenAI(
+        api_key=api_key,
+        base_url=config.llm_target.base_url,
+        timeout=timeout,
+        max_retries=0,
+        **openai_client_options(),
+    )
+
+
+def _openai_chat(
+    payload: dict,
+    *,
+    api_key: str,
+    timeout: int,
+    retries: int,
+    max_tokens: int,
+) -> str:
+    """One OpenAI chat completion, with the same retry and truncation contract.
+
+    Raises:
+        LLMTruncatedError: the response hit `max_tokens`. Never retried -- the
+            same prompt at the same ceiling truncates again.
+        RuntimeError: every transport attempt failed. The message is sanitized;
+            an OpenAI error can carry request context and must not reach a log or
+            a stored `failure_detail` unredacted.
+    """
+    from openai import APIStatusError, OpenAIError
+
+    last_error: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            client = _openai_client(api_key, timeout)
+            completion = client.chat.completions.create(**payload)
+        except APIStatusError as error:
+            # A 4xx that is not rate limiting is deterministic: a bad request, an
+            # unsupported response_format, an unknown model. Retrying spends
+            # quota to learn the same thing, and for 401/403 it hammers an auth
+            # endpoint, which is how a key gets blocked.
+            status = getattr(error, "status_code", None)
+            if status is not None and 400 <= status < 500 and status != 429:
+                raise RuntimeError(
+                    f"OpenAI returned HTTP {status} for model "
+                    f"{payload.get('model')!r}: {redaction.safe_detail(error)}"
+                ) from None
+            last_error = error
+            trace("llm.attempt_failed", attempt=attempt, error=redaction.safe_log(error))
+        except OpenAIError as error:
+            last_error = error
+            trace("llm.attempt_failed", attempt=attempt, error=redaction.safe_log(error))
+        else:
+            choice = completion.choices[0]
+            content = str(choice.message.content or "")
+            _observe(
+                served_model=str(completion.model or ""),
+                system_fingerprint=str(getattr(completion, "system_fingerprint", "") or ""),
+                finish_reason=str(choice.finish_reason or ""),
+                **_usage_facts(getattr(completion, "usage", None)),
+            )
+            trace(
+                "llm.response",
+                attempt=attempt,
+                response_chars=len(content),
+                finish_reason=choice.finish_reason,
+                served_model=completion.model,
+            )
+            if choice.finish_reason == "length":
+                # The ceiling named is the one actually sent, not the one the
+                # caller asked for: on a reasoning model they differ by the
+                # dialect's allowance, and a message naming the smaller number
+                # would send someone to raise a limit that was never in force.
+                sent = payload.get(config.llm_target.chat_dialect.token_parameter, max_tokens)
+                raise LLMTruncatedError(
+                    f"Model response hit the {sent}-token completion limit and was "
+                    f"cut off ({len(content)} chars returned). Raise the budget for "
+                    f"this call."
+                )
+            # A refusal is a real answer and must not be parsed as content. The
+            # SDK surfaces it separately precisely so it is not mistaken for one.
+            refusal = getattr(choice.message, "refusal", None)
+            if refusal:
+                raise LLMResponseError(
+                    "OpenAI refused the request rather than answering it. This is "
+                    "not a malformed response and is not retried into one."
+                )
+            return content
+
+        if attempt < retries:
+            time.sleep(1.5 * (attempt + 1))
+
+    raise RuntimeError(
+        "OpenAI request failed after "
+        f"{retries + 1} attempts: "
+        f"{redaction.safe_detail(last_error) if last_error else 'unknown'}"
+    ) from last_error
+
+
 def _llm_chat(
     prompt: str,
     max_tokens: int = 400,
@@ -67,6 +418,9 @@ def _llm_chat(
     timeout: int = 30,
     retries: int = 2,
     json_object: bool = True,
+    *,
+    system: str | None = None,
+    response_format: dict | None = None,
 ) -> str:
     """Send one chat completion request with bounded transient-error retries.
 
@@ -76,33 +430,61 @@ def _llm_chat(
     JSON in the prompt, which removes the unescaped-quote and stray-prose
     failure modes at the source.
 
+    ``system`` prepends a system message. It exists for the feature-disclosure
+    verifier (``backend/verification/``), whose specification is a system/user
+    split, and the split is load-bearing rather than stylistic: the untrusted
+    patent passages have to sit in a *different message* from the rules that
+    govern them, or the injection defence in that prompt is defending a boundary
+    that does not exist. Callers that pass nothing are unaffected - the payload is
+    byte-identical to before.
+
+    ``response_format`` overrides ``json_object`` outright, for callers that need
+    a stricter mode than a generic JSON object - JSON Schema-constrained
+    generation, in the verifier's case, where required fields, closed enums and
+    ``additionalProperties: false`` are the whole contract and ``json_object``
+    enforces none of them.
+
     Raises:
         LLMTruncatedError: if the response hit ``max_tokens``. Not retried - see
             that class.
         RuntimeError: if every transport attempt failed.
     """
-    if not settings.llm_api_key:
-        raise RuntimeError("LLM_API_KEY (or HF_TOKEN) is not configured")
-    payload: dict[str, object] = {
-        "model": settings.llm_model,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-    if json_object:
+    target = config.llm_target
+    api_key = require_llm_credentials(target, settings)
+
+    messages: list[dict[str, str]] = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    payload = build_chat_payload(
+        target, messages, max_tokens=max_tokens, temperature=temperature
+    )
+    # A floor, never a reduction: a caller that asked for longer keeps it.
+    timeout = max(timeout, target.chat_dialect.minimum_timeout_seconds)
+    if response_format is not None:
+        payload["response_format"] = response_format
+    elif json_object:
         payload["response_format"] = {"type": "json_object"}
-    trace("llm.request", model=settings.llm_model, prompt_chars=len(prompt), max_tokens=max_tokens, temperature=temperature)
+    trace("llm.request", profile=str(target.profile), provider=str(target.provider), model=target.model, prompt_chars=len(prompt), system_chars=len(system or ""), max_tokens=max_tokens, temperature=temperature)
+
+    if target.provider is Provider.OPENAI:
+        # One provider, one code path, same contract. The official SDK is used
+        # because OpenAI's structured-output dialect is its own -- `strict: true`
+        # JSON Schema is enforced server-side there and is exactly what spec
+        # §14.1 makes an eligibility requirement -- and because the SDK version is
+        # the *adapter revision* a capability artifact is scoped to.
+        return _openai_chat(payload, api_key=api_key, timeout=timeout, retries=retries, max_tokens=max_tokens)
     last_error: Exception | None = None
     for attempt in range(retries + 1):
         try:
-            response = requests.post(settings.llm_api_url, headers={"Authorization": f"Bearer {settings.llm_api_key}"}, json=payload, timeout=timeout)
+            response = requests.post(target.base_url, headers={"Authorization": f"Bearer {api_key}"}, json=payload, timeout=timeout)
             response.raise_for_status()
             choice = response.json()["choices"][0]
         except Exception as error:
             # Transport and HTTP failures only. A truncated *successful*
             # response is handled below, outside this retry loop.
             last_error = error
-            trace("llm.attempt_failed", attempt=attempt, error=str(error))
+            trace("llm.attempt_failed", attempt=attempt, error=redaction.safe_log(error))
             if attempt < retries:
                 time.sleep(1.5 * (attempt + 1))
             continue
@@ -391,3 +773,360 @@ Include one verdict object for every candidate from index 1 through {count}, in 
 
     trace("validate_relevance.done", kept=sum(1 for verdict in verdicts if verdict))
     return [bool(verdict) for verdict in verdicts]
+
+
+DECOMPOSITION_PROMPT_MARKER = "feature decomposition assistant"
+"""The substring `run_mock.py`'s double and `tests/test_pipeline_contract.py`
+key off. Imported rather than duplicated as a literal, so a prompt edit that
+breaks the marker raises at the double instead of passing silently."""
+
+RELATIONSHIP_PROMPT_MARKER = "elements of one technical feature have been edited"
+"""Distinguishes `regenerate_relationships` from `propose_understanding` at the
+double. Both prompts open with `DECOMPOSITION_PROMPT_MARKER`, deliberately -- they
+are the same component doing the same job -- so a double that matched only on that
+would answer a relationship request with a whole decomposition. Checked FIRST in
+`run_mock.py` and in `tests/test_pipeline_contract.py`, for the same reason the
+"screening" check comes before "expert patent examiner" there."""
+
+DECOMPOSITION_COMPONENT = "graph.verification_nodes.decompose_features"
+"""**Spec §16 decision 8 is unresolved and this names what is unresolved.**
+
+The specification says the verifier consumes approved elements and relationships
+but does not say which component generates the candidates a human edits at
+Workflow Gate A. This is that component, named explicitly rather than left
+implicit: an LLM call in `llm.decompose_features`, prompted below, whose output
+is written to `candidate_decomposition` and to nothing else.
+
+Requirement quality caps evidence quality -- a vague element yields an
+unfalsifiable verdict -- so the open question is not *whether* something produces
+candidates but whether an 8B-class instruct model is the right thing to. That is
+an owner decision, not a code decision, and it is recorded as outstanding in
+`docs/decisions/` rather than settled here by default.
+"""
+
+
+def propose_understanding(
+    invention: str,
+    *,
+    problem_solved: str = "",
+    novelty_statement: str = "",
+    feedback: str = "",
+    max_features: int = 5,
+    max_elements_per_feature: int = 8,
+) -> dict:
+    """Propose a **candidate** understanding of an invention, for a human to edit.
+
+    Returns ``{"summary": str, "features": [...]}`` where ``features`` is the
+    spec section 2 wire shape: `feature_id`, `feature_version`, `feature_text`,
+    `elements[]` and `relationships[]`.
+
+    **This output is never approved and never sufficient to verify against.** It
+    is written to `candidate_decomposition` and to `understanding_proposals`,
+    neither of which any verification path reads. A human edits and approves it
+    at the understanding stage, and only `workflow/approvals.py` turns the result
+    into an approved artifact.
+
+    `problem_solved` and `novelty_statement` are the inventor's optional Stage 1
+    context. They steer the proposal and are **never** treated as evidence or
+    copied into a requirement: what the inventor believes is new is a claim to be
+    tested, not a finding about prior art.
+
+    `feedback` is what the inventor said the system misunderstood on a previous
+    version. It is additional instruction, never a licence to keep the previous
+    proposal -- a regeneration produces a whole new proposal at a new version.
+
+    No `except`: a failed or malformed response fails the request, like every
+    other LLM call in this file.
+    """
+    trace(
+        "propose_understanding.start",
+        invention_chars=len(invention),
+        has_problem=bool(problem_solved.strip()),
+        has_novelty=bool(novelty_statement.strip()),
+        regenerating=bool(feedback.strip()),
+    )
+
+    context = ""
+    if problem_solved.strip():
+        context += "\n\nPROBLEM THE INVENTOR SAYS THIS SOLVES:\n" + problem_solved.strip()
+    if novelty_statement.strip():
+        context += (
+            "\n\nWHAT THE INVENTOR BELIEVES IS NEW (context only - a claim to be "
+            "tested, not a fact):\n" + novelty_statement.strip()
+        )
+    correction = ""
+    if feedback.strip():
+        correction = (
+            "\n\nA PREVIOUS ANALYSIS WAS REJECTED BY THE INVENTOR, WHO SAID:\n"
+            + feedback.strip()
+            + "\nProduce a fresh analysis that addresses this. Do not repeat the "
+            "previous one."
+        )
+
+    prompt = f"""You are a feature decomposition assistant for patent novelty analysis.
+
+Write a short technical summary of the invention, then decompose it into at most {max_features} distinct technical features.
+
+The SUMMARY is 2-4 sentences restating the invention in precise technical language. It is shown to the inventor as the system's understanding of their invention, and must not add capabilities the description does not state.
+A FEATURE is one self-contained technical capability of the invention.
+An ELEMENT is a single structural or functional component the feature requires.
+A RELATIONSHIP is how two or more elements interact, are arranged, or are connected.
+
+Rules:
+- Each element must be independently checkable against a patent passage. "A heat exchanger disposed within the exhaust duct" is checkable; "an efficient design" is not.
+- Mark an element core=true when the feature is not the claimed feature without it.
+- At most {max_elements_per_feature} elements per feature.
+- Every relationship must refer only to elements of its own feature.
+- Every element_id and relationship_id must be unique ACROSS the whole feature - never reuse an id between an element and a relationship.
+- Use element ids E1, E2, ... and relationship ids R1, R2, ... within each feature.
+- feature_version is "1" for a first proposal.
+- Do not invent components the invention does not describe.
+
+Return ONLY valid JSON in this exact schema:
+{{"summary": "string", "features": [{{"feature_id": "F1", "feature_version": "1", "feature_text": "string", "elements": [{{"element_id": "E1", "text": "string", "core": true, "order": 1}}], "relationships": [{{"relationship_id": "R1", "text": "string", "order": 1}}]}}]}}
+Do not change the schema. Do not add explanations. Return JSON only.
+
+Invention:
+{invention}{context}{correction}"""
+    data = _llm_json(
+        prompt,
+        # Scales with the workload, like analyze_all_matches and
+        # validate_relevance: a flat ceiling truncates on the largest input, and
+        # truncation is never retried at the same ceiling. The extra 400 over the
+        # old decomposition-only ceiling is the summary this call added.
+        max_tokens=1200 + 600 * max_features,
+        temperature=0.0,
+        timeout=60,
+    )
+
+    summary = str(data.get("summary") or "").strip()
+    if not summary:
+        raise LLMResponseError(
+            "LLM returned no technical summary; the understanding stage shows the "
+            "summary as the system's interpretation, and an empty one is not an "
+            "interpretation a human can correct"
+        )
+
+    features = data.get("features")
+    if not isinstance(features, list) or not features:
+        raise LLMResponseError(
+            "LLM returned no features; a decomposition with nothing in it is not a "
+            "proposal a human can edit, and an empty candidate set is not invented here"
+        )
+    trace(
+        "propose_understanding.done",
+        features=len(features),
+        summary_chars=len(summary),
+    )
+    return {"summary": summary, "features": [dict(feature) for feature in features]}
+
+
+def regenerate_relationships(
+    feature_text: str,
+    elements: Sequence[dict],
+    *,
+    existing_ids: Sequence[str] = (),
+) -> list[dict]:
+    """Propose relationships for one feature's **current** element set.
+
+    Called whenever a human adds, edits or deletes an element. A relationship
+    describes how elements interact, so an element change can invalidate one
+    silently: "E2 is coupled to E4" survives the deletion of E4 as a requirement
+    the verifier would then be asked to find among elements that no longer exist.
+    That is a fabricated requirement with a citation slot attached, so
+    relationships are regenerated against the new element set rather than patched
+    or dropped.
+
+    `existing_ids` are the ids already in use by this feature's elements. The
+    prompt is told to avoid them and `workflow/review.py` refuses an approval
+    that reuses one anyway -- the requirement-id namespace is shared across
+    elements and relationships, and a collision silently drops a reviewed status.
+
+    Returns an empty list when the model proposes no relationships, which is a
+    real answer: a single-element feature has nothing to relate.
+    """
+    listing = "\n".join(
+        "- " + str(item.get("element_id")) + ": " + str(item.get("text"))
+        for item in elements
+    )
+    reserved = ", ".join(existing_ids) or "(none)"
+    trace("regenerate_relationships.start", elements=len(elements))
+    prompt = f"""You are a feature decomposition assistant for patent novelty analysis.
+
+The elements of one technical feature have been edited by a human. Propose the relationships that hold between the CURRENT elements listed below.
+
+FEATURE: {feature_text}
+
+CURRENT ELEMENTS:
+{listing}
+
+Rules:
+- A RELATIONSHIP is how two or more elements interact, are arranged, or are connected.
+- Refer only to the elements listed above. Never refer to an element that is not listed.
+- Do not restate a single element as a relationship.
+- Use relationship ids R1, R2, ... and never reuse any of these ids: {reserved}
+- Return an empty list if the elements have no meaningful relationships between them.
+
+Return ONLY valid JSON in this exact schema:
+{{"relationships": [{{"relationship_id": "R1", "text": "string", "order": 1}}]}}
+Do not change the schema. Do not add explanations. Return JSON only."""
+    data = _llm_json(
+        prompt,
+        max_tokens=200 + 120 * max(len(elements), 1),
+        temperature=0.0,
+        timeout=60,
+    )
+    relationships = data.get("relationships")
+    if not isinstance(relationships, list):
+        raise LLMResponseError(
+            "LLM returned no relationships array; an absent array is not the same "
+            "answer as an empty one and is not read as one here"
+        )
+    trace("regenerate_relationships.done", relationships=len(relationships))
+    return [dict(item) for item in relationships]
+
+
+STRATEGY_PROMPT_MARKER = "patent search strategist"
+"""The substring `run_mock.py` keys off for the search-strategy proposal.
+
+Deliberately shares no wording with `DECOMPOSITION_PROMPT_MARKER` or
+`RELATIONSHIP_PROMPT_MARKER`: those two overlap on purpose (same component, same
+job) and needed an ordering rule at the double to tell them apart. This one is a
+different component asking a different question, so it is a marker no other
+prompt contains and the double can match it in any order.
+
+Imported rather than duplicated as a literal, so a prompt edit that breaks the
+marker raises at the double instead of quietly reaching a metered endpoint.
+"""
+
+STRATEGY_COMPONENT = "graph.strategy.propose_search_strategy"
+"""The component that proposes search queries, named for the same reason
+`DECOMPOSITION_COMPONENT` is: the specification does not assign an owner to it,
+and a component nobody has named cannot be assigned one later."""
+
+
+def propose_search_strategy(
+    summary: str,
+    features: Sequence[dict],
+    *,
+    existing_queries: Sequence[str] = (),
+    feedback: str = "",
+    max_queries: int = 10,
+) -> list[dict]:
+    """Propose **candidate** search queries for an approved understanding.
+
+    Returns a list of ``{"query_id", "query_text", "rationale",
+    "covered_element_ids"}``. Each query names the approved element ids it is
+    meant to retrieve prior art for, which is what the coverage check at the
+    stage's gate is computed from -- a core element no enabled query covers
+    blocks approval.
+
+    Ids are **feature-qualified** (``F1.E2``). A requirement id is unique within
+    one feature and not across a run, so a bare ``E1`` would name an element in
+    every feature that happens to have one -- and a coverage claim that resolves
+    to more than one element is not a coverage claim.
+
+    **This output is never approved and never dispatched as it stands.** It is
+    written to ``candidate_search_strategy`` and to ``search_strategy_proposals``,
+    neither of which the search reads; only the queries a human approved and left
+    enabled are executed.
+
+    `existing_queries` are the queries the understanding call already produced.
+    They are offered as material rather than as a floor: the model may keep,
+    reword or replace them, and nothing here silently appends them to the result.
+
+    `feedback` is what the reviewer said was wrong with a previous strategy. It is
+    additional instruction, never a licence to keep the previous proposal -- a
+    regeneration produces a whole new strategy at a new version.
+
+    A coverage claim naming an element id that is not in `features` is left
+    exactly as the model returned it. It is refused at the gate
+    (`UNKNOWN_ELEMENT_REFERENCE`) rather than dropped here, because silently
+    discarding a claim would turn a model that misunderstood the requirements into
+    a strategy that merely looks like it covers fewer of them.
+
+    No `except`: a failed or malformed response fails the request, like every
+    other LLM call in this file.
+    """
+    trace(
+        "propose_search_strategy.start",
+        features=len(features),
+        existing=len(existing_queries),
+        regenerating=bool(feedback.strip()),
+    )
+
+    listing = []
+    for feature in features:
+        feature_id = str(feature.get("feature_id"))
+        listing.append(
+            "FEATURE " + feature_id + ": " + str(feature.get("feature_text") or "")
+        )
+        for element in feature.get("elements") or ():
+            core = " [core]" if element.get("core") else ""
+            # Feature-qualified, because an element id is unique within a feature
+            # and not across a run: two features may each have an E1, and a bare
+            # id in a coverage claim would name both or neither.
+            listing.append(
+                "  " + feature_id + "." + str(element.get("element_id")) + core + ": "
+                + str(element.get("text") or "")
+            )
+    elements_block = "\n".join(listing)
+
+    prior = ""
+    if existing_queries:
+        prior = (
+            "\n\nQUERIES ALREADY DRAFTED FROM THE DESCRIPTION (material, not a "
+            "floor - keep, reword or replace them):\n"
+            + "\n".join("- " + str(query) for query in existing_queries)
+        )
+    correction = ""
+    if feedback.strip():
+        correction = (
+            "\n\nA PREVIOUS SEARCH STRATEGY WAS REJECTED BY THE REVIEWER, WHO SAID:\n"
+            + feedback.strip()
+            + "\nProduce a fresh strategy that addresses this. Do not repeat the "
+            "previous one."
+        )
+
+    prompt = f"""You are a patent search strategist.
+
+Below is an APPROVED technical summary of an invention and the approved technical elements a human confirmed. Propose at most {max_queries} patent search queries that together retrieve prior art for those elements.
+
+APPROVED SUMMARY:
+{summary}
+
+APPROVED TECHNICAL ELEMENTS:
+{elements_block}
+
+Rules:
+- Every element marked [core] must be covered by at least one query. A core element is one the invention is not itself without.
+- covered_element_ids lists the element ids a query is aimed at, written exactly as they appear above, including the feature prefix (for example F1.E2). Never invent an id that is not listed.
+- Do not claim coverage a query does not have. A query listed against an element it would not retrieve prior art for is worse than one fewer query.
+- Keep each query between 3 and 8 words, in the vocabulary patent titles, abstracts and claims actually use.
+- Vary the angle across the set: what the invention does, what it is made of, the domain it is used in, and how an examiner would classify it.
+- Avoid near-duplicate queries; each one should be able to return something the others would miss.
+- rationale is one short sentence saying what this query is looking for.
+- Use query ids Q1, Q2, ... in the order you propose them.
+
+Return ONLY valid JSON in this exact schema:
+{{"queries": [{{"query_id": "Q1", "query_text": "string", "rationale": "string", "covered_element_ids": ["F1.E1"]}}]}}
+Do not change the schema. Do not add explanations. Return JSON only.{prior}{correction}"""
+
+    data = _llm_json(
+        prompt,
+        # Scales with the workload, like every other batched call here: a flat
+        # ceiling truncates on the largest input, and truncation is never retried
+        # at the same ceiling.
+        max_tokens=400 + 160 * max_queries,
+        temperature=0.0,
+        timeout=60,
+    )
+
+    queries = data.get("queries")
+    if not isinstance(queries, list) or not queries:
+        raise LLMResponseError(
+            "LLM returned no search queries; a strategy with nothing in it is not a "
+            "proposal a reviewer can edit, and an empty query set is not invented here"
+        )
+    trace("propose_search_strategy.done", queries=len(queries))
+    return [dict(query) for query in queries]

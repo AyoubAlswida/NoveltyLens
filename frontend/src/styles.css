@@ -1,3 +1,7 @@
 @import './styles/fonts.css';
 @import './styles/theme.css';
 @import './styles/globals.css';
+/* Gate F/G screens. Imported LAST so its dark block, which is written
+   `:root[data-theme="dark"] .foo` (0,3,0), comes after the light rules it
+   overrides rather than before them. */
+@import './styles/gates.css';

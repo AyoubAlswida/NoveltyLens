@@ -9,29 +9,130 @@ Every endpoint except ``POST /api/auth/login`` requires a session token. The
 pipeline endpoints are gated because a single run spends real, small, metered
 SerpAPI and HuggingFace quota; ``GET /api/history`` because the stored reports
 are other people's invention descriptions.
+
+**This process can also HOST the durable executor, but it never becomes one.**
+With ``WORKFLOW_EXECUTOR=inprocess`` the lifespan below starts
+``backend/workflow/executor.py``'s loop on a daemon thread for local development
+-- the same loop, the same lease, the same recovery, hosted differently. With the
+default ``worker`` it starts nothing, and production runs ``python -m
+workflow.worker`` as a separate workload. No endpoint here executes a graph on
+behalf of the executor, and ``BackgroundTasks`` is not used for it: that dies with
+the request, holds no lease, and recovers from nothing.
+
+Nothing about ``POST /api/analyze`` or ``POST /api/analyze/stream`` changes either
+way. They still run inline, driven by the HTTP request, with no run row, no lease
+and no event log.
 """
 
 import json
 import logging
-from typing import Iterator, Optional
+from contextlib import asynccontextmanager
+from typing import AsyncIterator, Iterator, Optional
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 load_dotenv(override=True)  # see config.py's load_dotenv(override=True) for why
 
 import db
 from auth import authenticate, issue_token, require_user
+from config import ConfigError, settings
 from graph.pipeline import run_graph_pipeline
 from reports import clear_history, list_history
+from workflow.executor import InprocessExecutor, run_inprocess
+from workflow.redaction import safe_detail, safe_log
+from workflow.types import ExecutorUnavailable
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+VALID_EXECUTOR_TOPOLOGIES = ("worker", "inprocess")
+"""Where the executor loop runs -- not which implementation runs. There is one
+executor; this chooses its host process."""
+
+_inprocess_executor: Optional[InprocessExecutor] = None
+"""The running in-process host, or None. Module-level rather than app state so
+the shutdown handler can find it whatever created it, and so a second startup can
+see that one is already running."""
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Start and stop the in-process executor around the API's lifetime.
+
+    **Startup fails loudly on a bad configuration.** An unknown
+    ``WORKFLOW_EXECUTOR`` value, an invalid lease pair, or ``inprocess`` with no
+    ``WORKFLOW_GRAPH_ADAPTER`` all stop the API from serving rather than being
+    absorbed. That last one has no mock fallback on purpose: quietly substituting
+    the deterministic adapter would let a deployment believe it was running real
+    verification while it fabricated everything.
+
+    With ``worker`` -- the default, and production -- this starts nothing at all.
+    """
+    global _inprocess_executor
+
+    if settings.workflow_executor not in VALID_EXECUTOR_TOPOLOGIES:
+        raise ConfigError(
+            f"WORKFLOW_EXECUTOR must be one of {', '.join(VALID_EXECUTOR_TOPOLOGIES)}, "
+            f"got {settings.workflow_executor!r}. It selects the executor's host "
+            "process, not its implementation."
+        )
+
+    if settings.workflow_executor == "inprocess":
+        if _inprocess_executor is not None and _inprocess_executor.running:
+            raise ExecutorUnavailable(
+                "an in-process executor is already running in this process"
+            )
+        _inprocess_executor = run_inprocess()
+        logger.info("WORKFLOW_EXECUTOR=inprocess: executor started on a daemon thread")
+    else:
+        logger.info(
+            "WORKFLOW_EXECUTOR=%s: no in-process executor. Run `python -m "
+            "workflow.worker` as a separate workload to advance durable runs.",
+            settings.workflow_executor,
+        )
+
+    try:
+        yield
+    finally:
+        if _inprocess_executor is not None:
+            _inprocess_executor.stop()
+            _inprocess_executor = None
+            logger.info("in-process executor stopped")
+
+
+app = FastAPI(lifespan=lifespan)
+
+# Verified runs (Implementation Gate E). Mounted as its own router so the
+# existing endpoints below are untouched: `POST /api/analyze`,
+# `POST /api/analyze/stream`, `GET`/`DELETE /api/history` and the auth endpoints
+# keep their exact behaviour, are not migrated onto the executor, and their SSE
+# frames still carry no `id:` line (spec section 3.2).
+from api.deps import ApiError  # noqa: E402  - after `app` exists
+from api.runs import router as runs_router  # noqa: E402
+
+app.include_router(runs_router)
+
+
+@app.exception_handler(ApiError)
+async def _api_error(_request, error: ApiError):
+    """Render spec section 10.2's `{code, detail}` body at the TOP level.
+
+    FastAPI nests whatever an `HTTPException` carries under a `detail` key, which
+    would make the contract `{"detail": {"code": ..., "detail": ...}}` -- a shape
+    no client was written against and one that hides `code` exactly where a
+    client branches on it. `ApiError` already builds the correct object; this
+    handler stops it being wrapped a second time.
+
+    Extra structured fields an error carries (`missing` for
+    POLICY_NOT_APPROVED, `blocking` for GATE_BLOCKED) travel at the top level
+    beside them, and every one of them is safe: configuration names and blocking
+    conditions, never a value, a provider body or a traceback.
+    """
+    return JSONResponse(status_code=error.status_code, content=error.detail)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 HISTORY_LIMIT = 50
@@ -80,7 +181,8 @@ async def readyz() -> dict[str, str]:
         with db.connect() as conn:
             conn.execute("SELECT 1")
     except Exception as error:
-        logger.warning("readiness probe failed: %s", error)
+        # Redacted: a connection failure embeds the DSN it tried.
+        logger.warning("readiness probe failed: %s", safe_log(error))
         raise HTTPException(status_code=503, detail="database unavailable")
     return {"status": "ready"}
 
@@ -122,8 +224,14 @@ async def analyze_stream(
             for event in run_graph_pipeline(request.description, request.claims):
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception as error:
-            logger.exception("Streaming pipeline error")
-            yield f"data: {json.dumps({'type': 'error', 'detail': str(error)})}\n\n"
+            # Sanitized, not `str(error)`. This detail is written straight into
+            # the SSE stream and rendered verbatim by the frontend's ErrorScreen,
+            # so it is a browser-visible surface -- the same one CLAUDE.md records
+            # a live SerpAPI key reaching once through an HTTPError message. The
+            # actionable half survives: `safe_detail` keeps the provider and the
+            # HTTP status, which is what tells a user which quota ran out.
+            logger.warning("Streaming pipeline error: %s", safe_log(error))
+            yield f"data: {json.dumps({'type': 'error', 'detail': safe_detail(error)})}\n\n"
     return StreamingResponse(sse(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
@@ -140,8 +248,10 @@ async def analyze_invention(
     except HTTPException:
         raise
     except Exception as error:
-        logger.exception("Analysis pipeline error")
-        raise HTTPException(status_code=502, detail=str(error)) from error
+        # Same surface, same reasoning as the streaming path above: this detail
+        # is serialized into the HTTP response body and shown to the caller.
+        logger.warning("Analysis pipeline error: %s", safe_log(error))
+        raise HTTPException(status_code=502, detail=safe_detail(error)) from error
     raise HTTPException(status_code=500, detail="Analysis produced no result.")
 
 
@@ -175,7 +285,7 @@ async def delete_history(email: str = Depends(require_user)) -> dict[str, int]:
 if __name__ == "__main__":
     import uvicorn
 
-    from config import settings
+    from config import ConfigError, settings
 
     # Host/port come from settings so a container can bind 0.0.0.0 without a
     # code change; the defaults are still 127.0.0.1:8001, so running this file

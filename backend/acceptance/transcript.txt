@@ -1,0 +1,141 @@
+==============================================================================
+REAL-PROCESS ACCEPTANCE — Implementation Gates D and E
+==============================================================================
+isolated reviewer : acceptance-fde09724@example.invalid
+isolated intruder : intruder-fde09724@example.invalid
+unique run label  : acceptance run fde09724
+credentials       : generated per run, never printed
+
+--- SETUP: isolated users
+  two users created (hashes only; PBKDF2-HMAC-SHA256)
+
+--- TRANSCRIPT 1 — Gate D: a paused run survives a restart of BOTH processes
+  $ (api) C:\Users\alswi\AppData\Local\Programs\Python\Python312\python.exe server.py
+    started pid 22316
+    API healthy on http://127.0.0.1:8099 (started by this script; the port was free first)
+  $ (worker) C:\Users\alswi\AppData\Local\Programs\Python\Python312\python.exe -m workflow.worker --mock
+    started pid 24284
+  $ POST /api/auth/login
+    -> 200 {"token": "<redacted>"}
+  $ POST /api/runs
+    body: {"description": "acceptance run fde09724: closed-loop exhaust heat recovery"}
+    -> 201 {"run_id": "27647f3e-1b76-44c9-a364-f9ab23ceeb86", "status": "QUEUED", "stream_url": "/api/runs/27647f3e-1b76-44c9-a364-f9ab23ceeb86/stream", "capability_qualified": false}
+    capability_qualified: False   <- deferred, and recorded as NOT qualified
+  run reached WAITING_FOR_REVIEW at gate A (last_event_id=4)
+
+  KILLING BOTH PROCESSES while the run is parked
+  $ stop worker (pid 24284)
+    exited rc=1 (process tree)
+  $ stop api (pid 22316)
+    exited rc=1 (process tree)
+    both stopped; the run exists only in PostgreSQL now
+
+  RESTARTING BOTH
+  $ (api) C:\Users\alswi\AppData\Local\Programs\Python\Python312\python.exe server.py
+    started pid 22260
+  $ (worker) C:\Users\alswi\AppData\Local\Programs\Python\Python312\python.exe -m workflow.worker --mock
+    started pid 15516
+  $ GET /api/runs/27647f3e-1b76-44c9-a364-f9ab23ceeb86
+    -> 200 {"run_id": "27647f3e-1b76-44c9-a364-f9ab23ceeb86", "status": "WAITING_FOR_REVIEW", "current_gate": "A", "description": "acceptance run fde09724: closed-loop exhaust heat recovery", "created_at": "2026-08-30T01:24:13.5287
+    SURVIVED: still WAITING_FOR_REVIEW after a full restart of API + worker
+
+--- Gate D: authorization — a second account cannot see or approve it
+  $ GET /api/runs/27647f3e-1b76-44c9-a364-f9ab23ceeb86
+    -> 404 {"code": "RUN_NOT_FOUND", "detail": "No run 27647f3e-1b76-44c9-a364-f9ab23ceeb86 was found for this account."}
+  $ POST /api/runs/27647f3e-1b76-44c9-a364-f9ab23ceeb86/gates/A/approve
+    body: {"idempotency_key": "<redacted>", "decomposition": {"version": 1, "features": []}}
+    -> 404 {"code": "RUN_NOT_FOUND", "detail": "No run 27647f3e-1b76-44c9-a364-f9ab23ceeb86 was found for this account."}
+    404 RUN_NOT_FOUND on both — identical to an unknown run
+
+--- Gate D: a mutation without an idempotency key is refused
+  $ POST /api/runs/27647f3e-1b76-44c9-a364-f9ab23ceeb86/gates/A/approve
+    body: {"decomposition": {}}
+    -> 422 {"code": "MISSING_IDEMPOTENCY_KEY", "detail": "this endpoint mutates a run and requires an idempotency_key. It is not generated for you: a server-generated key would make every retry a new mutation."}
+
+--- Gate D: approval commits and the EXECUTOR resumes (the endpoint does not)
+  $ POST /api/runs/27647f3e-1b76-44c9-a364-f9ab23ceeb86/gates/A/approve
+    body: {"idempotency_key": "<redacted>", "decomposition": {"version": 1, "features": [{"feature_id": "F2", "feature_version": "3", "feature_text": "closed-loop control of exhaust heat recovery", "elements": [{"element_id": "E1", "text": "a heat exchanger in the exhaust duct", "core": true, "order": 1}], "relationships": []}]}}
+    -> 200 {"decomposition_version": 1, "status": "RESUMING"}
+    RESUMING — a request for the executor, not execution
+
+--- Gate D: the identical approval replays; a different payload conflicts
+  $ POST /api/runs/27647f3e-1b76-44c9-a364-f9ab23ceeb86/gates/A/approve
+    body: {"idempotency_key": "<redacted>", "decomposition": {"version": 1, "features": [{"feature_id": "F2", "feature_version": "3", "feature_text": "closed-loop control of exhaust heat recovery", "elements": [{"element_id": "E1", "text": "a heat exchanger in the exhaust duct", "core": true, "order": 1}], "relationships": []}]}}
+    -> 200 {"status": "RESUMING", "decomposition_version": 1}
+    same key + same payload -> the STORED response, no second mutation
+  $ POST /api/runs/27647f3e-1b76-44c9-a364-f9ab23ceeb86/gates/A/approve
+    body: {"idempotency_key": "<redacted>", "decomposition": {"version": 2, "features": [{"feature_id": "F2", "feature_version": "3", "feature_text": "closed-loop control of exhaust heat recovery", "elements": [{"element_id": "E1", "text": "a heat exchanger in the exhaust duct", "core": true, "order": 1}], "relationships": []}]}}
+    -> 409 {"code": "IDEMPOTENCY_CONFLICT", "detail": "idempotency key already used for gate_a_approve on 27647f3e-1b76-44c9-a364-f9ab23ceeb86 with a different request body"}
+    same key + different payload -> 409, never a silent replay
+  run finished: COMPLETED (last_event_id=7)
+
+--- Gate D: a stale approval on a finished run is refused
+  $ POST /api/runs/27647f3e-1b76-44c9-a364-f9ab23ceeb86/gates/A/approve
+    body: {"idempotency_key": "<redacted>", "decomposition": {"version": 1, "features": [{"feature_id": "F2", "feature_version": "3", "feature_text": "closed-loop control of exhaust heat recovery", "elements": [{"element_id": "E1", "text": "a heat exchanger in the exhaust duct", "core": true, "order": 1}], "relationships": []}]}}
+    -> 409 {"code": "WRONG_GATE", "detail": "run 27647f3e-1b76-44c9-a364-f9ab23ceeb86 is COMPLETED, not WAITING_FOR_REVIEW: there is no gate A approval to make."}
+    409 WRONG_GATE — a terminal run cannot be re-approved
+
+--- TRANSCRIPT 2 — Gate E: SSE replay and reconnection against the live API
+  a FRESH attach (no last_event_id) gets a snapshot describing where the
+  run stands, with the current max sequence as its id -- not a replay
+    id: 7   snapshot  status=COMPLETED
+
+  reading the whole log from the beginning (last_event_id=0)
+    id: 1   progress  phase=queued
+    id: 2   progress  phase=understand
+    id: 3   review_required
+    id: 4   paused
+    id: 5   resumed
+    id: 6   progress  phase=analyze
+    id: 7   result
+    7 frames; first is the seq-1 queued event, last is result (terminal)
+
+  RECONNECTING with last_event_id=4 (simulating a dropped client)
+    replayed exactly 3 frames, all with id > 4:
+    id: 5   resumed
+    id: 6   progress
+    id: 7   result
+    in order, nothing before the cursor, terminal delivered exactly once
+
+  RECONNECTING at the terminal sequence (7)
+    0 frames, stream closed — no second terminal
+
+  RECONNECTING twice with the same cursor is identical
+    same frames both times
+
+--- Gate E: a second account cannot stream the run
+  $ GET /api/runs/27647f3e-1b76-44c9-a364-f9ab23ceeb86/stream
+    -> 404 {"code": "RUN_NOT_FOUND", "detail": "No run 27647f3e-1b76-44c9-a364-f9ab23ceeb86 was found for this account."}
+
+--- Gate E: the disconnect changed nothing about the run
+  $ GET /api/runs/27647f3e-1b76-44c9-a364-f9ab23ceeb86
+    -> 200 {"run_id": "27647f3e-1b76-44c9-a364-f9ab23ceeb86", "status": "COMPLETED", "current_gate": "A", "description": "acceptance run fde09724: closed-loop exhaust heat recovery", "created_at": "2026-08-30T01:24:13.528794+00:00"
+    still COMPLETED, same last_event_id — the worker never heard of the client
+
+--- Gate E: the search-only stream is unchanged and carries NO id: line
+  (POST /api/analyze/stream is not migrated onto the executor)
+
+--- FRONTEND: the documented dev command serves the app
+  $ (frontend) npm.cmd run dev -- --port 4299
+    started pid 8932
+  $ GET http://localhost:4299
+    -> 200; Angular dev server serving the app that calls this API
+  NOTE: the review screens were exercised through the SAME HTTP API they
+  call, not through simulated clicks. Browser automation is unavailable in
+  this environment (Playwright's driver fails with EPERM here), so no
+  claim is made about rendered pixels.
+
+==============================================================================
+RESULT: both transcripts completed. No paid API call was made.
+==============================================================================
+
+--- TEARDOWN
+  $ stop frontend (pid 8932)
+    exited rc=1 (process tree)
+  $ stop worker (pid 15516)
+    exited rc=1 (process tree)
+  $ stop api (pid 22260)
+    exited rc=1 (process tree)
+  run, idempotency records and users deleted
+  database backends still open: 0
+  processes alive: api=False worker=False frontend=False

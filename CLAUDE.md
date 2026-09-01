@@ -28,9 +28,21 @@ and an Angular frontend — with no shared tooling; each is run and developed se
 - Install deps: `pip install -r requirements.txt`
 - Run the API: `python server.py` — serves on `http://127.0.0.1:8001` (hardcoded host/port in `server.py`'s `__main__` block)
 - Apply the database schema: `python migrate.py` (yoyo, against `settings.database_url`). Needed once after `docker compose up`, and again whenever `backend/migrations/` gains a file.
+- **Then apply LangGraph's checkpoint tables: `python checkpointer.py setup`.** Separate on
+  purpose — `PostgresSaver` owns `checkpoints`, `checkpoint_blobs`, `checkpoint_writes` and
+  `checkpoint_migrations` and tracks its own version in the last of them, and two migration
+  systems owning the same tables conflict the first time either side changes a column.
+- Run the durable-workflow executor: `python -m workflow.worker` — a **second process**,
+  not a thread in the API. `--mock` drives a deterministic no-HTTP graph; `--once` claims at
+  most one run and exits. Setting `WORKFLOW_EXECUTOR=inprocess` instead hosts the same loop
+  on a daemon thread inside `python server.py`, for local development only. **No endpoint
+  admits a durable run yet**, so either way this is exercised only by tests and by hand.
+  See "Durable workflow execution" below.
+- Compact finished runs' progress events: `python -m workflow.cleanup` (`--dry-run` first).
 - **Run it without spending quota: `python run_mock.py`** (`--fast` to drop the pacing delays, `--port` to move it). Serves the real app on 8001 with only the metered boundaries stubbed. See the mock-mode section below before changing it.
 - Run the tests: `python -m pytest` from `backend/` (config in `backend/pytest.ini`, which sets `pythonpath = .` because the modules import each other flat, e.g. `from config import settings`). The suite is `backend/tests/`. `backend/tests/conftest.py` stubs embeddings, Qdrant **and Postgres** (autouse, for every test) alongside the existing `_llm_chat`/`SOURCES` stubs — `compare.py`'s ranking, the semantic-search path and `persist_run` are all unconditionally on the happy path, so the suite still needs no credentials, makes no network calls, and needs no running database. `test_phase3_agents.py` covers Semantic Search, Fusion, and Validation individually; `test_history.py` covers persistence and `GET /api/history`; `test_auth.py` covers password hashing, token signing/expiry, and the endpoint gate. This is not yet the full P3.8 failure-path matrix (LLM failure, single-provider failure, Qdrant/embeddings outage, zero-similarity are covered for the parts that existed pre-Phase-3; a dedicated outage-injection suite for the new agents is still open).
 - **The Postgres double is a dict, not a SQL engine.** `tests/fakes.py`'s `FakeReportStore` stands in at the `reports.py` seam, so it pins the *call* contract and nothing about the SQL. A CHECK constraint, a foreign key, or a column that does not exist is invisible to it — schema changes have to be exercised against the real Compose Postgres by hand.
+- **Some tests need the real database and say so.** Everything marked `postgres` (`tests/test_lease_races.py`, `test_run_status_machine.py`, `test_event_authority.py`, `test_lease_lifecycle.py`, `test_terminal_replay.py`, `test_node_attempts.py`, `test_workflow_executor.py`, `test_migrations.py`, and the rest of the workflow suite) asserts a property of the SQL — a constraint, a trigger, the mandatory lock order, a lease race, an expiry boundary, a cascade — that the in-memory double structurally cannot exhibit. They **skip with a printed reason** when the Compose Postgres is unreachable or unmigrated, and a skipped run of them is a skipped run, never evidence that they passed.
 - Still no lint config and no `pyproject.toml`.
 
 **Frontend** (from `frontend/`) — **Angular 22**, standalone components, no NgModules:
@@ -77,7 +89,11 @@ faster-growing number**: `on_disk_payload` is true and the payload stores each p
 duplicating.
 
 **Running the app**: start both processes manually in separate terminals, with Qdrant up.
-There is no root script that runs them together, and no README. The frontend calls the
+There is no root script that runs them together, and no README. **A third process,
+`python -m workflow.worker`, is now REQUIRED for verified runs** —
+`POST /api/runs` admits one (Implementation Gate E), and without a worker it sits `QUEUED`
+for ever. Adding API replicas does not help, because the API never executes a graph.
+Search-only runs (`POST /api/analyze`, `/api/analyze/stream`) still need only the API. The frontend calls the
 backend at an absolute URL — `window.NOVELTY_LENS_API_URL` if set, otherwise
 `http://127.0.0.1:8001` — and no dev-server proxy is configured, so by default the backend
 must be running on that exact host/port. That constant lives in `frontend/src/app/config.ts`
@@ -87,15 +103,43 @@ bundle loads (a small script in `index.html`, or devtools) points the UI at anot
 
 **Env vars** (backend, via `backend/.env` — see `backend/.env.example`):
 `EMBEDDING_API_URL` (**required, no default** — ranking embeds on every request) and
-`SERPAPI_KEY` (Google Patents, required — it is the only enabled provider), plus
-`QDRANT_URL` / `QDRANT_API_KEY`. **Two credentials with a fallback chain**:
+`LENS_API_KEY` (Lens.org — **it is the only enabled provider**; `SERPAPI_KEY` is read but
+Google Patents is commented out of `SOURCES`, and this file said the opposite until
+Implementation Gate A corrected it), plus `QDRANT_URL` / `QDRANT_API_KEY`. **Two credentials with a fallback chain**:
 `LLM_API_KEY` falls back to `HF_TOKEN`, and `EMBEDDING_API_KEY` falls back to `LLM_API_KEY`
 then `HF_TOKEN` — so one gateway key set as `LLM_API_KEY` covers both, and `HF_TOKEN` alone
 still covers both if you are on the committed HuggingFace defaults. `EPO_CONSUMER_KEY` /
 `EPO_CONSUMER_SECRET` are read but currently unused (the EPO provider is commented out —
 see below). Optional: `LLM_API_URL`, `LLM_MODEL`, `EMBEDDING_MODEL`, and `TRACE=0` to
 silence the per-step trace `backend/tracing.py` prints to stdout on every request (it is
-**on by default**). `PATENTSVIEW_API_KEY`/`uspto_api_key` remains dead code — see the
+**on by default**). `OPENAI_MODEL` and `OPENAI_REASONING_EFFORT` are the **selected local verifier runtime**
+(owner decisions, 2026-08-31): **`gpt-5.4-mini-2026-03-17`** and `medium`. Both are part of the capability
+identity, so changing either re-runs the §14.2.1 gate and invalidates every prior artifact.
+**The accepted `OPENAI_REASONING_EFFORT` values are per model family, not global**:
+`gpt-5.4-mini` takes `none|low|medium|high|xhigh`, `gpt-5.1` takes `none|low|medium|high`,
+and `gpt-5`/`o1`/`o3`/`o4` take `minimal|low|medium|high` — `gpt-5.1` removed `minimal` and
+added `none`, and `gpt-5.4-mini` kept `none` and added `xhigh`. **Prefix matching is at a
+version boundary** (`deployment._matches_family`), so `gpt-5` cannot annex `gpt-5.4-mini`:
+a bare `startswith` handed it the older family's vocabulary, allowance and timeout floor
+silently, and because the families agree on the token parameter and on omitting
+`temperature` — and `medium` is legal in both — nothing would have failed. A `gpt-5.x`
+version with no declared row now matches **nothing** and falls to the classic dialect,
+which a reasoning model rejects with a deterministic 400; failing loudly on an undeclared
+model is the intended outcome and is the signal to add a row. It is checked
+twice, because those are two questions: `read_reasoning_effort` validates against the union
+of every declared dialect (itself *derived* from `MODEL_DIALECTS`, so it cannot claim a value
+no dialect accepts), and `build_chat_payload` then validates against **the configured model's
+own** vocabulary before the request is built. Both raise `ConfigError` **before** any paid
+call, and a family that cannot honour the setting **refuses rather than dropping or
+downgrading it** — a dropped setting runs at an effort the operator does not believe is in
+force, and a substituted one puts a runtime nobody chose into the capability artifact. The durable-workflow settings — `WORKFLOW_EXECUTOR`,
+`WORKFLOW_GRAPH_ADAPTER`, `LEASE_TTL_SECONDS`, `LEASE_HEARTBEAT_SECONDS`,
+`WORKFLOW_POLL_INTERVAL_SECONDS`, `WORKFLOW_EVENT_POLL_MS`, `SSE_CLIENT_BUFFER`,
+`SSE_WRITE_TIMEOUT_SECONDS`, `WORKFLOW_EVENT_RETENTION_DAYS` — all have working
+defaults except `WORKFLOW_GRAPH_ADAPTER`, which deliberately has none. **The lease
+pair is validated at import and the worker refuses to start on a bad one**: both must
+be positive and the heartbeat strictly below the TTL, or the lease lapses between
+beats and a healthy worker fences itself mid-run. `PATENTSVIEW_API_KEY`/`uspto_api_key` remains dead code — see the
 USPTO note below.
 
 ## Architecture
@@ -108,6 +152,9 @@ with the rest of the Phase 2 pre-staging. `sentence-transformers` is not listed 
 be unused *by design* anyway: `backend/embeddings.py` calls a **hosted** model over the
 network (see below), not a local `sentence-transformers` model — do not
 "fix" this by importing it. `langgraph` and `qdrant-client` are live and load-bearing.
+`langgraph-checkpoint-postgres` and `psycopg-pool` were added for the durable executor's
+`PostgresSaver` (`backend/checkpointer.py`) — the Postgres saver is a separate package
+from `langgraph-checkpoint`, and it pulls in the pool.
 `scikit-learn` was removed from `requirements.txt` — `compare.py`'s TF-IDF fallback (the
 only thing that used it) is gone.
 
@@ -173,16 +220,21 @@ enabled* — accurate as design intent, not as what a request currently exercise
   zero-tolerance policy a node that cannot produce a genuine result raises, and an error
   slot would invite nodes to record a problem and continue to a degraded answer.
 - `events.py` — `PHASES` plus `emit_progress`, which **raises `SSEContractError` on an
-  unknown phase name**. `PHASES` has ten entries: `understand`, `queries`, `search`,
-  `filter`, `enrich`, `semantic_search`, `fuse`, `validate`, `compare`, `analyze`.
+  unknown phase name**. Its first ten entries are the search vocabulary: `understand`,
+  `queries`, `search`, `filter`, `enrich`, `semantic_search`, `fuse`, `validate`,
+  `compare`, `analyze`. The verification branch adds its own (including `strategy` and
+  `gate_strategy` for the search strategy stage), and a search-only run emits none of them.
   `semantic_search` and `fuse` stay in the tuple even while their nodes are disabled —
   `emit_progress` validates against this vocabulary, not against which nodes currently run,
   and the phase names need to still be valid the moment those nodes are re-enabled. The
   frontend's own phase list, `PHASE_ORDER` in `frontend/src/app/models/report.ts`, is
   narrower still: it omits `semantic_search` and `fuse` (those nodes don't run, so the
-  backend never emits them) **and currently also omits `filter`**, even though `filter` *is*
-  emitted by the live `keyword_search` node — check both files directly before relying on
-  the checklist the running screen renders being a complete phase list.
+  backend never emits them). **`filter` was missing too and has been added**: the live
+  `keyword_search` node emits it on every search run, so the checklist was skipping a step
+  the run genuinely performed. `tests/test_workflow_gates.py` and
+  `tests/test_verification_integration.py` now assert the two lists agree in **both**
+  directions — a phase the backend cannot emit stalls the checklist, and one it does emit
+  that the frontend omits hides real work.
 
 - `understanding.py` — Query Understanding + Query Expansion, over `llm.py` unchanged.
   Contains no `except`: a failed or malformed LLM response fails the request.
@@ -231,9 +283,254 @@ skips ranking and explanation in either case (running them would emit
 with real `concepts` and `query_count`, a measured `top_score` of 0, and an **empty**
 recommendation list.
 
-### Persistence: PostgreSQL stores completed runs, and nothing else
+### The verification branch: `verification_requested`, and the approval boundary
 
-Four tables, created by `backend/migrations/` (yoyo, applied with `python migrate.py`):
+**One conditional edge separates two pipelines.** `_route_after_understanding` sends a run
+with `verification_requested` to `decompose` and everything else straight to
+`search_orchestrator`; `_route_after_explain` sends a verified run on into the evidence
+layer and ends a search-only one. **A search-only run therefore traverses exactly the nodes
+it did before Gate C and emits exactly the same phases** — `tests/test_verification_integration.py`
+asserts both, because the SSE contract is live production behaviour a browser depends on.
+`run_graph_pipeline` gained a keyword-only `verification=` seed; `server.py`'s existing
+two-argument call is unchanged.
+
+The verified branch, in `graph/evidence_nodes.py` and `graph/verification_nodes.py`:
+
+```
+decompose -> search_orchestrator -> … -> explain
+          -> normalize_publications -> screen_dates -> enrich_epo
+          -> build_passages -> confirm_eligibility -> rank_and_reduce -> verify_features
+```
+
+`graph/evidence_nodes.py` wraps Gate B's pure modules and holds **no logic of its own** —
+`tests/test_verification_integration.py` asserts each node's output equals what the pure
+function returns for the same input, because behaviour reachable only through a compiled
+graph is behaviour that is hard to pin. Each node narrows `candidates` and appends to
+`publication_exclusions`; **an exclusion never becomes a cell**, and no code path here could
+make one.
+
+**The approval boundary is the point of this branch, and it is asymmetric on purpose.**
+`decompose_features_node` writes `candidate_decomposition`; `rank_and_reduce_node` writes
+`ranked_candidates`. Both are **machine output and never sufficient to verify against**.
+`verify_features_node` reads `approved_decomposition` and `approved_candidate_set` and
+nothing else — no flag, no keyword argument and no environment variable makes it read the
+candidate fields, and `tests/test_approval_boundary.py` asserts that at the AST level rather
+than by substring, so the docstrings that *name* the candidate fields in order to say they
+are never read do not mask a real read.
+
+**`backend/workflow/approvals.py` is the only module that writes an approved artifact.** A
+row in `feature_decompositions` or `candidate_sets` exists because a named human, at a
+recorded time, said it should. The schema's CHECK keeps `is_approved`/`approved_by`/
+`approved_at` consistent with each other, but nothing in a database can tell whether an
+email belongs to somebody who approved anything — so the write lives in one place and a grep
+test enforces it. `approved_by=""` is refused before the CHECK ever sees it, because it
+satisfies `IS NOT NULL` while naming nobody. Reads filter `is_approved` **in SQL**: an
+unapproved row is not fetched and then rejected, it is not fetched.
+
+**There is no auto-approval anywhere, and a production verified run cannot complete.**
+Workflow Gates A and B build the approval endpoints in Implementation Gate D. Until then the
+approved artifacts come from `backend/tests/harness.py`, which calls the same
+`workflow/approvals.py` functions under the same lease and **requires an approver on every
+call** — friction, not a shortcut. `verify_features_node` raises `UnapprovedArtifactError`
+**before any LLM call** when an approval is missing, unapproved or version-mismatched, so an
+unapproved run spends no quota and produces no cell. Nothing in `server.py`, `graph/` or
+`workflow/` imports the harness, and a test asserts that too.
+
+**Four reviewed constants. Three were APPROVED on 2026-08-28 by the repository owner**
+(`MATRIX_CELL_CAP = 75`, `MATRIX_CONCURRENCY = 1`, `RETRIEVAL_FLOOR = None`), and each is
+pinned by value *and* by behaviour in `tests/test_verification_integration.py` — a value-only
+test would pass against an implementation that truncated at 75 instead of raising.
+
+- `MAX_APPROVED_CANDIDATES = 15` — what a human can curate in one sitting; bounds the matrix.
+- `MATRIX_CELL_CAP = 75` — **more than 75 cells fails clearly and the matrix is never
+  truncated.** 76 cells raise **before any LLM call**, so an over-cap run spends nothing and
+  leaves no cell rows; a silently shortened matrix would present partial coverage as complete.
+- `MATRIX_CONCURRENCY = 1` — **verifier calls stay sequential until gateway concurrency is
+  measured** (spec §16 decision 5). Lens's trial tier already forced a global request lock
+  here once. A test observes actual call overlap rather than reading the constant, and an AST
+  test refuses a thread pool, because a pool sized 1 would satisfy the first and make a later
+  bump a one-character change.
+- `RETRIEVAL_FLOOR = None` — §16 decision 6 blocks the floor on the Qdrant/Qwen3-Embedding-4B
+  recalibration this file flags as outstanding, so the `NO_PASSAGE_OVER_FLOOR` reason is
+  unreachable, which is the honest state until somebody measures it. It is passed
+  **explicitly** at the call site rather than defaulted, and an AST test refuses any numeric
+  literal anywhere in the backend. **Do not invent a threshold.**
+
+**`PassageSetIneligible` is caught at the matrix level only.** It excludes that publication,
+removes it from the matrix, creates no cells, and does not fail the run — an exclusion means
+no comparison was attempted, which is exactly what happened. `VerifierCapabilityError`,
+`UnapprovedArtifactError` and everything else propagate and fail the run. `NOT_EVALUATED`
+and `VALIDATION_FAILURE` are **cell** states and always appear in the matrix as themselves.
+
+**Implementation Gate C's code is complete; Gate C's ACCEPTANCE is BLOCKED. Implementation
+Gates D and E are now built** (see the Human-in-the-Loop and SSE sections above), and they
+are built **behind** that block rather than around it: a verified run still cannot be
+admitted with `VERIFIER_CAPABILITY_ENFORCEMENT=required` and no eligible artifact, and no
+artifact was fabricated to make one possible. Spec §14.2.1 is implementation-blocking, and
+acceptance requires a real capability result recorded against the configured model and
+adapter revisions. **`NOT RUN` does not satisfy it, and neither does `eligible: false`.**
+The selected runtime is `gpt-5.4-mini-2026-03-17` at `reasoning_effort=medium` (owner
+decision 2026-08-31, `docs/decisions/2026-08-31-verifier-model-selection-gpt-5-4-mini.md`)
+and it is **MEASURED INELIGIBLE** by the 2026-08-31 targeted diagnostic: case E passed
+0/5, case I passed 1/3, and adversarial case G passed 3/3. The full 39-call gate was not
+run. The previous selection, `gpt-5.1-2025-11-13` at `high`, remains measured ineligible.
+There is no eligible artifact on disk and no code path that admits a verified run without
+one; admission was verified failing closed under the new configuration.
+
+**Four runtimes have now been measured against the real OpenAI API and none has qualified.
+The blocker is a measured model behaviour** — not a credential, not a network, and not
+structured output, which every model since `gpt-4o` has handled correctly. Full status in
+`docs/measurements/structured-output-capability-STATUS.md`; run it with
+`python -m verification.capability_test` (**39 paid calls** — six probes plus eleven §15.1
+cases at three runs each; exit 0 eligible, 1 measured and ineligible, 2 not run). A
+cost-bounded, structurally non-qualifying diagnostic runs individual cases:
+`python -m verification.diagnose E:5 I:3 G:3` writes one `diagnostic-case-*.json` per case,
+a filename namespace `capability.load_artifacts` does not read. A pass there is permission
+to spend the full gate, never a substitute for it.
+
+The diagnostic's repetition count is a **hard provider-call ceiling**. Each repetition
+disables transport retries, the malformed-output re-ask, and the outer operational retry;
+production verification keeps all three bounded policies unchanged. This was added after
+a missing local `openai` package expanded eight requested diagnostic runs into 24 local
+attempts (zero provider calls and zero token usage). The successful 2026-08-31 rerun made
+exactly 11 provider calls and used 37,553 prompt plus 9,807 completion tokens, approximately
+USD 0.0723 at the published GPT-5.4 Mini token prices.
+
+- **2026-08-31, `gpt-5.4-mini-2026-03-17` at `reasoning_effort=medium`, targeted
+  diagnostic, 4 of 11, exit 1.** Case E passed **0/5**: three runs returned the wrong
+  conservative-ambiguity outcome and two failed consistency check 15. Case I passed
+  **1/3**: two runs omitted the required quoted link across the claim and its dependent.
+  Adversarial case G passed **3/3**. There were no operational failures and no retries.
+  Records: `diagnostic-case-E-2026-08-31-111023.json`,
+  `diagnostic-case-I-2026-08-31-111037.json`, and
+  `diagnostic-case-G-2026-08-31-111047.json`.
+
+- **2026-08-29, `gpt-5.1-2025-11-13` at `reasoning_effort=high`, targeted diagnostic, 8 of
+  11, exit 1.** Owner decision selected this model after `gpt-5-mini` failed at both effort
+  settings. Eleven calls — case E ×5, case I ×3, case G ×3 — through the production payload
+  builder, with **zero** operational, canonical-validation and consistency failures. **Case G
+  passed 3/3**: the prompt injection was ignored and every status matched §15.1 exactly.
+  **Case E failed 0/5, and it failed *stably*** — five identical runs calling E3 `NOT_FOUND`
+  where §15.1 says `UNCLEAR`, treating an unresolvable reference to an unsupplied figure as
+  absence. That shape would have *passed* runner v4, which gated on stability alone. Higher
+  reasoning effort is not the lever: this model spent **900-2626** reasoning tokens on case E
+  against `gpt-5-mini`'s 4096-7872 at the same setting, reasoning less and being wrong more
+  consistently, and the 16000 allowance was never approached. **Case I failed 0/3** with the
+  right outcome and every status correct — `combination_basis` never quoted the linking text
+  §15.1 I requires, which check 14 alone cannot catch because it demands a justification only
+  when a requirement cites more than one chunk. **The full 39-call qualification was NOT
+  run**, and Gate D was not started.
+- **2026-08-28, runner v2, exit 1.** OpenAI strict Structured Outputs rejected the §10 schema
+  with a deterministic HTTP 400 — `verification_scope` carries a `const` with no `type` — so
+  every verifier call failed before the model was reached. Fixed by the canonical/wire split
+  below.
+- **2026-08-29, runner v4, `gpt-5-mini-2025-08-07`, exit 1.** Owner decision selected this model
+  after `gpt-4o` failed. Probes 1-6 pass. Probe 7 ran the **full** §15.1 suite — eleven cases, three
+  runs each, 33 calls — with **zero** operational, canonical-validation or consistency failures,
+  and ten of eleven cases stable and matching their expectation. Case C, which disqualified
+  `gpt-4o`, is now correct. **Case E is not**: `UNCLEAR`, `PARTIALLY`, `PARTIALLY`.
+- **2026-08-29, `OPENAI_REASONING_EFFORT=high`, case-E diagnostic, 0 of 5.** An owner
+  quality-over-cost amendment, probed with `python -m verification.diagnose E` (five calls,
+  structurally non-qualifying) rather than by re-spending the 39-call gate. It did not improve; it
+  changed shape. Four of five judged E3 `NOT_FOUND` rather than `UNCLEAR` — treating an
+  unresolvable reference to an unsupplied figure as absence — and the one run with the **correct**
+  statuses failed **§9 check 14**, citing two chunks with no `combination_basis` justifying the
+  link. Reasoning tokens ran 4096-7872 against the 9940 ceiling, so the +8000 allowance is
+  confirmed sufficient. **The full qualification was not run**, per the rule that a failing
+  diagnostic stops before it.
+- **2026-08-29, runner v3, `gpt-4o-2024-08-06`, exit 1.** **Probes 1-6 pass**: strict structured output is exposed,
+  the wire schema is accepted, required fields, closed enums and `additionalProperties: false`
+  are all honoured, and the full verifier output was accepted *and* passed canonical
+  validation. **Probe 7 fails**: 3 of 12 stability calls rejected at §9 **check 15**, all on
+  §15.1 case C, stably — the model returns correct per-requirement statuses
+  (`FOUND`/`NOT_FOUND`/`NOT_FOUND`) and then contradicts them with
+  `NO_DISCLOSURE_FOUND_IN_SUPPLIED_PASSAGES` where §6 rule 5 derives
+  `PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES`. Measured malformed-response rate **0.25**.
+
+**Probe 7 gates on correctness as well as stability, since runner v5** (owner decision
+2026-08-29). Every run is compared against §15.1's own Expected column — the outcome, the
+per-requirement statuses that section *names*, and the `combination_basis` link it requires
+quoted verbatim for cases A and I. Under v4 a model returning the **same wrong answer three
+times** was stable and therefore passed; `expected_outcome` was recorded and never gated on,
+and `gpt-5-mini` failed case E only because its wrong answers happened to disagree with each
+other. The expectations are **transcribed** from §15.1 and never reasoned to: case E carries
+`E3 -> UNCLEAR` and stops there, because `outcome == UNCLEAR` under §6 rule 4 already forces
+the rest. `tests/test_stability_coverage.py` pins it with a stably-wrong response that v4
+would have passed. This is a strengthening — no check was relaxed and no expectation moved.
+
+**That check-15 failure is not a defect here, and the fix for it is not available to an
+implementer.** §6's derivation is correct and pinned against the spec, and the §3 system
+prompt deliberately carries *no* outcome-derivation instruction — §6 makes the model's own
+`outcome` "a consistency check on the model's own reasoning, never the source of truth", so
+teaching it the rule would make check 15 tautological. Do not weaken check 15, do not edit the
+prompt to make the model agree, and do not relax the zero-malformed eligibility rule. §14.2.2
+point 5 makes selecting another model an explicit recorded owner decision.
+
+**Two schema layers since the 2026-08-29 amendment**
+(`docs/decisions/2026-08-29-canonical-and-wire-schemas.md`, spec §10.2/§14.2.3/§14.2.4).
+`RESPONSE_JSON_SCHEMA` stays §10 verbatim and stays the authority; `verification/wire.py`
+renders it into the subset OpenAI strict mode accepts, and that rendering is what
+`provider_response_format` sends. The wire copy drops `minLength`, `minItems`, `maxItems` and
+`uniqueItems` (plus the `$schema`/`title` metadata) and adds an explicit `type` beside every
+`const`/`enum`. **Every dropped keyword is enforced locally instead** — pydantic for the first
+three, `UNIQUE_ITEM_FIELDS` in `checks.parse_response` for the fourth — and
+`tests/test_wire_schema.py` proves each one by constructing a response that violates it.
+**This is a compatibility adaptation, not a weakening**: §14.1 stands, validation strictness
+does not vary by provider, and provider acceptance of the wire schema is necessary and never
+sufficient. The transformation is pure, deterministic, versioned, never mutates the canonical
+object, and **fails closed** on any construct it has not been taught to render. `maxLength`
+stays in the wire copy because OpenAI accepts it, and is enforced canonically regardless.
+
+**Four ways this runner has been wrong, all now pinned offline by
+`backend/tests/test_capability_runner.py`:** a DNS failure classified as a provider rejection
+(for probes 3-5 a rejection used to be a *pass*, so an offline run "qualified" five of seven
+probes against a gateway it never contacted); a *missing credential* classified the same way,
+which wrote an eligible-looking artifact on a machine with no key; an **HTTP 429** classified
+the same way, alongside a stability probe that scored its own twelve HTTP 400s as
+`malformed_response_rate: 0.0` and `all_cases_stable: true`; and a record written when nothing
+was measured, where `"eligible": false` is indistinguishable from *tested and failed*.
+
+Runner v3 splits the vocabulary in two and that split is the whole fix. **Semantic** —
+`PARSED`, `UNPARSEABLE`, `MODEL_REFUSED`, `TOKEN_CEILING` — the model answered.
+**Operational** — `SCHEMA_REJECTED`, `BAD_REQUEST`, `RATE_LIMITED`, `AUTH_FAILED`,
+`PROVIDER_ERROR`, `UNREACHABLE` — it did not. **No operational outcome can satisfy a probe or
+contribute a passing term, and one anywhere abandons the whole record** (exit 2, nothing
+written), so an artifact existing means something was measured. **A rejection is no longer a
+pass for probes 3-5**: under strict Structured Outputs the provider *prevents* the violation,
+so the success condition is a genuine response that conforms despite being told to violate the
+schema. `malformed_response_rate` is `null`, never `0.0`, when no valid response was received,
+and a case with an operational failure is never `stable`. Transient failures get bounded retry
+— `Retry-After` honoured, capped in attempts *and* total wait, injectable sleeper so no test
+ever sleeps — and deterministic 4xx, schema rejections, auth failures, token ceilings and
+refusals are never retried.
+
+`llm.decompose_features` is the component §16 decision 8 leaves unassigned, named explicitly
+in `llm.DECOMPOSITION_COMPONENT` so it *can* be assigned. Requirement quality caps evidence
+quality; whether an instruct model is the right thing to propose decompositions is an owner
+decision, recorded as open rather than settled by default.
+
+### Persistence: PostgreSQL stores completed runs and the durable-workflow schema
+
+**Thirty-four tables now, created by `backend/migrations/` (yoyo, applied with
+`python migrate.py`), plus four more that yoyo deliberately does not own.** The first four
+below are the original search schema and are the only ones the *search* endpoints touch.
+Migrations `0006`-`0023` add the durable-workflow schema; `0021` adds the invention
+understanding stage's three tables and the two optional Stage 1 columns on
+`verification_runs` (see "The Invention Understanding stage" below), and `0022`/`0023` add
+the search strategy stage (see "The Search Strategy stage").
+
+**`0022` exists only to add one enum label, and it is deliberately non-transactional.**
+`ALTER TYPE ... ADD VALUE` cannot have its new label *used* by any statement in the
+transaction that added it, and yoyo wraps each migration in one — so the label
+(`workflow_gate` gains `STRATEGY`) is added and committed by itself, and `0023` creates the
+tables in a later transaction. The forward file carries `-- transactional: false`, which is
+the form that is safe on every PostgreSQL version rather than only on 12+. Its rollback is a
+documented **no-op**: PostgreSQL has no `ALTER TYPE ... DROP VALUE`, and removing one would
+mean rebuilding the type and re-pointing every dependent column *and function signature*
+(`pause_run_for_review` takes a `workflow_gate`) — a destructive rewrite in the rollback of
+a purely additive change. The label is inert with no row using it, `0006`'s own rollback
+drops the type wholesale, and re-applying `0022` is a no-op by `IF NOT EXISTS`. Verified by
+rolling `0023`/`0022` back and re-applying against the Compose database.
 
 - **`patents`** — every patent that has appeared in a stored report, keyed by the same
   `id.strip().upper()` `merge_patents()` dedupes on. **It is not a cache.** Nothing reads
@@ -246,6 +543,52 @@ Four tables, created by `backend/migrations/` (yoyo, applied with `python migrat
   literally hardcoded) and meaningless read back weeks later.
 - **`search_run_matches`** — one row per `patents[]` entry, in rank order, FK'd to both.
 - **`users`** — login accounts. See the auth section below.
+
+The durable-workflow tables, from migrations `0006`-`0015`. `backend/workflow/` is their
+only read/write surface, the way `reports.py` is for the four above:
+
+- **`verification_runs`** — one reviewed workflow execution, owned by `created_by`. Carries
+  the event-log sequence allocator and the replay watermark. **Not** a search-only run;
+  `search_runs` still records those.
+- **`run_status_transitions`** — the nine permitted status *updates*, as data. A trigger
+  reads it. Creation is absent by design (see the section below).
+- **`run_leases`** — one permanent row per run: the fencing counter. Never deleted while
+  the run exists.
+- **`node_attempts`** — one row per *physical* execution attempt, scoped by
+  `execution_key`. At most one `COMMITTED` per logical execution; `FENCED` rows are kept so
+  a duplicate provider read is visible rather than hidden.
+- **`workflow_events`** — the replayable per-run event log. Closed type vocabulary, one
+  terminal, nothing after it.
+- **`idempotency_records`** — bookkeeping for the §8.2 transaction. Keyed by the
+  authenticated user as well as the resource.
+- **`feature_decompositions`**, **`decomposition_elements`**,
+  **`decomposition_relationships`**, **`decomposition_requirement_ids`** — the
+  human-**approved** decomposition only. Machine output is never stored here.
+- **`candidate_sets`**, **`candidate_set_members`** — the human-**approved** candidate set.
+  A ranked list is machine output and is not one of these.
+- **`publication_dates`**, **`publication_exclusions`** — date screening and the three
+  publication-scoped `EXCLUDED_*` states. An exclusion is never a matrix cell.
+- **`evidence_passages`** — the passage of record. A CHECK allows only `CLAIMS` and
+  `DESCRIPTION`, so no application bug can route an abstract into a prompt.
+- **`verification_cells`**, **`verification_results`** — the matrix and its immutable
+  machine results.
+- **`cell_reviews`**, **`cell_waivers`**, **`review_audit`** — human overlays stored
+  *beside* the machine result, never over it. `review_audit` is append-only.
+- **`report_versions`** — draft and approved report versions.
+- **`search_strategy_proposals`** — the search stage's machine output and human edits.
+  **No `is_approved` column and no approver columns**, exactly like
+  `understanding_proposals`: a row here cannot record an approval because there is no field
+  in which one could be recorded. `workflow/strategy.py` is its only writer.
+- **`approved_search_strategies`**, **`approved_strategy_queries`** — the human-**approved**
+  strategy, and one row per approved query. **Disabled queries are stored, not dropped**:
+  "we deliberately did not search for this" is part of what was approved and part of what
+  the report has to be able to state. `covered_element_ids` is the coverage claim.
+- **`strategy_regeneration_requests`** — the work request behind
+  `POST /api/runs/{id}/strategy/regenerate`.
+
+**Four more tables belong to LangGraph, not to yoyo**: `checkpoints`, `checkpoint_blobs`,
+`checkpoint_writes` and `checkpoint_migrations`, created by `python checkpointer.py setup`.
+See the durable-workflow section for why two migration systems must not share them.
 
 `backend/reports.py` is the whole read/write surface: `save_report` and `list_history`.
 `backend/db.py` is a one-function psycopg3 helper (autocommit connection per request);
@@ -271,6 +614,924 @@ user's Clear all wipes everyone's history.
 **There is still no caching of any kind**, and re-adding it is a design decision, not a
 restoration. See the Local infrastructure section for exactly what was and was not brought
 back from `15914d10^`.
+
+### Durable workflow execution: the executor, the lease, and the event log
+
+**`POST /api/runs` now admits a durable run, the gates are wired into the graph, and
+`backend/api/` serves the verified-run surface** (Implementation Gates D and E).
+`POST /api/analyze` and `/api/analyze/stream` are unchanged: same inline execution, no run
+row, no lease, no event log, and **no `id:` line** (spec §3.2).
+
+Below is what Gate A built and still describes accurately.
+`POST /api/analyze` and `POST /api/analyze/stream` keep their exact behaviour — inline
+execution driven by the HTTP request, no run row, no lease, no event log, no `id:` lines —
+and there is no `POST /api/runs` to create a durable run with. What exists is the machinery
+a *verified* run will need, built and tested ahead of the graph that will use it
+(Implementation Gate A of
+`docs/prompts/integrated-feature-verification-workflow-implementation.md`).
+
+**`server.py` is not untouched, and it is worth being precise about how.** It participates
+in exactly one way: as an **optional local host** for the executor. Its `lifespan` reads
+`WORKFLOW_EXECUTOR`, and on `inprocess` it starts the executor loop on a daemon thread and
+stops it at shutdown. On `worker` — the default, and production — it starts nothing. No
+request handler executes a graph on the executor's behalf, no endpoint's behaviour changed,
+and `BackgroundTasks` is not used for any of it. Production runs `python -m workflow.worker`
+as a separate workload; the in-process host exists so a developer can drive the whole thing
+from one terminal.
+
+**The standalone verifier is still not connected to any of this.** `backend/verification/`
+is complete and tested, and nothing in `graph/`, the executor, or the API calls it — see its
+own section below for why that is deliberate at the end of Gate A.
+
+**Why it exists at all.** A LangGraph Postgres checkpoint stores state; it does not
+continue execution. Nothing in LangGraph restarts a run after the process driving
+`graph.stream()` goes away — and in the search pipeline that driver *is* the HTTP request,
+so a closed browser tab ends the run. That is fine for a 60-second search and fatal for a
+run that pauses for human review measured in minutes to days.
+
+**The executor is a separate, database-driven loop** (`backend/workflow/executor.py`):
+poll → acquire a lease → **reconcile** → execute → transition → release.
+
+- **`python -m workflow.worker` is a second workload**, deployed alongside the API
+  (`openshift/06-worker.yaml`, same image, command overridden). Without it a run admitted
+  by the API sits `QUEUED` forever; adding API replicas does not help, because the API
+  never executes a graph.
+- **`WORKFLOW_EXECUTOR=worker|inprocess` selects the host process, not the
+  implementation, and `server.py`'s `lifespan` honours it.** `inprocess` starts the
+  identical loop on a daemon thread at API startup and stops it at shutdown — still
+  lease-protected, still database-driven, still recovering after a restart — and refuses
+  to start a second one in the same process. `worker` (the default) starts nothing at
+  all. **This is not the deleted `PIPELINE` flag pattern**: that flag chose between two
+  parallel implementations; this chooses where one implementation runs, and
+  `InprocessExecutor` is a thin host around the same `Executor` class rather than a
+  second one. An unknown value, an invalid lease pair, or `inprocess` with no
+  `WORKFLOW_GRAPH_ADAPTER` **fails API startup** — there is deliberately no mock
+  fallback, because silently substituting the deterministic adapter would let a
+  deployment believe it was running real verification while it fabricated everything.
+- **FastAPI `BackgroundTasks` is forbidden as the executor**, even temporarily. It dies
+  with the process, has no lease, no recovery and no visibility. A test greps for it.
+- **The worker refuses to start** on an invalid lease configuration or with no
+  `WORKFLOW_GRAPH_ADAPTER` configured. Neither is silently defaulted: a default that
+  quietly overrides a deliberate setting is how a misconfiguration survives a deploy, and
+  an executor with no graph would claim runs it cannot advance. There is no verification
+  graph yet, so `python -m workflow.worker --mock` drives a deterministic adapter that
+  makes no outbound HTTP calls.
+
+**Run states**: `QUEUED`, `RUNNING`, `WAITING_FOR_REVIEW`, `RESUMING`, `COMPLETED`,
+`FAILED`. **Creation is not a transition** — a run is *born* `QUEUED` by insert invariant,
+because a primary-key column is implicitly `NOT NULL` so a `(NULL, 'QUEUED')` row cannot
+exist, and a synthetic `NEW` state would put a value in the enum nothing ever observes.
+The nine permitted **updates** live in the `run_status_transitions` table and are enforced
+by a trigger; `COMPLETED` and `FAILED` have no outgoing rows at all, which is what makes
+"terminal" a database property. **A lease takeover does not change status** — status tracks
+workflow position, the lease tracks who may advance it.
+
+**The lease is a permanent fencing counter, not a record of the current holder.** One row
+per run, created *with* the run at token 0, released by **clearing the holder**, and
+removed only by the run's cascade. Release leaves `fence_token` exactly where it was, so a
+superseded token is burned forever. An earlier design deleted the row on release and the
+next acquisition inserted a fresh one at token 1 — and a recycled token is
+indistinguishable from a live one, so a worker fenced at token 3 whose `owner_id` happened
+to regenerate identically could commit under authority it never held.
+
+- **One expiry boundary, everywhere.** Active is `expires_at > now()`; claimable is
+  `expires_at <= now()`. Exact negations, so there is no instant at which the old lease is
+  inactive and the new worker cannot yet claim it.
+- **A heartbeat extends an active lease and can never revive a dead one.** Reactivation is
+  `acquire_run_lease`'s job alone, and it always increments. A failed beat returns `FALSE`
+  and changes nothing at all — the documented asymmetry, because it runs on a thread whose
+  job is to answer "do we still hold this?". Every *other* lease-sensitive path raises
+  `FN001`.
+- **A stale or repeated release raises `FN001`**, not a silent no-op: a worker releasing a
+  lease it no longer holds has been operating on a false belief about its own authority.
+- **Nothing deletes a lease row.** There is deliberately **no** `BEFORE DELETE` trigger —
+  a row-level one fires for cascaded rows too and would have made deleting an approved
+  parent run impossible. The guarantee is a source contract plus privilege revocation where
+  the deployment has roles.
+
+**One mandatory lock order, held to commit, in every lease-sensitive operation:**
+`verification_runs FOR UPDATE`, then `run_leases FOR UPDATE`. Holding the lease row — not
+merely reading it — is what makes fencing hold for the whole transaction; validating and
+then writing leaves a window a takeover slips through. One order also prevents deadlock,
+and `tests/test_lease_races.py` asserts both against real PostgreSQL with two connections.
+
+**Four authorized event writers, and no generic append.**
+
+| Writer | Authority | May append |
+|---|---|---|
+| `create_run` | admission — no lease exists yet | the seq-1 `queued` progress event, with the run row |
+| `append_worker_event` | worker, **fenced**, `RUNNING` only | `progress`, `verification_progress` |
+| `pause_run_for_review` | worker, fenced | `review_required` + `paused`, with the transition and the release, in one transaction |
+| `append_api_event` | API, **ownership-scoped** | `resumed`, and nothing else |
+| `finalize_run_success` / `finalize_run_failure` | worker, fenced **and atomic** | `result` / `error` — the only terminal writers |
+
+A generic `append_workflow_event(run_id, type, ...)` would take no owner and no fence
+token, so a fenced worker could keep writing and a terminal event could exist without the
+status transition that belongs with it. Both are execution-integrity holes, and a test
+greps the backend to keep it deleted. `is_terminal` is a CHECK-enforced function of the
+event type, a partial unique index allows **at most one** terminal per run, and nothing of
+any type may be appended after it. **`workflow/events.py` is the only module that writes
+`workflow_events`**, the way `reports.py` is the only module that writes the search tables.
+
+**What the lease guarantees, and what it cannot.** At most one current holder, fence tokens
+that only ever increase, exactly one authorized state writer, and a fenced worker that
+persists nothing. It does **not** make external calls exactly-once: a worker can lose its
+lease while blocked inside an outbound call, and that call still completes and is still
+billed. **External calls are at-least-once across recovery.** Guard the commit, record the
+attempt, disclose the duplicate read — and never write "exactly once" about this system.
+
+`node_attempts` is what makes the duplicate read *visible*: one row per **physical**
+attempt, carrying an `execution_key` that identifies the **logical** invocation. At most one
+attempt per key may be `COMMITTED` (partial unique index). Scoping by `(run_id, node)`
+alone would forbid every legitimate repeat — a cell rerun, a second `result_version`, a
+re-verification against changed passage text, an ordinary LangGraph loop. For a graph node
+the key is the **stable checkpoint task id**, which LangGraph keeps identical across a crash
+recovery and across a resumed interrupt. The executor derives it from trusted graph state;
+a client-supplied key is rejected.
+
+**All four attempt mutations are fenced** — opening, committing, failing and closing —
+through SQL functions taking the same mandatory lock order (migrations `0007` and `0016`).
+Only `commit_node_attempt` was fenced originally, and the gap that mattered was
+`fail_node_attempt`: **`FAILED` and `FENCED` are different facts**, so a stale worker
+marking its own attempt `FAILED` overwrote the `FENCED` reconciliation was about to apply
+and erased the very duplicate-read record this table exists for. A fenced worker now gets
+`FN001` and leaves its attempt `RUNNING`, which is exactly the state
+`close_superseded_node_attempts` looks for — and that function is itself fenced, so the one
+operation whose purpose is recording who lost authority is authority-checked too. **A
+fenced worker never writes telemetry using the authority it just lost**, and the marking is
+always done by the *new* holder under its own valid lease.
+
+**Reconcile runs before anything else on every acquisition**, because LangGraph commits its
+checkpoint in its own transaction which this work does not join. Three crash boundaries
+exist between that commit and ours, and one `pause_run_for_review` call repairs all three,
+because the dedupe keys are functions of the **checkpoint** rather than of the attempt. The
+event log is repaired **forward only** — never rewritten, never deleted, never renumbered,
+because a client that already received event 17 must never be told 17 now means something
+else.
+
+**Idempotency is a transaction, not a unique index** (`workflow/idempotency.py`). A unique
+index prevents a duplicate row; it cannot make a multi-statement mutation replay-safe,
+cannot return the original response body, and cannot tell a retry from a conflicting reuse
+of the same key. The loser of a race **blocks** on `SELECT … FOR SHARE` until the winner
+commits, so concurrent identical requests produce exactly one mutation, and a rolled-back
+transaction leaves no record and frees the key.
+
+**Every run is owned.** `verification_runs.created_by` is the ownership key, and every
+run-scoped function in `workflow/store.py` takes an `actor_email` and filters on it *in the
+same query that fetches the run* — never fetch-then-compare in Python, where a missed
+comparison is a data leak while a missed `WHERE` clause is merely a no-result. Another
+user's run answers `RUN_NOT_FOUND`, never 403. Executor-only readers are named `_system_*`
+and a test asserts the HTTP surface never reaches one. **With one shared seeded account
+this scoping is real but attributes every decision to the same person** — a disclosed
+limitation, not a solved problem.
+
+**Every persisted failure is sanitized at the last boundary** (`workflow/redaction.py`).
+The executor writes a failure's text into the terminal `error` event and into
+`verification_runs.failure_detail`, and the API reads both back — so that is where an
+untrusted exception is scrubbed, *in addition to* whatever the provider did. It has to be:
+`_safe_detail` originally returned the first line of `str(error)` unchanged, and an ordinary
+SerpAPI quota failure carries the request URL, which carries the key. Credential-bearing URL
+parameters, DSN userinfo, `Authorization` headers, bearer tokens, response bodies and
+tracebacks are all removed; the actionable facts — provider, HTTP status, workflow step —
+survive, because "SerpAPI returned 429" is the whole point of showing the user anything. A
+`WorkflowError` is *trusted* and keeps its (redacted) message, since the SQL functions
+interpolate run ids, statuses and tokens and nothing else; any other exception is **rebuilt**
+from allow-listed facts rather than passed through, because pattern-matching is never
+complete. Redaction never softens the failure: a sanitized failure is still `FAILED`, with
+its code.
+
+**No in-memory fallback anywhere.** If the lease store, the checkpointer or the event log is
+unreachable, the worker **stops**. It does not continue in memory and it does not present
+success. There is no `error` event in that case either, and saying otherwise would be a
+claim the system cannot honour — an `error` event cannot be persisted while the event log
+is unreachable. The run keeps its last committed state, and a later reconcile records the
+sanitized infrastructure failure when there is finally somewhere to write it.
+
+**`CheckpointUnavailable` means the checkpointer, and only the checkpointer.** The
+`checkpointer()` context manager guards construction and teardown; the `yield` is
+deliberately *outside* the guard. An earlier revision wrapped the body too, so every
+exception a caller raised came back through the generator and was relabelled — a
+`FencedError` (a worker correctly discovering it lost its lease) was reported as a database
+outage, and so was a plain `ValueError` from a graph node. That changed *behaviour*, not
+just wording: `run_forever` treats `CheckpointUnavailable` as "persistence is gone, wait and
+retry" rather than "this run failed". Its message is built from the **parsed** DSN — host,
+port, database — never echoed from the driver, so no password or query-string credential can
+reach a log or a stored `failure_detail`.
+
+**The checkpoint is not the event log, and LangGraph owns its own tables.** A checkpoint
+answers "where is execution?"; `workflow_events` answers "what has the client been told?".
+`PostgresSaver.setup()` creates and migrates `checkpoints`, `checkpoint_blobs`,
+`checkpoint_writes` and `checkpoint_migrations`, tracking its own version in the last of
+them — **yoyo deliberately does not own them**, because two migration systems on the same
+tables conflict the first time either side changes a column. Run it separately:
+
+```
+python migrate.py            # yoyo, backend/migrations/
+python checkpointer.py setup # LangGraph's four checkpoint tables
+```
+
+**`config.Settings` keeps every credential out of its own `repr`.** `repr(settings)` used
+to print five live credentials — `HF_TOKEN`, `SERPAPI_KEY`, `LLM_API_KEY`,
+`EMBEDDING_API_KEY` and `AUTH_SECRET` — so anything that rendered the object carried them: a
+pytest failure report, a log line, an f-string in an exception. It was found exactly that
+way, by an unrelated test failure printing the real keys. Every credential-bearing field is
+now `field(..., repr=False)`, `database_url` included because a DSN carries its password in
+the userinfo. `workflow/redaction.py` scrubs at the *persistence* boundary and never sees an
+object's own string form, so these are two different defences and both are needed. A new
+secret field needs the same declaration — `tests/test_secrets_do_not_leak.py` asserts it on
+the dataclass, not on today's values, because an empty field would pass a value check while
+still leaking wherever it is set.
+
+### Gate F: the review screens, and a real frontend test runner
+
+`frontend/src/app/screens/` holds one screen per workflow gate --
+`understanding-review` (A), `strategy-review` (STRATEGY), `candidate-review` (B),
+`evidence-review` (C),
+`draft-review` (D) -- plus `gate-shell` (the shared frame, the **thirteen**
+states, `STAGE_LABELS`, and `classify`) and `verification-report` (the rendered
+report, used by both the Gate D draft and the approved view). One generic editor
+was tried first and replaced: the gates enforce different completion rules, and a
+single screen could not implement any of them faithfully.
+
+`decomposition-review.ts` is **deleted**, not renamed: the screen that replaced it
+asks a different question of a different artifact. `classify` moved out of it into
+`gate-shell.ts` when it went -- it is shared by every gate screen and belongs with
+the shared frame rather than in one screen the others imported from.
+
+**Thirteen states, and collapsing any two would report one situation as
+another** -- the backend's zero-tolerance policy, moved into the UI: `loading`
+(not `empty`), `empty` (a real result, not a failed fetch), `review`,
+`validating`, `waiting`, `paused`, `resuming` (the executor has *not* picked it
+up yet), `blocked` (**every** condition listed), `stale` (never resubmitted),
+`forbidden` (`RUN_NOT_FOUND`, and the screen does not guess which kind),
+`reconnecting` (**a client problem, never a run failure**), `failed`,
+`completed`.
+
+**There is now a real frontend test runner.** `npm test` runs Vitest through
+`@angular/build:unit-test` against the actual components -- **86** specs covering
+the API client, the SSE reader, the cursor, account-namespaced run persistence,
+every gate screen, and the final report. Spec Gate F said not to invent one *in
+that gate* and that adding one is its own proposal; the owner made that proposal
+on 2026-08-30. `vitest.config.ts` pins `pool: 'threads'` because the default
+`forks` pool never starts a worker on this machine.
+
+`backend/tests/test_frontend_review_contract.py` remains as a **second** layer for
+what a component test cannot see: the dark-mode pairing for every state class, and
+the backend/frontend vocabulary agreement.
+
+### Results and evidence, and the final report, in words an inventor reads
+
+The stages after the search strategy were rebuilt the way the understanding and
+strategy stages were: same mechanism, same approval boundary, different
+experience. `STAGE_LABELS` already mapped `B` and `C` to **"Results and
+evidence"** and `D` to **"Final report"**; the screens now match, and the internal
+gate letters appear nowhere on any of them.
+
+**`frontend/src/app/models/vocabulary.ts` is the one place a machine code becomes
+words**, and it is a *translation*, never a shortening. Every label for a scoped
+code keeps its scope -- `NOT_FOUND_IN_SUPPLIED_PASSAGES` renders as "Not found in
+the passages examined", never "not disclosed", which CLAUDE.md already called the
+same class of defect the zero-tolerance policy forbids. The label is longer than
+the code because the code is a symbol and the label is what the symbol meant.
+
+Three properties are load-bearing and each is pinned:
+
+- **The code is never thrown away.** Every screen renders the sentence *and* the
+  code beside it (`.machine-code`), because a report showing only prose is
+  unusable as an audit document and one showing only codes is what this work
+  replaced. The `<select>` a reviewer picks a status from carries the **enum** as
+  its value; only the text is translated.
+- **`describe()` never guesses.** A code with no entry renders as itself, so a
+  backend enum that gains a member surfaces as a raw value rather than as the
+  nearest neighbour in the table. A test asserts the tables are total against
+  `Status`, `Outcome`, `CellState` and `PublicationExclusion` *read from the
+  Python enums*, so that fallback stays a guard rather than the normal path.
+- **No two codes in a table share a label.** Collapsing two would let a reader
+  confuse "we looked and found nothing" with "we never looked".
+
+**Gate C's reviewed-outcome mirror disagreed with `derive_outcome`, in the one
+direction that matters.** It tested "any unclear and nothing not-found?" first, so
+a capability with nothing found, something not found and something unclear
+(`found = 0`, `notFound > 0`, `unclear > 0`) rendered as
+`PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES` -- a disclosure claim the application
+does not make, on the one screen whose job is to let a reviewer check exactly
+that. `verification/outcome.py` derives `UNCLEAR` there and says why: the
+ambiguity might have resolved in favour of disclosure, so it must not be rounded.
+The mirror is now written in `derive_outcome`'s own rule order so the two can be
+compared line by line, and a spec drives all seven cases.
+
+**Four sections of the final report read a shape `graph/report.py` does not
+produce, and every one failed as a plausible true negative.** That is what makes
+this class worth naming: "Gaps accepted without being resolved (0), None" reads
+exactly like a run with nothing to disclose.
+
+- **Waivers were read from a top-level key the draft builder never writes.** It
+  attaches each waiver to its own matrix entry, so a report with waivers showed
+  none -- in the one section whose entire purpose is disclosing a gap a reviewer
+  chose not to close.
+- **`unresolved` is a list of entries and was read as a dict of counts**, so every
+  report showed three zeroes. The list also carries the failing check, which a
+  count cannot and which §9.1 requires be printed beside the comparison.
+- **`machine_outcome` was read as `outcome`**, so the system's own result was
+  blank on every row.
+- **An excluded publication was read under the wrong key** -- and the fix had to
+  go in the **backend**, because `build_draft` read `publication_number` from an
+  exclusion payload that has never carried it (`_exclusion_payload` writes
+  `requested_number`/`normalized_number`). **Every draft ever built stored
+  `null`**, so the report listed a count of publications it could not name. On a
+  product whose measured EPO coverage is 17.6%, the exclusion list is where a
+  reader learns what the run could not reach, and a reason attached to no
+  identifier discharges neither half of "visible and reasoned". `_excluded_entry`
+  now emits both keys plus `sections_retrieved`/`passages_built`, which are what
+  make a derived exclusion auditable.
+
+The report also now prints the reviewer's **comments and caveats** (typed at Gate
+D, stored by `approve_report`, and previously never rendered anywhere) and the
+draft's own stored `coverage_statement`, so an approved report carries the
+sentence that was approved rather than whatever the component would say today.
+
+`backend/tests/test_draft_report.py` is new and covers `build_draft` directly --
+it is pure, so none of it needs a graph, a database or a run.
+
+**The gate rules a reviewer reads are the server's, said in plain words**, paired
+one-to-one and in the same order with `GATE_B_RULES`/`GATE_C_RULES`. Only the
+counts can be compared, which is deliberately weak and the strongest check
+available: the two lists say the same thing in different words. What it catches is
+the failure that happens -- a rule added on the server with no gloss here, leaving
+a reviewer held to a condition the screen never states.
+
+**An `sr-only` caption is rendered text.** The terminology check reads captions
+along with everything else and strips only HTML comments and binding expressions
+(the first never reach the DOM, the second are TypeScript). It immediately caught
+a caption reading "Verification cells" -- shown to the reader with the least other
+context for it.
+
+### The two human work requests, carried out by the worker
+
+`POST /api/runs/{id}/candidates` and `POST /api/runs/{id}/cells/{id}/rerun` record
+a request and return `202`; `graph/work_requests.py` is where the **worker**
+carries it out, under the lease, inside the graph.
+
+**A manually added publication re-enters the pipeline; it does not skip it.**
+`gate_b` routes to `absorb_manual_candidates`, which adds the number to
+`candidates` and sends the graph **back to `normalize_publications`** -- the real
+nodes, not a second implementation of their rules. Case T means that literally: a
+manual candidate that fails screening lands in `publication_exclusions` exactly
+like a discovered one, and the loop returns to Gate B so a human approves the
+widened set.
+
+**A rerun supersedes; it never edits.** `gate_c` routes to `rerun_cells`, which
+re-verifies only the named cells with only the named context and writes a **new**
+`result_version` carrying `source_result_version` back to the one it came from.
+Every other cell is untouched, the prior version stays immutable, and the graph
+returns to Gate C so the reviewer sees the answer to the question they asked.
+
+Both are idempotent **in the database**, not through a flag in state: each request
+row is claimed by stamping `processed_at` under the lease, so the at-least-once
+execution the lease provides (§3.3.1) cannot process one twice. Claimed rows are
+**kept, not deleted** -- the row is the evidence that a person asked and the worker
+acted, and the report's audit appendix needs it.
+
+### The four-gate mock, and how a verified run is exercised for free
+
+**`python run_mock.py --workflow` is the deterministic four-gate mock**, and it is
+the thing that makes every claim below checkable at zero cost. It serves the real
+application with the real graph, the real executor, the real lease, the real event
+log and the real database, and stubs only the metered boundaries: discovery, EPO
+enrichment, and the LLM — including the verifier. A verified run admitted against
+it pauses at Workflow Gate A, the search strategy stage, and Gates B, C and D, and
+completes with an approved report.
+
+Three things about it are load-bearing:
+
+- **It hosts the executor in-process** (`WORKFLOW_EXECUTOR=inprocess`), and that is
+  forced rather than chosen. The provider stubs are applied inside `run_mock.py`'s
+  own process; a separate `python -m workflow.worker` would not inherit them and
+  would make live calls. It is the same `Executor` class running the same
+  claim/lease/reconcile/finalize loop on a daemon thread. The **separate-process**
+  worker is exercised by `acceptance/real_process_acceptance.py`, which kills and
+  restarts it.
+- **The env vars are set at import time**, before `config` is imported, because
+  `DEPLOYMENT_PROFILE`, the two evidence policies and `WORKFLOW_GRAPH_ADAPTER` are
+  all read at import and have no defaults.
+- **Patches are applied at each consuming module's import site.** `verification/
+  verify.py` does `from llm import _llm_chat`, which binds a local name, so
+  patching `llm._llm_chat` never reaches it — the verifier called the real
+  provider and the run failed with `MissingCredential`. Loudly, which was right,
+  but for a boundary that was supposed to be stubbed.
+
+`python acceptance/four_gate_acceptance.py` drives it end to end over HTTP:
+admission, every gate (the filename predates the search strategy stage and is kept
+so the transcript path stays stable), ownership 404s, idempotent replay, **a
+strategy approval that is refused while a core element would go unsearched**, **a
+manual candidate carried out by the worker and looped back to Gate B for
+re-approval**, **a cell rerun carried out by the worker producing
+`result_version=2` with `source_result_version=1`**, the terminal `result`, the
+approved report, and SSE replay from a cursor. `acceptance/browser_acceptance.py` drives the same workflow
+through **real Chrome**, clicking each gate's own button by its rendered label.
+
+### Machine evidence is persisted, and the lease travels in the config
+
+`graph/durable.py` is the seam. `verify_features_node` writes the matrix
+(`verification_cells` / `verification_results`), `build_passages_node` writes the
+passage of record (`evidence_passages`), and `rerun_cells_node` writes the new
+version. Until this existed the matrix and the passages lived **only in the
+LangGraph checkpoint**: Gate C rendered zero cells against a draft reporting
+seven, and every locator in an approved report would have become unresolvable the
+moment the checkpoint was compacted.
+
+**The lease comes from `config["configurable"]`, never from `GraphState`.** The
+executor puts `owner_id` and `fence_token` there on every acquisition. A
+checkpointed fence token is stale the moment a different worker resumes the run,
+so the first write after any recovery would fence itself against a token it had
+merely remembered. Note LangGraph injects the config **by annotation type** — a
+parameter named `config` annotated `Optional[dict]` is silently not passed, and
+the node saw `None`; it must be annotated `RunnableConfig`.
+
+**A dependent result going stale is now enforced, not merely detectable.**
+`stale_passage_citations` computed exactly the section 6 rows 10/15/17 condition
+and had **no caller**, and `save_cell_result` never wrote `passage_text_hashes`
+at all — the column whose own SQL comment says it "is what makes a changed source
+text detectable". So a citation could be checked for existence and never for
+having changed. Both halves are wired: a cell citing text that has moved is a
+`STALE_EVIDENCE` blocking condition at Gate C, resolvable by a rerun or a waiver
+and by nothing else.
+
+### Section 6 traceability is a test, not a table
+
+`tests/test_matrix_traceability.py` parses section 6 out of the specification,
+maps all 164 rows to the named tests that assert them, and **resolves every name
+against the real suite** — so a row added to the spec, or a test renamed or
+deleted, fails the suite rather than leaving a coverage claim quietly wrong.
+`docs/acceptance/matrix-traceability.md` is generated from that mapping
+(`python -m acceptance.matrix_traceability`) and the test asserts the file on disk
+still matches. Exactly two rows (35 and 135) are covered only by an acceptance
+script, that set is pinned, and script evidence is labelled differently in the
+table on purpose: evidence somebody has to run by hand is weaker than evidence
+that runs with the suite.
+
+### Real-process acceptance evidence
+
+`python acceptance/real_process_acceptance.py` (from `backend/`) starts the API,
+the worker and the Angular dev server as **actual OS processes** and drives them
+over real HTTP: admission, a gate pause, **a kill and restart of both the API and
+the worker while the run is parked**, ownership rejection from a second account,
+idempotent replay, conflict on a reused key, resume to completion, then the whole
+SSE story — snapshot, replay from a cursor, reconnection at the terminal, and a
+disconnect that changes nothing. It writes `acceptance/transcript.txt`.
+
+It uses the **deterministic mock graph adapter** (`--mock`), which is disclosed
+rather than glossed: the real verification graph calls OpenAI and this evidence
+must cost nothing. What is stubbed is the *content* of the work. The lease, the
+checkpointer, the event log, the status machine, ownership, idempotency, the SSE
+framing and restart recovery are all real. It also pins `DEPLOYMENT_PROFILE=test`
+for the children, whose stub provider has no credential at all, so a paid call is
+structurally impossible rather than merely unlikely.
+
+It binds **8099/4299 rather than 8001/4200**, because a `docker compose` backend
+already publishes 8001 here and runs an older image — it answered `/healthz` and
+then 404'd `/api/runs`, which is how a stale listener produces a baffling
+acceptance failure. The script refuses to start if its port is already in use, so
+it can never test a process it did not start.
+
+### The journey acceptance: rejection, editing, and the two loops
+
+`python acceptance/journey_acceptance.py` (from `backend/`) drives the same four
+stages `four_gate_acceptance.py` does, and adds the branches that one never
+touches. It binds **8096**, refuses to start if that port is busy, writes
+`docs/acceptance/journey-transcript.txt`, and deletes its run and its two
+throwaway accounts in `finally`. **87 checks, zero paid calls.**
+
+What it covers that nothing else did:
+
+- **Rejection.** `POST /api/runs/{id}/understanding/regenerate` and
+  `.../strategy/regenerate` had never been driven end to end by any acceptance
+  run. Each returns **202**, the *worker* re-enters the proposing node, the
+  result is a **new version**, the rejected proposal is left untouched, and
+  **nothing is approved** — a rejection is a decision, not an approval. A
+  rejection naming a superseded version is refused rather than applied to the
+  proposal that replaced it.
+- **Editing, and the rules that refuse a bad edit.** `NO_SUMMARY`,
+  `NO_CORE_ELEMENT`, `NO_ENABLED_QUERY`/`UNCOVERED_CORE_ELEMENT` and
+  `STALE_UNDERSTANDING_VERSION` are each asserted against the real endpoint,
+  because they are what a reviewer actually meets.
+- **A switched-off search is stored, not dropped** — checked in
+  `approved_strategy_queries`, along with the edited query text, because "we
+  deliberately did not search for this" is part of what was approved.
+
+**The ordering rule both loops share is the thing to know, and it is what this
+script got wrong twice before it got it right.** Adding a manual candidate and
+requesting a cell re-run each record a request and return `202`. Neither resumes
+the run: it is parked waiting for a person, and **the human action that releases
+it is what hands the request to the worker** — *approving* at Results and
+evidence for a manual candidate, *completing* the stage for a re-run. The graph
+then does the work and returns to the same stage, so a second decision is
+required. A script that waits for the request to be carried out *before* taking
+that action waits for something that cannot happen, and times out against a
+perfectly healthy run. Both loops are driven to their real end here, and the
+waits are on the stored result rather than on the gate — waiting on a gate the
+run has not left yet returns instantly and proves nothing.
+
+It also pins what the finished report must say: it names the approved
+understanding and candidate-set versions it was built from and the date and
+text-version rules it screened by, it carries the coverage statement, and **every
+excluded publication is named** and stated NOT EVALUATED. That last one is live
+cover for the `_excluded_entry` fix — the manually added publication is screened,
+excluded, and appears in the approved report by number, where every draft built
+before that fix stored `null`.
+
+### Docker: the frontend container needs `USER 101:0`
+
+The image grants write to **group 0** (`chgrp -R 0` + `chmod -R g=u`, the
+OpenShift convention) because the entrypoint writes `env-config.js` into the web
+root on every start. `USER 101` runs with gid 101 and is **not** in group 0, so on
+plain Docker that write failed with "Permission denied" and nginx never started --
+a crash loop that never appeared under OpenShift, where the arbitrary UID is
+always a member of group 0. `USER 101:0` makes the runtime group match the
+permissions the image was built with, on both platforms, and keeps the user
+unprivileged. Do not drop the `:0`.
+
+### Running the tests: one process owns the database at a time
+
+`backend/tests/conftest.py` takes a **session-scoped exclusive advisory lock**
+(`SCHEMA_LOCK_KEY`) for any process that runs a `postgres`-marked test. A second
+process reaching its first `postgres` test waits until the first has finished all of
+them; non-`postgres` tests never take it, so most of the suite is unaffected.
+
+**It exists because two processes sharing one Compose PostgreSQL broke the suite in two
+different ways**, and the second is the one that is easy to misdiagnose:
+
+1. **Schema DDL against live data.** `test_the_rollbacks_reverse_the_workflow_schema_and_re_apply`
+   drops the whole workflow schema. A concurrent `create_run` deadlocks it — the rollback
+   holds `AccessExclusiveLock` on the table it is dropping while `create_run` waits for
+   `RowShareLock` on `users`, the foreign key behind `verification_runs.created_by`.
+   PostgreSQL kills one side, and *which* side is why this surfaced as unrelated
+   assertion failures across the workflow suite rather than as one legible error.
+2. **Tests that assert on globally-shared state.** Rows keyed by the one seeded account,
+   a fixed `idempotency_key`, or "the newest run" are shared by every process running the
+   same suite. A *different pair* of tests failed on each concurrent run — the signature
+   of a class, not of four bugs.
+
+Scoping an assertion to the rows its own test created fixes an individual case and two
+were genuinely imprecise and were fixed that way. **Serializing the processes removes the
+class**, without weakening any assertion. Verified: three concurrent full-suite pairs, zero
+failures; previously two failures per pair, different tests each time.
+
+The destructive schema test additionally **skips with a reason** when it detects a
+non-cooperating session (a `psql` window, a hand-started API or worker), because dropping
+the schema underneath one reproduces the deadlock with none of the explanation.
+
+**This is not test isolation.** The properly isolated design is a database per process,
+which the Compose setup does not provide; this makes the shared one behave correctly and
+says so.
+
+### The Invention Understanding stage (what Workflow Gate A now is)
+
+**Workflow Gate A is unchanged as a mechanism and rebuilt as an experience.** It is the
+same `interrupt()` node at the same place in the graph, with the same approval boundary and
+the same single approval writer. What changed is what a person is shown and what they are
+allowed to approve. The gate letters `A`-`D` are internal and **appear nowhere on any
+screen** — `gate-shell.ts`'s `STAGE_LABELS` maps them to the stage names, and
+`tests/test_frontend_review_contract.py` plus a component spec assert that "gate a",
+"decomposition", "checkpoint" and "verification cell" never reach the rendered DOM.
+
+**A verified run now carries three inputs, not one.** `POST /api/runs` accepts
+`problem_solved` and `inventor_novelty_statement` alongside the required `description`, and
+they are written in the **same transaction** as the run row (`store.set_submission_context`)
+so a run never exists without the submission it was created from. They are context for the
+analysis and are **never treated as evidence** — the prompt says so in as many words, because
+what an inventor believes is new is the claim the run exists to test. Both columns are
+nullable: `NULL` means "this run predates the column" and `""` means "the inventor left it
+blank", and a report that could not tell those apart would state the second while meaning
+the first.
+
+**The inventor's description is never rewritten.** Not by a proposal, not by an edit, not by
+an approval. `verification_runs.description` is the source input; the approved summary is
+stored **beside** it in `approved_understandings`, at its own version. That is the point of
+the side-by-side screen: the inventor is being asked whether the system understood them,
+which they cannot answer if what they wrote has been replaced by the system's version of it.
+A test asserts the description is byte-identical after an approval.
+
+**`llm.decompose_features` is now `llm.propose_understanding`** and returns
+`{"summary", "features"}`. An empty summary **raises** rather than rendering an empty pane.
+`llm.regenerate_relationships` is new. `DECOMPOSITION_PROMPT_MARKER` is unchanged and both
+prompts carry it, so `RELATIONSHIP_PROMPT_MARKER` was added and is checked **first** in
+`run_mock.py` and `tests/test_pipeline_contract.py` — matching only on the shared marker
+would answer a relationship request with a whole decomposition, the same ordering trap the
+"screening" / "expert patent examiner" checks already have.
+
+**Relationships are regenerated when elements change, never patched.** The inventor edits
+*elements*; relationships stay internal verifier requirements and are never shown. But a
+relationship reading "E1 is coupled to E4" that survives the deletion of E4 is a requirement
+the verifier would be asked to find among elements that no longer exist — a fabricated
+requirement with a citation slot attached. So the screen **drops** a capability's
+relationships the moment its elements are touched, and `workflow/review.py` refuses an
+approval whose relationship text names an absent element id (`DANGLING_RELATIONSHIP_REFERENCE`).
+That backend check is **textual and says so**: `decomposition_relationships` stores text and
+an ordinal with no foreign key to elements, so the only detectable dangling reference is one
+the prose names. It is a guard, never a proof; regenerating is the real defence.
+
+**Element ids are minted above the highest already present, not from the count.** Deleting
+E1 from `[E1, E2]` and adding one produces E3, not a second E2. The screen no longer lets
+anybody type an id at all, which is a stronger guarantee than the editable-id screen it
+replaced — that one could only warn about the collision. `workflow/review.py` still enforces
+cross-kind uniqueness, because a UI that cannot produce a collision is not the same thing as
+a backend that would refuse one.
+
+**Four limits, and only one of them is derived.** `backend/graph/limits.py`:
+
+- `MAX_CAPABILITIES` = `MATRIX_CELL_CAP // MAX_APPROVED_CANDIDATES` = **5**. Derived, never
+  written as a literal: a reviewer raising `MATRIX_CELL_CAP` deliberately should not have to
+  remember a second file.
+- `MAX_ELEMENTS_PER_CAPABILITY` = **8** and `MAX_ELEMENTS_TOTAL` = **25**. **Chosen** (owner
+  decision, 2026-08-30) and explicitly *not* matrix-derived — elements do not multiply cells.
+  One cell asks about one capability and all its elements at once, so an element lengthens a
+  prompt and lengthens what a reviewer reads, neither of which is the cell cap.
+- `MAX_STRATEGY_QUERIES` = **10**. **Chosen, and NOT an owner decision yet** — recorded as
+  outstanding in the constant's own docstring rather than presented as settled, because what
+  it should be depends on the discovery provider's rate and quota behaviour and measuring
+  Lens.org is out of scope. A bound exists at all because every enabled query is a metered
+  provider call plus enrichment, so an unbounded list is an unbounded spend that one
+  approval commits the deployment to.
+
+All four are enforced in `workflow/review.py` (binding) **and** in the screen (so a reviewer
+meets a limit while editing rather than after submitting). The screen reads them from the
+gate payload rather than restating them, so the two cannot disagree. **The UI states the
+limit and never the derivation** — a reviewer told "five capabilities because the matrix caps
+at 75 cells" has been shown an implementation detail in place of a reason.
+
+**Six blocking conditions, up from four.** `NO_SUMMARY`, `NO_FEATURES`, `NO_ELEMENTS`,
+`EMPTY_REQUIREMENT_TEXT`, `DUPLICATE_REQUIREMENT_ID`, `NO_VERSION` — plus `NO_CORE_ELEMENT`,
+`DANGLING_RELATIONSHIP_REFERENCE`, `TOO_MANY_CAPABILITIES`, `TOO_MANY_ELEMENTS` and
+`TOO_MANY_ELEMENTS_TOTAL`. `NO_CORE_ELEMENT` is checked across the **whole** understanding,
+not per capability: a supporting capability may legitimately have no core element of its own,
+but an understanding with none anywhere cannot support a novelty finding.
+
+**Regeneration is a durable work request, exactly like a manual candidate.**
+`POST /api/runs/{id}/understanding/regenerate` records a row and returns **202**; the
+**worker** carries it out. Generating in the HTTP handler would put an LLM call on a request
+thread with no lease, no fencing and no recovery. The graph gained one conditional edge:
+
+```
+decompose -> gate_a -> [route_after_gate_a] -> regenerate_understanding -> decompose
+                                            -> propose_strategy
+```
+
+**The approved branch goes to `propose_strategy`, not to the search.** The search strategy
+stage sits between this approval and `search_orchestrator` (see "The Search Strategy
+stage"), so the invariant this route guards -- nothing is searched for that a person did not
+approve -- now has two approvals in front of the first provider call rather than one.
+
+`gate_a_node` checks for a pending regeneration **before** reading any approved artifact and
+returns `{}` if it finds one — a rejection is not an approval, and reading one there would
+either fail or, far worse, pick up a version approved earlier and treat it as this review's
+outcome. A regeneration takes the **next** version; the rejected one stays in
+`understanding_proposals` untouched. `claim_understanding_regeneration` stamps `processed_at`
+under the lease, so at-least-once execution cannot produce two re-analyses for one request,
+and the claimed row is **kept** as the evidence that a person asked and the worker acted.
+
+**Three new tables (migration `0021`), and one of them is deliberately unable to record an
+approval.**
+
+- **`understanding_proposals`** — machine output and human edits, stored as separate rows at
+  the same version (`LLM` and `USER_EDIT`). **No `is_approved` column and no approver
+  columns exist here**, so a row cannot record an approval however it is written. Keeping
+  only the human's version would lose the half that shows the human changed anything.
+  `workflow/understanding.py` is its only writer.
+- **`approved_understandings`** — the approved summary, versioned in step with
+  `feature_decompositions`, same approval CHECK, same single writer
+  (`workflow/approvals.py::approve_understanding_by_owner`, which writes the summary **and**
+  the decomposition in one act so there is never a version of one that no version of the
+  other was approved beside). `tests/test_approval_boundary.py`'s grep now covers it.
+- **`understanding_regeneration_requests`** — the work request above.
+
+**The `patents` / `search_runs` / `search_run_matches` / `users` search schema is untouched,
+and so is Quick Search.** `POST /api/analyze` and `/api/analyze/stream` traverse exactly the
+nodes they did before and emit exactly the same phases; `_route_after_understanding` still
+sends a search-only run straight to `search_orchestrator`, and
+`tests/test_verification_integration.py` still asserts both.
+
+**Frontend.** `screens/understanding-review.ts` replaces `screens/decomposition-review.ts`,
+which is deleted. `classify` moved to `gate-shell.ts` — it is shared by every gate screen and
+now lives with the shared frame rather than in one screen the others imported from.
+`violations()` is a **method, not a `computed()`**: it reads a signal *and* plain nested
+objects, and a computed tracks only signals, so editing the summary never invalidated it and
+the approve control stayed enabled after the summary was cleared. `summary` is a signal for
+the same reason. Every nested edit goes through `touch()`, which re-publishes the
+capabilities array. The new CSS classes all carry dark counterparts in `styles/gates.css`, written in
+the same change rather than discovered later — see the specificity trap note below.
+
+### The Search Strategy stage (what runs between the analysis and the search)
+
+**A verified run now pauses a second time, before any provider is contacted.** The
+inventor approves what the invention is; then a person approves *what will be searched
+for*. `POST /api/analyze` and `/api/analyze/stream` are untouched — a search-only run
+still goes straight from `expand_queries` to `search_orchestrator` and emits exactly the
+phases it did before.
+
+**The graph gained one node pair and one loop.** `propose_strategy` reads the **approved**
+summary and decomposition and proposes queries; `gate_strategy` pauses; on resume it reads
+the approved strategy back through the approved-only reader and writes `queries` from its
+**enabled** entries. `search_orchestrator` is reachable on the verified branch from nowhere
+else, which is what makes "no provider call before both approvals" a property of the graph
+rather than a convention.
+
+**Only enabled queries from the approved strategy execute.** `gate_strategy_node` is the
+only thing that writes `queries` on the verified branch, and it writes
+`approved["enabled_queries"]`. A proposal is never dispatched; a disabled query is **kept**
+in `approved_strategy_queries` rather than dropped, because a reviewer switching a search
+off is a decision the report has to be able to state.
+
+**Coverage is the question this stage asks, and it uses `covered_element_ids`.** Each query
+names the approved element ids it is aimed at, and `workflow/review.py` refuses an approval
+that leaves a **core** element uncovered by any enabled query (`UNCOVERED_CORE_ELEMENT`).
+Reporting no prior art for something nobody searched for is not a finding. The check is an
+**id-set comparison** and says so: `covered_element_ids` carries no foreign key, so what is
+checked is that the ids exist and that the core ones are named — never that a query would
+actually retrieve prior art for them. That second thing is the judgement the person makes.
+
+**The ids are feature-qualified (`F1.E2`), and they have to be.** A requirement id is unique
+within one feature and not across a run — `decomposition_requirement_ids` is keyed by
+`(decomposition_id, requirement_id)`, one decomposition per feature — so a bare `E1` in two
+features is two different elements. Treating a claim for one as covering the other would
+report a core element as searched for when nothing searched for it.
+
+**A strategy names the understanding version it covers, and a mismatch is stale.** Coverage
+was computed over one version's element ids; if the understanding is regenerated and
+re-approved, reusing the strategy would report coverage of requirements it was never checked
+against (`STALE_UNDERSTANDING_VERSION`).
+
+**Regeneration is a durable work request, exactly like a manual candidate.**
+`POST /api/runs/{id}/strategy/regenerate` records a row and returns **202**; the **worker**
+carries it out. `gate_strategy_node` checks for a pending regeneration **before** reading
+any approved artifact and returns `{}` if it finds one — a rejection is not an approval, and
+reading one there would either fail or pick up a version approved earlier.
+`claim_strategy_regeneration` stamps `processed_at` under the lease, and the claimed row is
+**kept** as the evidence that a person asked and the worker acted.
+
+**Ten blocking conditions**, in `workflow/review.py::_gate_strategy_blocking`:
+`NO_QUERIES`, `NO_ENABLED_QUERY`, `EMPTY_QUERY_TEXT`, `NO_QUERY_ID`, `DUPLICATE_QUERY_ID`,
+`TOO_MANY_QUERIES`, `NO_UNDERSTANDING_VERSION`, `STALE_UNDERSTANDING_VERSION`,
+`UNKNOWN_ELEMENT_REFERENCE` and `UNCOVERED_CORE_ELEMENT`.
+
+**`MAX_STRATEGY_QUERIES = 10` is CHOSEN and is NOT an owner decision yet**, and
+`graph/limits.py` records it as outstanding rather than presenting it as settled — the same
+honesty `RETRIEVAL_FLOOR = None` applies to a number nobody has measured. Every enabled
+query is a metered provider call plus the enrichment its results pull, so an unbounded list
+is an unbounded spend one approval commits the deployment to; ten is twice what
+`llm.understand_invention` generates on its own. It is enforced in `workflow/review.py`
+(binding) and shown in the stage payload, and neither place explains the derivation.
+
+**`llm.propose_search_strategy` is the component**, named in `llm.STRATEGY_COMPONENT` for
+the same reason `DECOMPOSITION_COMPONENT` is: the specification does not assign an owner to
+it. Its marker, `STRATEGY_PROMPT_MARKER`, deliberately shares no wording with the
+decomposition markers — those two overlap on purpose and needed an ordering rule at the
+double; this one is a different component and can be matched in any order.
+
+**Three tables (migrations `0022`/`0023`)**, in the same three shapes the understanding
+stage uses and for the same reasons: a proposal table that *cannot* record an approval, the
+approved artifact, and the regeneration work request. See the Persistence section, and note
+`0022` is the non-transactional enum-label migration described there.
+
+**Frontend.** `screens/strategy-review.ts` is the fifth gate screen. The reviewer edits
+query text, switches queries on and off, and ticks which elements each search is looking
+for; the coverage panel names every element that nothing will search for, and marks the core
+ones as blocking. The heading a person sees is **"AI-proposed query coverage"**, and the
+stage is "Search strategy" — `STRATEGY` is the internal gate value and appears nowhere on
+the screen. `covered()` is a **method, not a `computed()`**, for exactly the reason
+`violations()` is one on the understanding screen: it reads a signal *and* plain nested
+objects, so a computed would not invalidate when a query is switched off.
+
+### Human-in-the-Loop: the gates, and who may resume a run
+
+**Implementation Gates D and E, plus the search strategy stage.** A verified run pauses
+**five** times and a person decides whether it continues. `graph/gates.py` holds the five
+`interrupt()` nodes and they are wired into `graph/pipeline.py`:
+
+```
+decompose -> gate_a -> propose_strategy -> gate_strategy -> search_orchestrator -> … ->
+rank_and_reduce -> gate_b -> verify_features -> gate_c -> draft_report -> gate_d -> END
+        ^          |                  ^              |
+        +----------+                  +--------------+
+   regenerate_understanding      regenerate_strategy, when the reviewer rejects the queries
+```
+
+Gate A sits **before** the strategy that is built from the decomposition, the strategy gate
+**before** the search that dispatches its queries, and Gate B **before** the verifier that
+uses the candidate set — so nothing is searched for or verified against that a person did
+not approve. `tests/test_workflow_gates.py::test_no_provider_call_is_reachable_before_both_approvals`
+asserts that `search_orchestrator` has exactly two incoming edges: `expand_queries` (the
+search-only branch, which has no gates at all) and `gate_strategy`. `draft_report` sits **between** C and D because case AC forbids
+approving a report into existence: Gate D requires a draft that already exists.
+
+**One graph, two compilations.** `graph/pipeline.py::_assemble` is the single topology;
+`build_graph()` compiles it without a checkpointer for the inline search path, and
+`build_graph_with_checkpointer()` compiles the identical builder for the executor.
+`interrupt()` needs a checkpointer, and the only nodes that call it are the gates —
+which a search-only run never reaches.
+
+**No endpoint resumes the graph.** An approval commits five things in one transaction — the
+human decision, the audit row, the idempotency record, the `resumed` event, and
+`WAITING_FOR_REVIEW -> RESUMING` — and returns. The **executor** picks the run up on its
+next poll and issues `Command(resume=…)`. That separation is what makes a duplicate
+approval harmless and a crash mid-approval recoverable, and
+`tests/test_workflow_api.py::test_an_approval_never_builds_or_calls_the_graph` patches the
+graph and proves it was never invoked.
+
+**The resume value is a signal, never a decision.** It travels through an HTTP request, an
+event row and a checkpoint; if it carried the approval, forging it at any of those three
+points would be approving. Every gate node discards it and re-reads the approved artifact
+through `workflow/approvals.py`'s readers, which filter `is_approved` **in SQL**.
+`tests/test_workflow_gates.py` asserts at the AST level that no gate node captures
+`interrupt()`'s return value and that none of them calls an approval writer.
+
+**Three checks, in one order, on every mutating endpoint** (`api/runs.py`):
+
+1. **ownership** — before any write, so a non-owner never creates a row;
+2. **idempotency** — before the gate precondition, so a *retry* of an identical approval
+   returns the stored response. After the first approval the run is `RESUMING`, which is
+   exactly when a client whose connection dropped retries;
+3. **the gate precondition** — before the mutation, so approving the wrong gate is a
+   `409 WRONG_GATE` rather than a unique-constraint violation surfacing as a `500`.
+
+`graph/adapter.py` is the production `GraphAdapter` (`WORKFLOW_GRAPH_ADAPTER=graph.adapter:ADAPTER`).
+It decides nothing: it names which gate an interrupt represents, builds the
+`review_required` body from **counts and a URL** rather than the artifact, and derives
+`verification_requested` from the run row existing.
+
+**Capability qualification can be deferred, and a deferral is not a bypass.**
+`VERIFIER_CAPABILITY_ENFORCEMENT` is `required` (the default, and the specification's
+position) or `deferred`. `deferred` additionally requires
+`VERIFIER_CAPABILITY_DEFERRAL_DECISION` to be non-empty — the same recorded-decision shape
+as the date and text-version policies. The difference from a bypass is the whole point: a
+bypass proceeds *as though qualified*, while a deferral proceeds **recording that this
+runtime is not qualified**, returns `capability_qualified: false` from admission, and still
+runs all eighteen §9 checks on every response. **No eligible artifact is fabricated**, and
+an incompatible model response still fails the cell with its failing check named while the
+run keeps its state. An unknown value refuses rather than defaulting to the permissive
+reading.
+
+### The verified-run SSE contract and API (Implementation Gate E)
+
+`backend/api/` is the HTTP surface and `backend/workflow/stream.py` is the reader.
+**Nothing in `api/` may reach a `_system_*` store function** — those skip ownership because
+no human is behind the call — and `tests/test_workflow_store.py` asserts that at the AST
+level.
+
+`GET /api/runs/{run_id}/stream` implements §9: every frame carries its persisted `sequence`
+as the SSE **`id:`**, a reconnecting client sends the highest it saw back through a
+`Last-Event-ID` header **or** `?last_event_id=` (the header wins, and the query parameter
+exists because the frontend uses raw `fetch`, which sends no header), replay is
+`sequence > it`, and a client attaching with no id gets a **`snapshot`** first. `snapshot`
+is connection-local and deliberately **not** in the `workflow_event_type` enum.
+
+- **Correctness is polling.** The API process serving a stream is usually not the worker
+  executing the run. No pub/sub, no shared memory, no sticky sessions.
+- **A client below `events_compacted_below` gets a `snapshot`**, not a partial replay
+  presented as a complete one.
+- **Terminal semantics:** reconnecting at or above the terminal sequence delivers nothing
+  and closes; below it delivers the single persisted terminal exactly once. At most one
+  terminal frame per connection.
+- **`paused` ends the connection, not the run.** Holding it open across a human review
+  would occupy an API worker for minutes to days to deliver nothing.
+- **A slow client is disconnected, never buffered** (`SSE_WRITE_TIMEOUT_SECONDS`), and
+  nothing is lost: every frame is still in `workflow_events`.
+- **A disconnect never touches the run.** `is_disconnected()` appears nowhere; a test greps
+  for it.
+
+**Two endpoints record a request and do none of the work**, and their `202` is the
+design rather than a courtesy. `POST /api/runs/{id}/candidates` (case T) and
+`POST /api/runs/{id}/cells/{cell_id}/rerun` (case U) write a row to
+`manual_candidates` / `cell_rerun_requests` (migration `0020`) and return; the
+**worker** carries them out. The API cannot fetch a publication, cannot build a
+passage, and above all cannot make anything eligible — a manually added
+publication goes through the same normalization, date screening, enrichment and
+eligibility checks a discovered one does, and approving it into the set is still a
+separate human act. A rerun never edits a result: it produces a **new**
+`result_version` linked to the one it came from, and it must name the version the
+reviewer was looking at — a rerun composed against a superseded result is
+`409 STALE_RESULT_VERSION`, the same rule §13.4 check 16 applies to a review.
+
+**A `WorkflowError`'s message reaches the caller; anything else is rebuilt.**
+`api/deps.py::_detail` is the one place that decides. The workflow errors are
+constructed by this codebase and by SQL functions that interpolate run ids,
+statuses and fence tokens and nothing else, so a 409 says *"run X is RESUMING, not
+WAITING_FOR_REVIEW"* rather than *"an unexpected IllegalStateError occurred"* —
+which is safe and useless. Every other exception is rebuilt from allow-listed
+facts, because pattern-matching unknown prose is never complete and this is the
+boundary where a provider body or a URL bearing a key would reach a browser.
+
+**`paused` ends the connection only while the run is still parked.** The rule
+exists so a connection is not held open across a review that may take days. A
+`paused` event the run has already moved past is history, and stopping on it would
+cost a catching-up client one reconnect per historical pause — four for a
+four-gate run, never reaching the terminal on the first attempt.
+
+Errors carry `{code, detail}` **at the top level** (`api/deps.py` maps §10.2, and
+`server.py` installs the handler that stops FastAPI nesting it under `detail`). A run the
+caller does not own answers **404 `RUN_NOT_FOUND`**, identical to an unknown run — there is
+no `403` anywhere in this surface, and `tests/test_run_ownership.py` walks the whole
+catalogue with a second user's token to prove it.
 
 ### Auth: one seeded account, no signup
 
@@ -302,6 +1563,89 @@ as having no access control until that row is replaced.
 Why gate it at all: a single novelty search spends roughly 25 of a 250/month SerpAPI
 allowance plus HuggingFace credits. This keeps a passer-by from spending them. It is not a
 security boundary — there is no rate limiting, no password reset, and no revocation.
+
+### Deployment profiles: `local` is OpenAI, `aramco` is deferred
+
+**Approved amendment, 2026-08-28** — recorded in
+`docs/prompts/integrated-feature-verification-workflow-implementation.md` §0a. Development on
+personal machines uses the **official OpenAI API**; the Aramco-hosted model is considered and
+qualified only when the application is ready to move into that environment.
+
+`DEPLOYMENT_PROFILE` is **required and has no default**, and it is **declared, never
+inferred** — not from an endpoint URL, a hostname, an API key or a model name. Inference is
+how a process ends up believing it is somewhere it is not, and what that belief gates here is
+whether a capability qualification performed elsewhere may be reused. Unset or unknown raises
+`ConfigError` at import (`backend/deployment.py`).
+
+| Profile | Provider | Settings | Status |
+|---|---|---|---|
+| `local` | official OpenAI API, official SDK | `OPENAI_*` | development |
+| `aramco` | OpenAI-compatible gateway, `requests` | `LLM_API_URL`, `LLM_MODEL`, `LLM_API_KEY` | **deferred and blocked** |
+| `test` | in-process stub, no address | none | fixtures only |
+
+**One profile selects one provider.** There is deliberately no separate `LLM_PROVIDER`
+setting — a second knob is a second thing to drift, and "profile says local, provider says
+gateway" is the internal inconsistency this removes rather than detects. `backend/conftest.py`
+pins the suite to `test`, whose stub has no credential, so a boundary somebody forgot to stub
+raises instead of reaching a paid API.
+
+**Everything goes through `llm._llm_chat`.** The OpenAI path lives *inside* it, so no graph or
+workflow node knows which provider is live, and the contract does not vary by provider:
+truncation still raises `LLMTruncatedError` and is never retried, the strict §10 schema is
+still sent as `response_format`, and the eighteen §9 checks still run. **No fallback** — not to
+another model, not to another provider, not to a looser output mode. A deterministic 4xx is not
+retried; a refusal is a real answer and is never parsed as content.
+
+**Embeddings did not move, and Qdrant did not change.** The Hugging Face embedding path stays
+exactly as approved, configured separately (`EMBEDDING_*`). A change of LLM provider is not a
+reason to enable semantic search.
+
+**Capability qualification is scoped to the exact runtime** (`backend/verification/capability.py`).
+An artifact records `deployment_profile`, `provider`, a parsed `endpoint`, `model`,
+`model_revision`, `adapter_revision`, `schema_version` (canonical), `wire_schema_version`,
+`validator_version`, `inference_config_fingerprint` and `runner_version`, and admission compares
+**all ten** identity fields
+field by field (`model_revision` additionally, whenever the configured model is pinned). The
+last two were added by the 2026-08-29 amendment: with the provider now sent a wire *rendering*
+and the omitted constraints enforced by the canonical validator, a capability result is a
+statement about all three layers together, so a change to the rendering or to the validator
+invalidates every prior record. `adapter_revision` carries
+`llm.OPENAI_ADAPTER_BEHAVIOUR_VERSION` alongside the SDK version, because what
+`response_format` is built from and which statuses are retried are decided in `llm.py` and can
+change while `openai.__version__` stands still.
+
+**`inference_config_fingerprint` covers every setting that can change what the model returns** —
+reasoning effort, whether and what `temperature` is sent, the token-parameter name, the effective
+ceiling, the declared dialect (including that family's accepted effort vocabulary, so a family
+gaining or losing a value is itself a runtime change), the timeout floor, and
+`top_p`/`seed`/`verbosity` should any of them ever be used (`deployment.InferenceConfig`). It exists because a measurement made the gap visible:
+`gpt-5-mini-2025-08-07` was measured ineligible with `reasoning_effort` unset, the owner then set
+it to `high`, and without this field the older artifact would have matched the new runtime on
+every other field while describing a configuration nobody had tested. **A provider default that
+affects behaviour is a value in the fingerprint, never an absence from it** — `reasoning_effort:
+""` records "the provider chose", which is a different runtime from one where we chose.
+`tests/test_inference_identity.py` mutates each of the twelve fields independently and asserts
+admission fails on each, in both directions. **Every artifact currently on disk lacks
+`inference_config_fingerprint`, and the oldest lacks `wire_schema_version` and
+`validator_version` too**, so no identity can be built from any of them and they qualify
+nothing — they stay on disk and stay accurate about what they measured.
+`tests/test_historical_artifacts_do_not_qualify.py` asserts that against the real
+`docs/measurements/` directory rather than in the abstract, including that supplying a
+record's missing key and relabelling its model still does not qualify it. A successful `local` OpenAI artifact therefore **can
+never** qualify `aramco` — that is structural, not a matter of remembering, and
+`tests/test_capability_admission.py` pins every field separately because a comparison that
+skipped one would still pass a test that only changed the model.
+
+**Verified-run admission fails closed.** `evidence/policy.py` calls `require_capability`
+alongside the policy decisions: no artifact, no match, or a matching-but-*ineligible* artifact
+all refuse. There is no `SKIP_CAPABILITY_CHECK`, no debug flag, no auto-approval — an AST test
+greps for all of them. **Search-only runs never reach admission**, so `POST /api/analyze` and
+`/api/analyze/stream` are untouched by the amendment.
+
+**A model that is not pinned to a snapshot leaves a drift window**, stated rather than hidden:
+the provider can move an alias to a new revision with no configuration change, and no static
+comparison can see it. The default `OPENAI_MODEL` is a pinned snapshot for that reason, and
+`model_pinned` records the answer either way.
 
 ### LLM: an OpenAI-compatible endpoint, not a local model
 
@@ -449,6 +1793,122 @@ likely still catch a weak match downstream (an honest low score, or an LLM
 relevance rejection), but the threshold cuts it off at the source instead of
 relying on that safety net.
 
+### The evidence layer: enrichment, passages, and honest exclusions
+
+**Nothing in the running application calls this yet** — `graph/`, `server.py`'s
+endpoints and the frontend are untouched by it. These are pure modules
+(`backend/evidence/`, `backend/search/enrichment.py`, `backend/search/epo_fulltext.py`)
+that Implementation Gate C will register as graph nodes. Keeping them pure means their
+tests need no `StateGraph` and Gate C's wiring has nothing left to get wrong except the
+wiring.
+
+**EPO is an enrichment source only, and that is a different role from discovery.**
+`SOURCES` is untouched — Lens.org still does discovery, EPO search is still commented
+out. The defect this distinction fixes was real: `search/epo.py`'s `enrich_with_full_text`
+selects targets with `patent.source == "European Patent Office"`, so under the approved
+workflow — where every candidate arrives from the *discovery* provider — that target list
+is **empty**, enrichment silently no-ops, and every candidate falls to
+`EXCLUDED_NO_FULL_TEXT`: a total failure indistinguishable from a legitimate coverage
+result. `search/enrichment.py` has **no source guard at all**; the only thing it filters
+out is a record with no parseable publication number.
+
+**Three enrichment states, because two of them used to be one value.**
+`get_patent_full_text` caught `Exception` and returned `""`, so a timeout and a genuine
+empty response were the same thing. Now: `TEXT` (the provider answered and had eligible
+sections), `NO_TEXT` (the provider answered and had none → `EXCLUDED_NO_FULL_TEXT`, a real
+answer about the document), and `FAILED` (timeout, 5xx, transport, auth → **the run
+fails**). Bounded retry is permitted for transient errors; converting exhaustion into an
+exclusion is not, because that records a provider outage as a fact about a patent.
+
+**The bibliographic call has the same three states, and that was a real defect.**
+`_fetch_biblio` returned `("", "")` for every non-200 *and* every exception, so a 401, a
+404, a 429, a 5xx, a timeout, a transport error and malformed XML all became "no
+publication date" -- and from there `EXCLUDED_INELIGIBLE`. That is a **provider failure
+converted into an exclusion**: the run reports a publication as ineligible when nobody
+ever asked the provider successfully, and it understates the product's own coverage using
+the provider's downtime. The three outcomes now are 200-with-a-date (the trusted text
+version), **200, well-formed, genuinely no date** (the one honest absence -> `NONE` ->
+`EXCLUDED_INELIGIBLE`), and **anything else -> the run fails**. 400/401/403/404/405/406/410
+are not retried, and malformed XML is not retried either -- a body that did not parse will
+not parse on the second attempt. `tests/test_epo_enrichment.py` pins each branch.
+
+**Claim evidence comes from EPO and from nowhere else.** `build_passages(enrichment)`
+takes **no `PatentRecord`**, and that signature is the rule. It used to take one and build
+claim passages out of `PatentRecord.claims` -- *Lens discovery metadata* -- while stamping
+them `source="EPO OPS"` with an `epo:` document id, and it did so even when EPO had
+returned no claims section at all. That is a citation to an EPO document attached to text
+EPO never served. `SectionText.claims` now carries the provider's own numbered
+`ProviderClaim`s with offsets into the exact retrieved section, so every claim passage
+slices back out of the text whose SHA-256 the row records. A claims section with no
+per-claim structure produces **no** claim passages rather than numbering a flat blob by
+position.
+
+**Publication numbers are normalized to epodoc form before every lookup** — country plus
+document number, no kind code. EPO's full-text endpoints 404 on the suffixed form, so
+without this every call 404s and every candidate is excluded. Both forms are recorded, and
+an unparseable number **raises** rather than being guessed at: a number quietly corrected
+into a different real document would attach that document's text to this candidate.
+
+**Locators are citations, so there are exactly three kinds and no approximate one:**
+`CLAIM_NUMBER` (the claim's own number → `claim 4`), `EPO_PARAGRAPH` (a provider `<p>` id
+or num → `paragraph [0031]`), and `SOURCE_RANGE` (character offsets into the exact
+retrieved section text → `description characters 4120-5233`). **A `paragraph [NNNN]` the
+provider did not supply is never emitted** — a range that says what it is beats a
+paragraph number that lies. `evidence/segmenter.py` is a pure, versioned function of the
+exact text, so slicing the stored offsets out of the stored section reproduces the passage.
+
+**Eligibility is derived, never asserted.** A publication is eligible **exactly when at
+least one valid passage was actually built for it**. The "substantive description"
+heuristic can therefore only *reject*; it can never assert eligibility on its own. That
+inversion is what makes "eligible with nothing to cite" structurally impossible rather
+than merely discouraged — `EligibilityResult` refuses to construct it.
+
+**The date policy is a recorded human decision, and the code refuses to run without one.**
+`DATE_SCREENING_POLICY` and `TEXT_VERSION_POLICY` have **no default**, and each needs its
+`*_DECISION` recorded too — same shape as `VERIFIER_GENERIC_JSON_DECISION`. The approved
+answers: the evaluated publication's **own publication date**, **exclusive** (`date <
+cutoff`), an uncertain date **never silently passes** (`EXCLUDED_DATE` + `UNCERTAIN`,
+surfaced at Gate B), and a passage's text version is the served document's **publication
+date** from EPO biblio. The priority date is stored and displayed and **never screens**.
+`retrieved_at` is never substituted for a text version. Patent dates are date-only and no
+timezone shift is applied — a shift can move a publication across the cutoff by a day.
+
+**Every evidence write is replay-safe in the database, not in the caller** (migration
+0018). Recovery re-runs a node, so both writes are replayed sooner or later, and both
+handled it wrongly. `record_exclusion` was a plain INSERT into a table with **no
+natural-key constraint at all**, so a replay did not raise -- it silently wrote a *second*
+exclusion row for the same publication, possibly with a different reason, both claiming to
+be why it was excluded. `record_passages` upserted with a SET list covering only the text
+and its hashes, so a replay carrying different evidence **overwrote the text while keeping
+the original text-version date, locator, section, language and provenance** -- immutable
+machine evidence mutated in place, and a stored verdict left citing text it was never
+validated against. `record_publication_exclusion` and `record_evidence_passage` now
+compare **every** content and provenance column under lock: an identical replay is a no-op
+(the existing id, or zero rows written), and anything different raises `FN003`. Both are
+fenced through `_lock_run_and_require_lease`, and both refuse the excluded-*and*-cited
+contradiction from either write order. `retrieved_at` is deliberately outside the identity
+comparison **and never updated** -- two identical re-fetches legitimately differ in clock
+time, and the first retrieval is the one that produced the stored evidence.
+
+**The policy decisions are recorded, with an owner and a date**, in
+`docs/decisions/2026-08-28-evidence-layer-policies.md`: date screening, the uncertain-date
+rule, the text-version rule, the "a failed bibliographic request is not an absent date"
+rule, and the acceptance of EPO-only enrichment. They were approved on **2026-08-28** and
+not before; `backend/.env.example` carries the same dates and points at that file.
+
+**Measured EPO coverage: 17.6%** (`docs/measurements/epo-coverage-2026-08-28.md`, 34
+distinct publications taken from already-stored `patents` rows, EPO called and nothing
+else). The jurisdiction split is the part that matters: EP 75%, CA and WO 100%, and **US
+0/18, KR 0/6, CN 0/2, DK 0/1**. EPO's full-text service covers EP/WO-family documents, so
+a filing that never entered that family has nothing for EPO to serve. On that sample the
+approved workflow would exclude **82.4%** of what discovery finds before any verification
+call. That is a **product decision** the artifact states and does not make. Accepting EPO-only enrichment for the MVP obliges the product and the report to
+say so: every exclusion is visible and reasoned, excluded publications are stated to have
+**not been evaluated** for feature disclosure, the result is **never** described as a
+complete or exhaustive novelty search, and no claim that no prior art exists is ever made
+on the basis that EPO lacked full text. **A second enrichment source is a post-MVP
+priority; discovery is not narrowed to EPO's coverage.**
+
 ### Data sources normalize to one shape
 
 `backend/search/google.py` (Google Patents via SerpAPI) and `backend/search/epo.py` (EPO
@@ -485,6 +1945,27 @@ Google Patents is the only live provider and `search_all_providers_strict` is ef
 strict over one source. `search/epo.py` is intact and the credentials are still read from
 the environment; re-enabling it is uncommenting one line. Note its no-token-caching
 behavior will cost an extra OAuth round trip per call when it comes back.
+
+**Lens.org claim numbering fails loudly rather than guessing.** `search/lens.py`'s
+`_parse_claims` returns individually numbered `PatentClaim`s, because an evidence locator
+has to be able to say "claim 4" — which is what `docs/prompts/feature-disclosure-verification.md`
+§17.1 builds `chunk_id: PAT-{pub}-CLM-{number:03d}` and `locator: claim {number}` from. The
+number comes from the claim's own leading digits; **1-based position is only a fallback, and
+only where nothing else claims that number.**
+
+That qualifier is load-bearing and was a real bug. Numbering used to be assigned in one pass,
+so `["2. A method.", "A further method."]` produced two claims both numbered 2 — two locators
+reading "claim 2" and two identical chunk IDs — and `["3. A method.", "A further method."]`
+produced claims 3 and 2 with no complaint. Numbering is now resolved in two passes and raises
+`ClaimNumberingError` when it cannot be resolved honestly: two claims stating the same number,
+or an unnumbered claim whose position is a number some other claim states. **It never
+allocates an unused number to make the set pass** — that would invent a claim number the
+patent does not have, and a locator naming the wrong claim is fabricated evidence with a
+citation attached. The error propagates through `search_lens` into `PatentSearchError`, which
+fails the request, per the zero-tolerance policy. Structurally malformed input (a missing or
+non-list `claims` field) still returns `[]`; "this provider returned no claims" is a different
+statement from "this numbering cannot be trusted". `tests/test_lens_claims.py` pins every
+branch, including that a successfully parsed set can never carry a duplicate number.
 
 Enrichment (`enrich_with_full_text` in `search/google.py`) costs **two** outbound HTTP
 calls per patent: the Details API does not inline descriptions, only a `description_link`
@@ -524,7 +2005,116 @@ them degrade gracefully, by design: an exhausted quota fails the request.
 Check before any benchmarking or repeated live runs; it is very easy to spend a month's
 allowance in an afternoon of testing.
 
+### `backend/verification/` — feature-disclosure verification, built but not wired in
+
+Implements `docs/prompts/feature-disclosure-verification.md`. **Nothing in the running
+application calls it** — not `server.py`, not `graph/`, not the executor, not the frontend.
+(`server.py` does now host the durable executor in `inprocess` mode, but that host runs the
+graph it is configured with and there is no verification graph yet; the connection between
+this package and a run is what Gate C builds.) That gap is deliberate rather than
+unfinished: the specification puts this component inside a
+four-gate reviewed workflow (§11.1) whose prerequisites are still open decisions in that
+document's §16 — per-user identity for a real audit trail, a fourth SSE event type for a
+paused run, and a LangGraph checkpointer for resumable ones. Wiring it in before those are
+settled would change the SSE contract this file describes as load-bearing.
+
+What it does: answers whether **1–5 supplied passages** from **one publication** state each
+element and relationship of **one human-approved feature**. It is not a novelty judgment and
+not a statement about the patent — only about the passages it was shown. That scoping is the
+whole design, and the vocabulary carries it: `NOT_FOUND_IN_SUPPLIED_PASSAGES` and
+`NO_DISCLOSURE_FOUND_IN_SUPPLIED_PASSAGES` never mean "not disclosed". Shortening either in a
+UI or export is the same class of defect the zero-tolerance policy forbids.
+
+Eight things about it are load-bearing:
+
+- **A validated `machine_result` is deeply immutable, not just `frozen=True`.** Pydantic's
+  `frozen=True` blocks field *reassignment* and nothing else, so while the §10.1 models used
+  `list` collections a stored verdict could still be edited in place —
+  `result.elements.clear()`, `result.missing_element_ids.append(...)`, and worst of all
+  `result.elements[0].evidence.append(...)`, which attaches evidence to a requirement no model
+  cited. Every collection is now a `tuple` of frozen models. **This is a representation change,
+  not a contract change**: pydantic reads a JSON array into a tuple and writes it back out as
+  an array, and §10 — the authority — still says `"type": "array"` throughout. Do not convert
+  back to lists after validation.
+- **A human review is bound to one cell and one result version.** `ReviewOverlay` carries
+  `source_cell_id` and `source_result_version`, and §13.4's checks 15–18 compare both against
+  the cell the review is being saved into, plus the machine result's own feature id, feature
+  version and publication number. `source_result_version` previously existed and was compared
+  to nothing — an unenforced invariant. Without those checks a review of result version 1
+  attaches cleanly to version 2, and a review of F2 against publication A attaches to F2
+  against publication B, because the requirement IDs are identical. `CellResult` therefore
+  requires `cell_id` and `result_version`: a result that cannot say which cell it is cannot be
+  bound to anything.
+- **A waiver is bound too, and changes nothing.** Check 18 pins its cell, reviewer, requirement
+  and result version. `waive_cell` is the path for the states that can carry no overlay
+  (`VALIDATION_FAILURE`, `NOT_EVALUATED`); it returns the cell with the waiver recorded and the
+  state, `machine_result`, failing check and reason all untouched. A waiver is a disclosed gap,
+  never a verdict.
+- **The prompt constants are byte-identical copies of the spec**, not a paraphrase.
+  `verification/prompt.py` holds nothing but `SYSTEM_PROMPT` and `USER_PROMPT_TEMPLATE`, and
+  `tests/test_verification_spec_consistency.py` re-extracts both from the markdown on every
+  run and asserts equality — along with the §10 JSON Schema, the §2 decomposition, the §4.1
+  and §4.3 rendered blocks, the §6.1 outcome table, and the §13.2 worked example, which is
+  validated as a fixture through the same code production uses. **Edit the specification
+  first**; the module follows it, never the reverse.
+- **`derive_outcome` is the application's, not the model's.** The model returns an `outcome`
+  and the application recomputes it and rejects the response on mismatch (check 15). The same
+  function derives the human-reviewed outcome, so a reviewed outcome contradicting its own
+  reviewed statuses cannot be represented.
+- **Every quotation faces a plain substring test** against passage text canonicalized once,
+  before the call (§8). Nothing normalizes, case-folds, re-punctuates, or fuzzy-matches a
+  quote afterwards — and a *human reviewer's* quotation faces the identical test.
+- **The response contract is bare JSON, and nothing unwraps it.** §3 says "ONE JSON object and
+  nothing else: no markdown fences, no commentary before or after", so the raw response goes
+  straight to `json.loads` and a fenced or prose-wrapped reply fails check 1. The verifier used
+  to call `_strip_fences` first; that repaired the most visible symptom of a provider ignoring
+  structured output, which is exactly the evidence §14.2.1's capability test needs — a model
+  whose fences are removed for it looks compliant. The one permitted re-ask (§9.1) is held to
+  the same contract; there is no looser second pass.
+- **Passage eligibility is enforced on the section, not on a flag.** Only `CLAIMS` and
+  `DESCRIPTION` can be evidence (§1.2.3). An `ABSTRACT` is refused **even when the caller sets
+  `evidence_eligible=True`**, and so is `OTHER` — the bucket a title, a bibliographic block or
+  a search snippet lands in. That flag is supposed to come from the full-text eligibility
+  classifier §17.2/§17.3 record as not built, and a boolean nobody computes is not a safety
+  boundary.
+- **Retrieval scores never reach the model** (§5). They select and order passages and go in
+  the audit record; the rendered prompt carries no score, rank, date, or passage count.
+- **Structured output is an eligibility requirement, not a preference** (§14.1). The default
+  `VERIFIER_STRUCTURED_OUTPUT=json_schema` sends the **wire rendering** of the §10 schema as
+  `response_format` (see the canonical/wire split above — the canonical schema itself is
+  rejected by OpenAI strict mode with a deterministic HTTP 400, and every keyword the rendering
+  omits is enforced by the canonical validator on the way back in). Setting it to `json_object`
+  additionally requires `VERIFIER_GENERIC_JSON_DECISION` to be non-empty, because the spec
+  permits generic-JSON mode only as a recorded decision. Anything else raises a capability error
+  and fails the stage. There is no prompt-only fallback and no runtime downgrade. **The §14.2.1
+  gate has now been run against the real OpenAI API and `gpt-4o-2024-08-06` is INELIGIBLE** —
+  probes 1-6 pass, probe 7 measures a 0.25 malformed-response rate at §9 check 15. `minimaxm3`
+  on the Aramco gateway has never been probed at all and remains unverified.
+
+Two changes it required outside the package, both backward compatible:
+
+- **`_llm_chat` gained keyword-only `system` and `response_format`.** The system/user split is
+  the injection defence: untrusted passages must sit in a different message from the rules
+  governing them. A caller passing neither gets a byte-identical payload to before.
+- **`run_mock.py` and `tests/test_pipeline_contract.py` both register the verifier marker**
+  (`PROMPT_MARKER`, imported rather than duplicated as a literal). Its double returns an
+  all-`NOT_FOUND` response that passes all eighteen checks — a double that fabricated a
+  `FOUND` would have to fabricate a verbatim quotation with it.
+
+**Not implemented**, and named here so it is not rediscovered as a surprise: the four gates,
+the feature × publication matrix, any persistence or SSE surface, and the §1.2.3 full-text
+eligibility classifier — that one sits at the enrichment boundary the spec's §17.2/§17.3 flag
+as blocking, and its "substantive description" branch is an unapproved judgment call (§16
+decision 13). The retrieval floor for `NOT_EVALUATED` is a caller-supplied parameter with no
+default, because §16 decision 6 blocks it on the same Qdrant/Qwen3 recalibration this file
+flags as outstanding.
+
 ### Mock mode: `python run_mock.py`, for looking at the app without paying for it
+
+**`--workflow` additionally serves the verified reviewed workflow** — see "The
+four-gate mock" section above for what that stubs and why the executor has to be
+in-process for it. Without the flag, `run_mock.py` is exactly what it always was:
+the search pipeline, no run row, no gates.
 
 **Use this for any frontend or UI work.** It serves the real application on 8001 with only
 the metered boundaries replaced, so a full run — login, SSE progress, report, History —
@@ -532,7 +2122,8 @@ costs nothing instead of ~25 SerpAPI searches. `--fast` drops the pacing delays;
 moves it. Postgres and Qdrant still need to be up, and the frontend needs no change,
 because the mock takes the port the frontend already targets.
 
-Faked: `llm._llm_chat`, `compare.embed_texts`, `search.vector_store.embed_texts`,
+Faked: `llm._llm_chat` (including the feature-disclosure verifier — see that section above),
+`compare.embed_texts`, `search.vector_store.embed_texts`,
 `search.search.SOURCES`, and both `graph.searching.enrich_*` functions. **Everything else
 is real** — the FastAPI app, the auth gate, the graph and its routing, the SSE framing,
 prompt construction, JSON parsing, dedup, chunking, cosine scoring, verdict thresholds,
@@ -562,9 +2153,38 @@ Four things about it are load-bearing:
   and must stay an exact multiple of the 64-dim hash it tiles.
 
 The LLM double keys off real prompt substrings (`"PatentScout AI"`, `"screening N
-candidate"`, `"expert patent examiner"`), so the real prompt-building code still runs and a
+candidate"`, `"expert patent examiner"`, `llm.DECOMPOSITION_PROMPT_MARKER` /
+`RELATIONSHIP_PROMPT_MARKER` / `STRATEGY_PROMPT_MARKER`, and the verifier's
+`"PASSAGE-LEVEL TECHNICAL DISCLOSURE VERIFICATION"`, which is matched against the **system**
+message rather than the user prompt), so the real prompt-building code still runs and a
 prompt edit that breaks those markers raises there rather than passing silently. The same
 markers back `tests/test_pipeline_contract.py`; changing a prompt means checking both.
+
+**The strategy double reads its element ids out of the prompt rather than hardcoding
+them**, the way the screening double reads its candidate count: the reviewer edits the
+understanding, so the elements a strategy is asked to cover are whatever they approved, and
+a fixed list would either miss a core element (failing the coverage rule for the wrong
+reason) or claim coverage of ids the run does not have.
+
+### The review screen was one component; it is now five
+
+**This section used to describe `frontend/src/app/screens/review-screen.ts` — one
+component, nine states — and that file is deleted.** It is kept as history because
+the reasoning reversed rather than merely aged: one generic editor was tried
+first, and it could not implement any of the gates' completion rules
+faithfully, because the gates enforce genuinely different rules. See the "Gate F"
+section above for what replaced it — `understanding-review`, `strategy-review`,
+`candidate-review`, `evidence-review`, `draft-review`, `gate-shell` and
+`verification-report`, with **thirteen** states rather than nine, plus a real
+Vitest runner.
+
+The one claim from that era still worth carrying forward: **one idempotency key
+per user action, not per request.** A retry of an action reuses its key so the
+backend replays the stored response; a new action mints a new one. A key minted
+per request would make every retry a new mutation.
+
+The other claim from that era is now **false and was corrected**: this file said
+"there is no frontend test runner in this project". There is — see Gate F above.
 
 ### Frontend: Angular 22, standalone components, no leftover scaffolding
 
@@ -851,7 +2471,11 @@ just moved into the UI.
 A failed run used to fire a native `alert()` and drop the user back on `submit`, which
 threw away everything the stream had already said. `ErrorScreen` now renders the backend's
 `error` detail **verbatim** in a mono block, names the phase it died in, and shows how many
-of the nine phases completed — `startRunning` tracks `lastPhase` in a local declared
+of the nine phases completed. **That detail is sanitized server-side before it is streamed**
+(`server.py` passes it through `workflow/redaction.py`'s `safe_detail`; it used to be
+`str(error)`), so what reaches the browser is the provider and the HTTP status rather than a
+provider body — the actionable half of "an HTTP 429, a depleted-credits 402" survives, and the
+credential-bearing half never leaves the process — `startRunning` tracks `lastPhase` in a local declared
 *outside* the `try` precisely so the `catch` can read it without waiting on a signal update.
 It offers retry and back, and never renders a partial report. Keep it that way: the
 zero-tolerance policy makes the error path a first-class result, not an afterthought, and

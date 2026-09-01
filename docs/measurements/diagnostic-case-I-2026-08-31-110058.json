@@ -1,0 +1,58 @@
+{
+  "diagnostic": "spec \u00a715.1 case I",
+  "non_qualifying": true,
+  "note": "DIAGNOSTIC ONLY. This record cannot qualify any runtime: it carries no runtime_identity, no eligibility verdict, and its filename is outside the namespace capability.load_artifacts reads. A pass here is permission to spend the full gate's 39 calls, and its calls are never counted toward a qualification.",
+  "run_at": "2026-08-31T11:00:58.843366+00:00",
+  "inference_config": {
+    "reasoning_effort": "medium",
+    "reasoning_effort_configured": true,
+    "temperature_sent": false,
+    "temperature": null,
+    "token_parameter": "max_completion_tokens",
+    "effective_token_ceiling": 17940,
+    "dialect_version": "{\"minimum_timeout_seconds\":300,\"reasoning_efforts\":[\"none\",\"low\",\"medium\",\"high\",\"xhigh\"],\"reasoning_token_allowance\":16000,\"supports_reasoning_effort\":true,\"supports_temperature\":false,\"token_parameter\":\"max_completion_tokens\"}",
+    "timeout_floor_seconds": 300,
+    "top_p": null,
+    "seed": null,
+    "verbosity": null
+  },
+  "case_id": "I",
+  "case_title": "valid explicit link across a claim and its dependent",
+  "expected_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+  "runs": 3,
+  "passing_runs": 0,
+  "all_runs_expected": false,
+  "operational_failures": 3,
+  "results": [
+    {
+      "run": 1,
+      "served_model": "",
+      "usage": {},
+      "attempts": 3,
+      "passed": false,
+      "failure_category": "PROVIDER_ERROR",
+      "operational": true,
+      "detail": "OpenAI failed."
+    },
+    {
+      "run": 2,
+      "served_model": "",
+      "usage": {},
+      "attempts": 3,
+      "passed": false,
+      "failure_category": "PROVIDER_ERROR",
+      "operational": true,
+      "detail": "OpenAI failed."
+    },
+    {
+      "run": 3,
+      "served_model": "",
+      "usage": {},
+      "attempts": 3,
+      "passed": false,
+      "failure_category": "PROVIDER_ERROR",
+      "operational": true,
+      "detail": "OpenAI failed."
+    }
+  ]
+}

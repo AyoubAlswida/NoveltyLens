@@ -1,0 +1,89 @@
+==============================================================================
+GATE F BROWSER ACCEPTANCE — real Chrome, real rendered pages
+==============================================================================
+reviewer: browser-99408302@example.invalid   (password generated per run, never rendered)
+
+--- start the stack (documented commands, isolated ports)
+  $ (api) C:\Users\alswi\AppData\Local\Programs\Python\Python312\python.exe run_mock.py --workflow --fast --port 8098
+    API healthy on http://127.0.0.1:8098
+  $ (frontend) npm.cmd run dev -- --port 4298
+    UI serving on http://localhost:4298
+
+--- create a paused run through the API the UI talks to
+    run 874e58e5-68a5-4c1e-8a3f-87d6c179dc40 created; capability_qualified=False
+    run is WAITING_FOR_REVIEW at gate A
+  $ chrome.exe --headless=new --remote-debugging-port=9333
+    Chrome/151.0.7922.174 ready over CDP
+
+--- RENDERED: sign-in screen
+    screenshot: docs/acceptance/screenshots/01-login-light.png (1440x960)
+    rendered text: ['Light', 'NOVELTYLENS', 'PATENT AGENT', 'Email']
+
+--- RENDERED: seed the session the way the app does, then the gate screen
+    screenshot: docs/acceptance/screenshots/02-signed-in-light.png (1440x960)
+    account-namespaced active run persisted: True
+
+--- RENDERED: the four workflow gates, approved by CLICKING the app
+    screenshot: docs/acceptance/screenshots/07-gate-a-decomposition.png (1440x960)
+    gate A: rendered, 516 words on screen
+    gate A: clicked 'Approve decomposition' in the browser
+    gate A: the run moved on -> RESUMING
+    screenshot: docs/acceptance/screenshots/08-gate-b-candidates.png (1440x960)
+    gate B: rendered, 604 words on screen
+    gate B: clicked 'Approve candidate set' in the browser
+    gate B: the run moved on -> RESUMING
+    screenshot: docs/acceptance/screenshots/09-gate-c-evidence.png (1440x960)
+    gate C: rendered, 563 words on screen
+    gate C: clicked 'Complete review' in the browser
+    gate C: the run moved on -> RESUMING
+    screenshot: docs/acceptance/screenshots/10-gate-d-draft.png (1440x960)
+    gate D: rendered, 696 words on screen
+    gate D: clicked 'Approve report' in the browser
+    gate D: the run moved on -> RESUMING
+
+--- RENDERED: the terminal result and the APPROVED report
+    run is COMPLETED
+    report version 1 is APPROVED
+    screenshot: docs/acceptance/screenshots/11-approved-report.png (1440x960)
+    report screen rendered 576 words
+
+--- RENDERED: the approved report survives a reload AND a restart
+    screenshot: docs/acceptance/screenshots/12-report-after-reload.png (1440x960)
+  $ api stopped (process tree)
+  $ (api) C:\Users\alswi\AppData\Local\Programs\Python\Python312\python.exe run_mock.py --workflow --fast --port 8098
+    after a full API and executor restart the report is still APPROVED
+    screenshot: docs/acceptance/screenshots/13-report-after-restart.png (1440x960)
+
+--- RENDERED: dark mode
+    screenshot: docs/acceptance/screenshots/03-dark.png (1440x960)
+    data-theme='dark'
+
+--- RENDERED: responsive (narrow viewport)
+    screenshot: docs/acceptance/screenshots/04-narrow.png (430x900)
+    no horizontal page overflow at 430px: True
+    every overflowing element scrolls rather than clipping: True
+
+--- RENDERED: the gate screens' own markup, mounted from the real bundle
+    stylesheet carries .cell-state: True
+    stylesheet carries .exclusion-state: True
+    stylesheet carries .human-decision: True
+    stylesheet carries .report-banner: True
+    dark counterparts present for: ['.cell-state', '.exclusion-state', '.human-decision', '.report-banner', '.gate-card']
+
+--- RENDERED: refresh mid-pause keeps the run
+    after a full page reload the run is still remembered: True
+    screenshot: docs/acceptance/screenshots/05-after-reload.png (1440x960)
+
+--- RENDERED: sign out clears the account-scoped run
+    active run cleared on sign-out: True
+    screenshot: docs/acceptance/screenshots/06-signed-out.png (1440x960)
+
+==============================================================================
+RESULT: real Chrome rendered the app; screenshots captured. No paid call.
+==============================================================================
+
+--- teardown
+  $ chrome stopped (process tree)
+  $ frontend stopped (process tree)
+  $ worker stopped (process tree)
+  $ api stopped (process tree)

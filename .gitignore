@@ -11,3 +11,10 @@ Thumbs.db
 
 # Word/Office lock files
 ~$*
+
+# Scratch and build artifacts (not source)
+.tmp_video_deps/
+.video_review/
+docs/.pptx_build/
+docs/.pptx_workflow_build/
+backend/acceptance/*.log

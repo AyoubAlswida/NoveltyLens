@@ -1,0 +1,236 @@
+{"kind":"deck","id":"pr/pqmhsn","name":"Deck"}
+{"kind":"layout","layoutId":"df2575dd-7687-4a69-96be-7c31ca195162","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"e151ab2c-26cd-47a5-93a1-0ed2e01ea34d","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/n07h83","slide":1,"title":"NOVELTY LENS MVP","textShapes":7}
+{"kind":"shape","id":"sh/m1gn6xsj","slide":1,"bbox":[58,52,92,10]}
+{"kind":"textbox","id":"sh/94761cra","slide":1,"text":"NOVELTY LENS MVP","textPreview":"NOVELTY LENS MVP","textChars":16,"textLines":1,"bbox":[58,80,500,30]}
+{"kind":"textbox","id":"sh/83y587ap","slide":1,"text":"Updated Search Workflow","textPreview":"Updated Search Workflow","textChars":23,"textLines":1,"bbox":[58,164,1050,75]}
+{"kind":"textbox","id":"sh/v69o329g","slide":1,"text":"A practical, evidence-first workflow for a free pilot","textPreview":"A practical, evidence-first workflow for a free pilot","textChars":53,"textLines":1,"bbox":[60,256,880,44]}
+{"kind":"shape","id":"sh/u50naxsv","slide":1,"bbox":[58,364,1164,128]}
+{"kind":"textbox","id":"sh/h8r65cr6","slide":1,"text":"Discussion draft","textPreview":"Discussion draft","textChars":16,"textLines":1,"bbox":[84,385,230,26]}
+{"kind":"textbox","id":"sh/w7i5c7a1","slide":1,"text":"Ayoub × Sarah","textPreview":"Ayoub × Sarah","textChars":13,"textLines":1,"bbox":[84,420,600,44]}
+{"kind":"shape","id":"sh/ba54ritw","slide":1,"bbox":[58,548,1164,1]}
+{"kind":"textbox","id":"sh/a9wnydsb","slide":1,"text":"Retrieval  •  Semantic ranking  •  EPO enrichment  •  Human review","textPreview":"Retrieval  •  Semantic ranking  •  EPO enrichment  •  Human review","textChars":66,"textLines":1,"bbox":[58,574,850,32]}
+{"kind":"textbox","id":"sh/wv6xsn6h","slide":1,"text":"AUGUST 2026","textPreview":"AUGUST 2026","textChars":11,"textLines":1,"bbox":[962,574,260,32]}
+{"kind":"notes","id":"nt/n07h83","slide":1,"text":"[Sources]\n- Novelty-Lens-Comprehensive-Development-Plan-EN-v1.1.docx (internal project plan)\n\n[/Sources]"}
+{"kind":"slide","id":"sl/ya8lku","slide":2,"title":"MVP DECISION","textShapes":14}
+{"kind":"shape","id":"sh/4fyhs7q9","slide":2,"bbox":[54,45,80,8]}
+{"kind":"textbox","id":"sh/3epgj29o","slide":2,"text":"MVP DECISION","textPreview":"MVP DECISION","textChars":12,"textLines":1,"bbox":[54,64,500,24]}
+{"kind":"textbox","id":"sh/2dwzqx83","slide":2,"text":"Optimize for verified evidence—not result volume","textPreview":"Optimize for verified evidence—not result volume","textChars":48,"textLines":1,"bbox":[54,96,1150,78]}
+{"kind":"textbox","id":"sh/hcnyhcri","slide":2,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[1160,46,64,25]}
+{"kind":"textbox","id":"sh/gbeho7qx","slide":2,"text":"100 patents on screen can look impressive while hiding weak evidence.","textPreview":"100 patents on screen can look impressive while hiding weak evidence.","textChars":69,"textLines":1,"bbox":[54,205,1110,42]}
+{"kind":"shape","id":"sh/fa5gf29s","slide":2,"bbox":[54,286,360,236]}
+{"kind":"textbox","id":"sh/u9wzmx87","slide":2,"text":"50–100","textPreview":"50–100","textChars":6,"textLines":1,"bbox":[78,310,312,64]}
+{"kind":"textbox","id":"sh/tonydsrm","slide":2,"text":"lightweight candidates","textPreview":"lightweight candidates","textChars":22,"textLines":1,"bbox":[78,382,312,34]}
+{"kind":"textbox","id":"sh/snehknq1","slide":2,"text":"Broad discovery only","textPreview":"Broad discovery only","textChars":20,"textLines":1,"bbox":[78,430,312,34]}
+{"kind":"shape","id":"sh/u1szm1oj","slide":2,"bbox":[444,286,360,236]}
+{"kind":"textbox","id":"sh/v210f654","slide":2,"text":"10–15","textPreview":"10–15","textChars":5,"textLines":1,"bbox":[468,310,312,64]}
+{"kind":"textbox","id":"sh/w3ahobmp","slide":2,"text":"semantic comparisons","textPreview":"semantic comparisons","textChars":20,"textLines":1,"bbox":[468,382,312,34]}
+{"kind":"textbox","id":"sh/h4jihgna","slide":2,"text":"Local Qwen reranking","textPreview":"Local Qwen reranking","textChars":20,"textLines":1,"bbox":[468,430,312,34]}
+{"kind":"shape","id":"sh/mx8zi1on","slide":2,"bbox":[834,286,360,236]}
+{"kind":"textbox","id":"sh/7y10b658","slide":2,"text":"3–5","textPreview":"3–5","textChars":3,"textLines":1,"bbox":[858,310,312,64]}
+{"kind":"textbox","id":"sh/8zahkr6t","slide":2,"text":"deep evidence reviews","textPreview":"deep evidence reviews","textChars":21,"textLines":1,"bbox":[858,382,312,34]}
+{"kind":"textbox","id":"sh/90jidwny","slide":2,"text":"Claims + description required","textPreview":"Claims + description required","textChars":29,"textLines":1,"bbox":[858,430,312,34]}
+{"kind":"shape","id":"sh/y98zehob","slide":2,"bbox":[54,560,1140,70]}
+{"kind":"textbox","id":"sh/zuh07m5w","slide":2,"text":"MVP promise: fewer references, stronger provenance, transparent exclusions.","textPreview":"MVP promise: fewer references, stronger provenance, transparent exclusions.","textChars":75,"textLines":1,"bbox":[78,574,1090,42]}
+{"kind":"notes","id":"nt/ya8lku","slide":2,"text":"[Sources]\n- Novelty-Lens-Comprehensive-Development-Plan-EN-v1.1.docx (internal project plan)\n\n[/Sources]"}
+{"kind":"slide","id":"sl/hq123b","slide":3,"title":"HUMAN IN THE LOOP","textShapes":16}
+{"kind":"shape","id":"sh/hkvutg32","slide":3,"bbox":[54,45,80,8]}
+{"kind":"textbox","id":"sh/uh4bi14r","slide":3,"text":"HUMAN IN THE LOOP","textPreview":"HUMAN IN THE LOOP","textChars":17,"textLines":1,"bbox":[54,64,500,24]}
+{"kind":"textbox","id":"sh/fidcr6lc","slide":3,"text":"Three approval gates keep the search editable","textPreview":"Three approval gates keep the search editable","textChars":45,"textLines":1,"bbox":[54,96,1150,78]}
+{"kind":"textbox","id":"sh/4n6dobmt","slide":3,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[1160,46,64,25]}
+{"kind":"shape","id":"sh/pofuxg3e","slide":3,"bbox":[130,334,1010,5]}
+{"kind":"shape","id":"sh/2l4bml4n","slide":3,"bbox":[54,225,360,252]}
+{"kind":"shape","id":"sh/3mxcvql8","slide":3,"bbox":[76,244,48,30]}
+{"kind":"textbox","id":"sh/cb6dsvmp","slide":3,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[76,244,48,30]}
+{"kind":"textbox","id":"sh/dcfu103a","slide":3,"text":"TECHNICAL SUMMARY","textPreview":"TECHNICAL SUMMARY","textChars":17,"textLines":1,"bbox":[138,243,250,32]}
+{"kind":"textbox","id":"sh/tsfedk32","slide":3,"text":"Edit features • add/remove • split/merge • mark core","textPreview":"Edit features • add/remove • split/merge • mark core","textChars":52,"textLines":1,"bbox":[78,307,312,115]}
+{"kind":"shape","id":"sh/8r6x4fmh","slide":3,"bbox":[444,225,360,252]}
+{"kind":"shape","id":"sh/7qxwbalc","slide":3,"bbox":[466,244,48,30]}
+{"kind":"textbox","id":"sh/6pof254r","slide":3,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[466,244,48,30]}
+{"kind":"textbox","id":"sh/hgzehk3e","slide":3,"text":"SEARCH PLAN","textPreview":"SEARCH PLAN","textChars":11,"textLines":1,"bbox":[528,243,250,32]}
+{"kind":"textbox","id":"sh/gfqx8zmt","slide":3,"text":"Edit terms/classes • add manual references • preview impact","textPreview":"Edit terms/classes • add manual references • preview impact","textChars":59,"textLines":1,"bbox":[468,307,312,115]}
+{"kind":"shape","id":"sh/vehwful8","slide":3,"bbox":[834,225,360,252]}
+{"kind":"shape","id":"sh/udof6p4n","slide":3,"bbox":[856,244,48,30]}
+{"kind":"textbox","id":"sh/xkve503u","slide":3,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[856,244,48,30]}
+{"kind":"textbox","id":"sh/cjmxwvm9","slide":3,"text":"REFERENCE SET","textPreview":"REFERENCE SET","textChars":13,"textLines":1,"bbox":[918,243,250,32]}
+{"kind":"textbox","id":"sh/o3qxcvu5","slide":3,"text":"Accept/exclude sources • inspect reasons • approve report","textPreview":"Accept/exclude sources • inspect reasons • approve report","textChars":57,"textLines":1,"bbox":[858,307,312,115]}
+{"kind":"textbox","id":"sh/p4zel0vq","slide":3,"text":"Undo + version history","textPreview":"Undo + version history","textChars":22,"textLines":1,"bbox":[86,526,330,30]}
+{"kind":"textbox","id":"sh/218fqlcf","slide":3,"text":"Leave + resume","textPreview":"Leave + resume","textChars":14,"textLines":1,"bbox":[475,526,260,30]}
+{"kind":"textbox","id":"sh/32hwjqd0","slide":3,"text":"No hidden reruns","textPreview":"No hidden reruns","textChars":16,"textLines":1,"bbox":[846,526,300,30]}
+{"kind":"textbox","id":"sh/c7axgfuh","slide":3,"text":"R1 scope: these controls are planned additions to the current Submit → Running → Report experience.","textPreview":"R1 scope: these controls are planned additions to the current Submit → Running → Report experience.","textChars":99,"textLines":1,"bbox":[54,596,1160,42]}
+{"kind":"notes","id":"nt/hq123b","slide":3,"text":"[Sources]\n- Novelty-Lens-Comprehensive-Development-Plan-EN-v1.1.docx (internal project plan)\n\n[/Sources]"}
+{"kind":"slide","id":"sl/u8batc","slide":4,"title":"COST CONTROL","textShapes":20}
+{"kind":"shape","id":"sh/h03610ru","slide":4,"bbox":[54,45,80,8]}
+{"kind":"textbox","id":"sh/uxcn6lsj","slide":4,"text":"COST CONTROL","textPreview":"COST CONTROL","textChars":12,"textLines":1,"bbox":[54,64,500,24]}
+{"kind":"textbox","id":"sh/vylozq9o","slide":4,"text":"The search funnel spends effort only where evidence improves","textPreview":"The search funnel spends effort only where evidence improves","textChars":60,"textLines":1,"bbox":[54,96,1150,78]}
+{"kind":"textbox","id":"sh/8va54bad","slide":4,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[1160,46,64,25]}
+{"kind":"shape","id":"sh/twjmxgry","slide":4,"bbox":[54,244,300,176]}
+{"kind":"textbox","id":"sh/mtsn2ls7","slide":4,"text":"50–100","textPreview":"50–100","textChars":6,"textLines":1,"bbox":[72,263,264,54]}
+{"kind":"textbox","id":"sh/7u14vq9s","slide":4,"text":"DISCOVER","textPreview":"DISCOVER","textChars":8,"textLines":1,"bbox":[72,326,264,26]}
+{"kind":"textbox","id":"sh/sre5gfah","slide":4,"text":"SerpAPI metadata","textPreview":"SerpAPI metadata","textChars":16,"textLines":1,"bbox":[72,365,264,42]}
+{"kind":"textbox","id":"sh/dsn69kr2","slide":4,"text":"→","textPreview":"→","textChars":1,"textLines":1,"bbox":[361,300,38,38]}
+{"kind":"shape","id":"sh/5w3m14b6","slide":4,"bbox":[402,244,250,176]}
+{"kind":"textbox","id":"sh/4val8zul","slide":4,"text":"20–25","textPreview":"20–25","textChars":5,"textLines":1,"bbox":[420,263,214,54]}
+{"kind":"textbox","id":"sh/3u14zut0","slide":4,"text":"FILTER","textPreview":"FILTER","textChars":6,"textLines":1,"bbox":[420,326,214,26]}
+{"kind":"textbox","id":"sh/i9s369cf","slide":4,"text":"date • family • duplicates","textPreview":"date • family • duplicates","textChars":26,"textLines":1,"bbox":[420,365,214,42]}
+{"kind":"textbox","id":"sh/h8jmx4bu","slide":4,"text":"→","textPreview":"→","textChars":1,"textLines":1,"bbox":[659,300,38,38]}
+{"kind":"shape","id":"sh/g7al4zu9","slide":4,"bbox":[700,244,205,176]}
+{"kind":"textbox","id":"sh/v614vut4","slide":4,"text":"10–15","textPreview":"10–15","textChars":5,"textLines":1,"bbox":[718,263,169,54]}
+{"kind":"textbox","id":"sh/u5s32pcj","slide":4,"text":"RERANK","textPreview":"RERANK","textChars":6,"textLines":1,"bbox":[718,326,169,26]}
+{"kind":"textbox","id":"sh/14nm9obe","slide":4,"text":"local Qwen embeddings","textPreview":"local Qwen embeddings","textChars":21,"textLines":1,"bbox":[718,365,169,42]}
+{"kind":"textbox","id":"sh/03u5gjat","slide":4,"text":"→","textPreview":"→","textChars":1,"textLines":1,"bbox":[912,300,38,38]}
+{"kind":"shape","id":"sh/0725c7ip","slide":4,"bbox":[953,244,165,176]}
+{"kind":"textbox","id":"sh/l8v6lsja","slide":4,"text":"3–5","textPreview":"3–5","textChars":3,"textLines":1,"bbox":[971,263,129,54]}
+{"kind":"textbox","id":"sh/y5knax0z","slide":4,"text":"VERIFY","textPreview":"VERIFY","textChars":6,"textLines":1,"bbox":[971,326,129,26]}
+{"kind":"textbox","id":"sh/z6toj21k","slide":4,"text":"EPO full-text evidence","textPreview":"EPO full-text evidence","textChars":22,"textLines":1,"bbox":[971,365,129,42]}
+{"kind":"shape","id":"sh/c3258nit","slide":4,"bbox":[54,486,1140,123]}
+{"kind":"textbox","id":"sh/d4b6hsje","slide":4,"text":"ADAPTIVE STOP","textPreview":"ADAPTIVE STOP","textChars":13,"textLines":1,"bbox":[78,507,210,25]}
+{"kind":"textbox","id":"sh/q1kn6d0n","slide":4,"text":"Stop enriching when the top evidence set stabilizes—or when the time/cost budget is reached.","textPreview":"Stop enriching when the top evidence set stabilizes—or when the time/cost budget is reached.","textChars":92,"textLines":1,"bbox":[78,544,1070,40]}
+{"kind":"notes","id":"nt/u8batc","slide":4,"text":"[Sources]\n- Novelty-Lens-Comprehensive-Development-Plan-EN-v1.1.docx (internal project plan)\n- https://serpapi.com/pricing\n- https://v13.serpapi.com/google-patents-api\n[/Sources]"}
+{"kind":"slide","id":"sl/zljh2m","slide":5,"title":"FINAL API DECISION","textShapes":20}
+{"kind":"shape","id":"sh/9s76xcza","slide":5,"bbox":[54,45,80,8]}
+{"kind":"textbox","id":"sh/mpgn2x0z","slide":5,"text":"FINAL API DECISION","textPreview":"FINAL API DECISION","textChars":18,"textLines":1,"bbox":[54,64,500,24]}
+{"kind":"textbox","id":"sh/nqpov2hk","slide":5,"text":"Each component has one job—and one failure boundary","textPreview":"Each component has one job—and one failure boundary","textChars":51,"textLines":1,"bbox":[54,96,1150,78]}
+{"kind":"textbox","id":"sh/wvip87y1","slide":5,"text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[1160,46,64,25]}
+{"kind":"shape","id":"sh/xwr61czm","slide":5,"bbox":[54,300,1140,1]}
+{"kind":"shape","id":"sh/at0n6xgv","slide":5,"bbox":[54,230,145,30]}
+{"kind":"textbox","id":"sh/bu9oz2hg","slide":5,"text":"SerpAPI","textPreview":"SerpAPI","textChars":7,"textLines":1,"bbox":[54,230,145,30]}
+{"kind":"textbox","id":"sh/cze5wnix","slide":5,"text":"Candidate discovery","textPreview":"Candidate discovery","textChars":19,"textLines":1,"bbox":[224,226,290,34]}
+{"kind":"textbox","id":"sh/d0n6p8zi","slide":5,"text":"Titles • snippets • publication IDs","textPreview":"Titles • snippets • publication IDs","textChars":35,"textLines":1,"bbox":[522,226,420,52]}
+{"kind":"textbox","id":"sh/9o369k7a","slide":5,"text":"Fast breadth","textPreview":"Fast breadth","textChars":12,"textLines":1,"bbox":[984,226,210,40]}
+{"kind":"shape","id":"sh/8nu5gf6p","slide":5,"bbox":[54,392,1140,1]}
+{"kind":"shape","id":"sh/nmlo7ap4","slide":5,"bbox":[54,322,145,30]}
+{"kind":"textbox","id":"sh/mlsne5oj","slide":5,"text":"EPO OPS","textPreview":"EPO OPS","textChars":7,"textLines":1,"bbox":[54,322,145,30]}
+{"kind":"textbox","id":"sh/xc36dk76","slide":5,"text":"Authoritative enrichment","textPreview":"Authoritative enrichment","textChars":24,"textLines":1,"bbox":[224,318,290,34]}
+{"kind":"textbox","id":"sh/wru5kf6l","slide":5,"text":"Biblio • family • citations • full text","textPreview":"Biblio • family • citations • full text","textChars":39,"textLines":1,"bbox":[522,318,420,52]}
+{"kind":"textbox","id":"sh/vqlobupg","slide":5,"text":"Evidence depth","textPreview":"Evidence depth","textChars":14,"textLines":1,"bbox":[984,318,210,40]}
+{"kind":"shape","id":"sh/apcnipov","slide":5,"bbox":[54,484,1140,1]}
+{"kind":"shape","id":"sh/5gn6h47i","slide":5,"bbox":[54,414,145,30]}
+{"kind":"textbox","id":"sh/kfepoz6x","slide":5,"text":"Local Qwen","textPreview":"Local Qwen","textChars":10,"textLines":1,"bbox":[54,414,145,30]}
+{"kind":"textbox","id":"sh/4jmpk3e9","slide":5,"text":"Semantic reranking","textPreview":"Semantic reranking","textChars":18,"textLines":1,"bbox":[224,410,290,34]}
+{"kind":"textbox","id":"sh/5kvqd8ve","slide":5,"text":"Feature ↔ patent similarity","textPreview":"Feature ↔ patent similarity","textChars":27,"textLines":1,"bbox":[522,410,420,52]}
+{"kind":"textbox","id":"sh/ixk7itw3","slide":5,"text":"No per-item API cost","textPreview":"No per-item API cost","textChars":20,"textLines":1,"bbox":[984,410,210,40]}
+{"kind":"shape","id":"sh/3yd8bydo","slide":5,"bbox":[54,576,1140,1]}
+{"kind":"shape","id":"sh/cnm9one5","slide":5,"bbox":[54,506,145,30]}
+{"kind":"textbox","id":"sh/dovqhsvq","slide":5,"text":"PostgreSQL","textPreview":"PostgreSQL","textChars":10,"textLines":1,"bbox":[54,506,145,30]}
+{"kind":"textbox","id":"sh/ql4rmdwz","slide":5,"text":"Cache + audit trail","textPreview":"Cache + audit trail","textChars":19,"textLines":1,"bbox":[224,502,290,34]}
+{"kind":"textbox","id":"sh/rmd8fidk","slide":5,"text":"Raw payloads • decisions • versions","textPreview":"Raw payloads • decisions • versions","textChars":35,"textLines":1,"bbox":[522,502,420,52]}
+{"kind":"textbox","id":"sh/8r2pcje1","slide":5,"text":"Resume without repeating work","textPreview":"Resume without repeating work","textChars":29,"textLines":1,"bbox":[984,502,210,40]}
+{"kind":"textbox","id":"sh/tsbq5ovm","slide":5,"text":"Decision: SerpAPI + EPO OPS + local Qwen + PostgreSQL","textPreview":"Decision: SerpAPI + EPO OPS + local Qwen + PostgreSQL","textChars":53,"textLines":1,"bbox":[54,625,1140,34]}
+{"kind":"notes","id":"nt/zljh2m","slide":5,"text":"[Sources]\n- Novelty-Lens-Comprehensive-Development-Plan-EN-v1.1.docx (internal project plan)\n- https://www.epo.org/en/searching-for-patents/data/web-services/ops\n- https://serpapi.com/pricing\n[/Sources]"}
+{"kind":"slide","id":"sl/0vqwy6","slide":6,"title":"EVIDENCE PIPELINE","textShapes":20}
+{"kind":"shape","id":"sh/1k76t07y","slide":6,"bbox":[54,45,80,8]}
+{"kind":"textbox","id":"sh/ehg7ilo7","slide":6,"text":"EVIDENCE PIPELINE","textPreview":"EVIDENCE PIPELINE","textChars":17,"textLines":1,"bbox":[54,64,500,24]}
+{"kind":"textbox","id":"sh/fiporqps","slide":6,"text":"EPO enrichment turns a search hit into citable evidence","textPreview":"EPO enrichment turns a search hit into citable evidence","textChars":55,"textLines":1,"bbox":[54,96,1150,78]}
+{"kind":"textbox","id":"sh/onipov69","slide":6,"text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[1160,46,64,25]}
+{"kind":"shape","id":"sh/porqx07u","slide":6,"bbox":[100,320,1050,4]}
+{"kind":"shape","id":"sh/2lg7m5o3","slide":6,"bbox":[55,239,208,174]}
+{"kind":"shape","id":"sh/3mp8vapo","slide":6,"bbox":[73,255,38,30]}
+{"kind":"textbox","id":"sh/cbipsf6l","slide":6,"text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[73,255,38,30]}
+{"kind":"textbox","id":"sh/dcrq1k7q","slide":6,"text":"Normalize","textPreview":"Normalize","textChars":9,"textLines":1,"bbox":[73,306,170,28]}
+{"kind":"textbox","id":"sh/pcvut03u","slide":6,"text":"publication ID","textPreview":"publication ID","textChars":14,"textLines":1,"bbox":[73,344,170,45]}
+{"kind":"shape","id":"sh/obmd0vm9","slide":6,"bbox":[293,239,208,174]}
+{"kind":"shape","id":"sh/3adcrqlo","slide":6,"bbox":[311,255,38,30]}
+{"kind":"textbox","id":"sh/29kvyl43","slide":6,"text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[311,255,38,30]}
+{"kind":"textbox","id":"sh/d0vux03q","slide":6,"text":"Fetch","textPreview":"Fetch","textChars":5,"textLines":1,"bbox":[311,306,170,28]}
+{"kind":"textbox","id":"sh/cfmd4vm5","slide":6,"text":"bibliography + family","textPreview":"bibliography + family","textChars":21,"textLines":1,"bbox":[311,344,170,45]}
+{"kind":"shape","id":"sh/bedcvalk","slide":6,"bbox":[531,239,208,174]}
+{"kind":"shape","id":"sh/qd4v254f","slide":6,"bbox":[549,255,38,30]}
+{"kind":"textbox","id":"sh/t4bulg3m","slide":6,"text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[549,255,38,30]}
+{"kind":"textbox","id":"sh/sj2tsbm1","slide":6,"text":"Check","textPreview":"Check","textChars":5,"textLines":1,"bbox":[549,306,170,28]}
+{"kind":"textbox","id":"sh/knmd8bux","slide":6,"text":"full-text availability","textPreview":"full-text availability","textChars":22,"textLines":1,"bbox":[549,344,170,45]}
+{"kind":"shape","id":"sh/5ofuhgbi","slide":6,"bbox":[769,239,208,174]}
+{"kind":"shape","id":"sh/il4v61cr","slide":6,"bbox":[787,255,38,30]}
+{"kind":"textbox","id":"sh/jmdcf6tc","slide":6,"text":"4","textPreview":"4","textChars":1,"textLines":1,"bbox":[787,255,38,30]}
+{"kind":"textbox","id":"sh/sr6dcvut","slide":6,"text":"Retrieve","textPreview":"Retrieve","textChars":8,"textLines":1,"bbox":[787,306,170,28]}
+{"kind":"textbox","id":"sh/tsful0be","slide":6,"text":"claims + description","textPreview":"claims + description","textChars":20,"textLines":1,"bbox":[787,344,170,45]}
+{"kind":"shape","id":"sh/6povalc3","slide":6,"bbox":[1007,239,208,174]}
+{"kind":"shape","id":"sh/7qxcjqt8","slide":6,"bbox":[1025,255,38,30]}
+{"kind":"textbox","id":"sh/gfqdgvu5","slide":6,"text":"5","textPreview":"5","textChars":1,"textLines":1,"bbox":[1025,255,38,30]}
+{"kind":"textbox","id":"sh/hgzep0bq","slide":6,"text":"Store","textPreview":"Store","textChars":5,"textLines":1,"bbox":[1025,306,170,28]}
+{"kind":"textbox","id":"sh/ra1gfuds","slide":6,"text":"locators + raw response","textPreview":"locators + raw response","textChars":23,"textLines":1,"bbox":[1025,344,170,45]}
+{"kind":"shape","id":"sh/q9sf6pw7","slide":6,"bbox":[54,480,1140,130]}
+{"kind":"textbox","id":"sh/dcjyh4vy","slide":6,"text":"DATE-SAFE FAMILY RULE","textPreview":"DATE-SAFE FAMILY RULE","textChars":21,"textLines":1,"bbox":[78,502,310,26]}
+{"kind":"textbox","id":"sh/cbax8zed","slide":6,"text":"A later family member may help navigation, but its later-added text cannot prove disclosure before the cutoff date.","textPreview":"A later family member may help navigation, but its later-added text cannot prove disclosure before the cutoff date.","textChars":115,"textLines":1,"bbox":[78,540,1070,48]}
+{"kind":"notes","id":"nt/0vqwy6","slide":6,"text":"[Sources]\n- Novelty-Lens-Comprehensive-Development-Plan-EN-v1.1.docx (internal project plan)\n- https://www.epo.org/en/service-support/faq/searching-patents/open-patent-services/coverage/what-kind-data-can-i-retrieve\n- https://link.epo.org/web/searching-for-patents/data/en-ops-v3.2-documentation-version-1.3.20.pdf\n[/Sources]"}
+{"kind":"slide","id":"sl/rf84uh","slide":7,"title":"QUALITY RULE","textShapes":10}
+{"kind":"shape","id":"sh/94vydsbi","slide":7,"bbox":[54,45,80,8]}
+{"kind":"textbox","id":"sh/mhkfixcr","slide":7,"text":"QUALITY RULE","textPreview":"QUALITY RULE","textChars":12,"textLines":1,"bbox":[54,64,500,24]}
+{"kind":"textbox","id":"sh/nidgb2tc","slide":7,"text":"Missing full text is excluded—never silently downgraded","textPreview":"Missing full text is excluded—never silently downgraded","textChars":55,"textLines":1,"bbox":[54,96,1150,78]}
+{"kind":"textbox","id":"sh/0f2xgnu1","slide":7,"text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[1160,46,64,25]}
+{"kind":"shape","id":"sh/1gby9sv6","slide":7,"bbox":[54,218,545,328]}
+{"kind":"shape","id":"sh/edkfedcv","slide":7,"bbox":[78,242,102,30]}
+{"kind":"textbox","id":"sh/zetg7idg","slide":7,"text":"ACCEPT","textPreview":"ACCEPT","textChars":6,"textLines":1,"bbox":[78,242,102,30]}
+{"kind":"textbox","id":"sh/cb2xcnup","slide":7,"text":"Claims + description verified","textPreview":"Claims + description verified","textChars":29,"textLines":1,"bbox":[78,295,470,42]}
+{"kind":"textbox","id":"sh/dcby58va","slide":7,"text":"• publication identity confirmed\n• relevant date passes cutoff\n• evidence locator can be stored\n• eligible for feature comparison","textPreview":"• publication identity confirmed | • relevant date passes cutoff | • evidence locator can be stored | • eligible for feature comparison","textChars":129,"textLines":4,"bbox":[78,357,450,145]}
+{"kind":"shape","id":"sh/x8vqh8r6","slide":7,"bbox":[649,218,545,328]}
+{"kind":"shape","id":"sh/w7mp8nal","slide":7,"bbox":[673,242,112,30]}
+{"kind":"textbox","id":"sh/b6d8fi9g","slide":7,"text":"EXCLUDE","textPreview":"EXCLUDE","textChars":7,"textLines":1,"bbox":[673,242,112,30]}
+{"kind":"textbox","id":"sh/al476dsv","slide":7,"text":"Required text unavailable","textPreview":"Required text unavailable","textChars":25,"textLines":1,"bbox":[673,295,470,42]}
+{"kind":"textbox","id":"sh/9kb6d8ra","slide":7,"text":"• do not use snippet as proof\n• record provider + reason\n• show exclusion count to user\n• retain metadata for audit only","textPreview":"• do not use snippet as proof | • record provider + reason | • show exclusion count to user | • retain metadata for audit only","textChars":120,"textLines":4,"bbox":[673,357,450,145]}
+{"kind":"textbox","id":"sh/oj2p43ap","slide":7,"text":"Zero-tolerance principle: a failed evidence step raises a clear error or exclusion reason—never fabricated output.","textPreview":"Zero-tolerance principle: a failed evidence step raises a clear error or exclusion reason—never fabricated output.","textChars":114,"textLines":1,"bbox":[54,589,1140,54]}
+{"kind":"notes","id":"nt/rf84uh","slide":7,"text":"[Sources]\n- Novelty-Lens-Comprehensive-Development-Plan-EN-v1.1.docx (internal project plan)\n\n[/Sources]"}
+{"kind":"slide","id":"sl/tkqttx","slide":8,"title":"EXPERIENCE TARGET","textShapes":22}
+{"kind":"shape","id":"sh/qx8vi94v","slide":8,"bbox":[54,45,80,8]}
+{"kind":"textbox","id":"sh/d0jedo36","slide":8,"text":"EXPERIENCE TARGET","textPreview":"EXPERIENCE TARGET","textChars":17,"textLines":1,"bbox":[54,64,500,24]}
+{"kind":"textbox","id":"sh/czadkjml","slide":8,"text":"A typical automated run should finish in about two minutes","textPreview":"A typical automated run should finish in about two minutes","textChars":58,"textLines":1,"bbox":[54,96,1150,78]}
+{"kind":"textbox","id":"sh/3ahw7el4","slide":8,"text":"08","textPreview":"08","textChars":2,"textLines":1,"bbox":[1160,46,64,25]}
+{"kind":"shape","id":"sh/298ve94j","slide":8,"bbox":[104,348,1050,5]}
+{"kind":"shape","id":"sh/pwze9o3a","slide":8,"bbox":[54,242,264,190]}
+{"kind":"textbox","id":"sh/4bqdgjmp","slide":8,"text":"0–15s","textPreview":"0–15s","textChars":5,"textLines":1,"bbox":[72,259,228,36]}
+{"kind":"textbox","id":"sh/f6xw3ul8","slide":8,"text":"Understand","textPreview":"Understand","textChars":10,"textLines":1,"bbox":[72,311,228,31]}
+{"kind":"textbox","id":"sh/u5ovap4n","slide":8,"text":"summary + features","textPreview":"summary + features","textChars":18,"textLines":1,"bbox":[72,355,228,40]}
+{"kind":"shape","id":"sh/s36dsfal","slide":8,"bbox":[346,242,264,190]}
+{"kind":"textbox","id":"sh/dofulkr6","slide":8,"text":"15–45s","textPreview":"15–45s","textChars":6,"textLines":1,"bbox":[364,259,228,36]}
+{"kind":"textbox","id":"sh/q14vq5sf","slide":8,"text":"Discover","textPreview":"Discover","textChars":8,"textLines":1,"bbox":[364,311,228,31]}
+{"kind":"textbox","id":"sh/r2dcja90","slide":8,"text":"SerpAPI candidates","textPreview":"SerpAPI candidates","textChars":18,"textLines":1,"bbox":[364,355,228,40]}
+{"kind":"shape","id":"sh/4zmdovap","slide":8,"bbox":[638,242,264,190]}
+{"kind":"textbox","id":"sh/50vuh0ra","slide":8,"text":"45–90s","textPreview":"45–90s","textChars":6,"textLines":1,"bbox":[656,259,228,36]}
+{"kind":"textbox","id":"sh/ix4vm5sj","slide":8,"text":"Rank","textPreview":"Rank","textChars":4,"textLines":1,"bbox":[656,311,228,31]}
+{"kind":"textbox","id":"sh/3ydcfq94","slide":8,"text":"filter + Qwen","textPreview":"filter + Qwen","textChars":13,"textLines":1,"bbox":[656,355,228,40]}
+{"kind":"shape","id":"sh/ovqd0zqt","slide":8,"bbox":[930,242,264,190]}
+{"kind":"textbox","id":"sh/9wzet4re","slide":8,"text":"90–180s","textPreview":"90–180s","textChars":7,"textLines":1,"bbox":[948,259,228,36]}
+{"kind":"textbox","id":"sh/xcvudkji","slide":8,"text":"Verify","textPreview":"Verify","textChars":6,"textLines":1,"bbox":[948,311,228,31]}
+{"kind":"textbox","id":"sh/wbmd4zix","slide":8,"text":"EPO + evidence report","textPreview":"EPO + evidence report","textChars":21,"textLines":1,"bbox":[948,355,228,40]}
+{"kind":"textbox","id":"sh/vadcbu1c","slide":8,"text":"P50","textPreview":"P50","textChars":3,"textLines":1,"bbox":[86,496,230,24]}
+{"kind":"textbox","id":"sh/a94v2p0r","slide":8,"text":"< 2 min","textPreview":"< 2 min","textChars":7,"textLines":1,"bbox":[86,526,230,45]}
+{"kind":"textbox","id":"sh/9obu9kjm","slide":8,"text":"P95","textPreview":"P95","textChars":3,"textLines":1,"bbox":[466,496,230,24]}
+{"kind":"textbox","id":"sh/8n2d0f21","slide":8,"text":"< 4 min","textPreview":"< 4 min","textChars":7,"textLines":1,"bbox":[466,526,230,45]}
+{"kind":"textbox","id":"sh/nmtc7a1g","slide":8,"text":"HARD TIMEOUT","textPreview":"HARD TIMEOUT","textChars":12,"textLines":1,"bbox":[846,496,230,24]}
+{"kind":"textbox","id":"sh/mlkvy5kv","slide":8,"text":"6 min","textPreview":"6 min","textChars":5,"textLines":1,"bbox":[846,526,230,45]}
+{"kind":"textbox","id":"sh/lkbu50ja","slide":8,"text":"User review time at approval gates is excluded from automated latency.","textPreview":"User review time at approval gates is excluded from automated latency.","textChars":70,"textLines":1,"bbox":[54,621,1140,28]}
+{"kind":"notes","id":"nt/tkqttx","slide":8,"text":"[Sources]\n- Novelty-Lens-Comprehensive-Development-Plan-EN-v1.1.docx (internal project plan)\n\n[/Sources]"}
+{"kind":"slide","id":"sl/7ivg4e","slide":9,"title":"DISCUSSION WITH SARAH","textShapes":19}
+{"kind":"shape","id":"sh/edor2lsr","slide":9,"bbox":[54,45,80,8]}
+{"kind":"textbox","id":"sh/1gfqd0r2","slide":9,"text":"DISCUSSION WITH SARAH","textPreview":"DISCUSSION WITH SARAH","textChars":21,"textLines":1,"bbox":[54,64,500,24]}
+{"kind":"textbox","id":"sh/0f694vqh","slide":9,"text":"Five decisions to close before implementation","textPreview":"Five decisions to close before implementation","textChars":45,"textLines":1,"bbox":[54,96,1150,78]}
+{"kind":"textbox","id":"sh/nix8fa98","slide":9,"text":"09","textPreview":"09","textChars":2,"textLines":1,"bbox":[1160,46,64,25]}
+{"kind":"shape","id":"sh/2hor658n","slide":9,"bbox":[54,271,1140,1]}
+{"kind":"shape","id":"sh/p4zqhkre","slide":9,"bbox":[54,212,48,30]}
+{"kind":"textbox","id":"sh/oj698fqt","slide":9,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[54,212,48,30]}
+{"kind":"textbox","id":"sh/b6hsja94","slide":9,"text":"MVP evidence volume","textPreview":"MVP evidence volume","textChars":19,"textLines":1,"bbox":[128,207,390,36]}
+{"kind":"textbox","id":"sh/a58ra58z","slide":9,"text":"Confirm 3–5 deep references","textPreview":"Confirm 3–5 deep references","textChars":27,"textLines":1,"bbox":[530,207,664,40]}
+{"kind":"shape","id":"sh/sfihc7u1","slide":9,"bbox":[54,353,1140,1]}
+{"kind":"shape","id":"sh/tgri5cvm","slide":9,"bbox":[54,294,48,30]}
+{"kind":"textbox","id":"sh/6d0zaxcv","slide":9,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[54,294,48,30]}
+{"kind":"textbox","id":"sh/re9032dg","slide":9,"text":"Human review scope","textPreview":"Human review scope","textChars":18,"textLines":1,"bbox":[128,289,390,36]}
+{"kind":"textbox","id":"sh/gjihgrux","slide":9,"text":"Approve R1 editing controls","textPreview":"Approve R1 editing controls","textChars":27,"textLines":1,"bbox":[530,289,664,40]}
+{"kind":"shape","id":"sh/1kbi9wvi","slide":9,"bbox":[54,435,1140,1]}
+{"kind":"shape","id":"sh/eh0zehcr","slide":9,"bbox":[54,376,48,30]}
+{"kind":"textbox","id":"sh/fi907mdc","slide":9,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[54,376,48,30]}
+{"kind":"textbox","id":"sh/on2hkru9","slide":9,"text":"Quality threshold","textPreview":"Quality threshold","textChars":17,"textLines":1,"bbox":[128,371,390,36]}
+{"kind":"textbox","id":"sh/pobidwbu","slide":9,"text":"Define full-text + cutoff rules","textPreview":"Define full-text + cutoff rules","textChars":31,"textLines":1,"bbox":[530,371,664,40]}
+{"kind":"shape","id":"sh/x47ixw3y","slide":9,"bbox":[54,517,1140,1]}
+{"kind":"shape","id":"sh/c3yh4rmd","slide":9,"bbox":[54,458,48,30]}
+{"kind":"textbox","id":"sh/b2pgvmls","slide":9,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[54,458,48,30]}
+{"kind":"textbox","id":"sh/a1gz2h47","slide":9,"text":"Performance budget","textPreview":"Performance budget","textChars":18,"textLines":1,"bbox":[128,453,390,36]}
+{"kind":"textbox","id":"sh/l8ri1w3u","slide":9,"text":"Accept P50/P95 targets","textPreview":"Accept P50/P95 targets","textChars":22,"textLines":1,"bbox":[530,453,664,40]}
+{"kind":"shape","id":"sh/k7ih8bm9","slide":9,"bbox":[54,599,1140,1]}
+{"kind":"shape","id":"sh/z6p0z6lo","slide":9,"bbox":[54,540,48,30]}
+{"kind":"textbox","id":"sh/y5gz6143","slide":9,"text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[54,540,48,30]}
+{"kind":"textbox","id":"sh/1cnypcnq","slide":9,"text":"Expansion trigger","textPreview":"Expansion trigger","textChars":17,"textLines":1,"bbox":[128,535,390,36]}
+{"kind":"textbox","id":"sh/0behw7m5","slide":9,"text":"Set criteria for paid scale-up","textPreview":"Set criteria for paid scale-up","textChars":30,"textLines":1,"bbox":[530,535,664,40]}
+{"kind":"shape","id":"sh/6hcf6dk3","slide":9,"bbox":[54,628,1140,44]}
+{"kind":"textbox","id":"sh/rilwzi18","slide":9,"text":"Build the smallest workflow that can defend every result.","textPreview":"Build the smallest workflow that can defend every result.","textChars":57,"textLines":1,"bbox":[78,634,1090,31]}
+{"kind":"notes","id":"nt/7ivg4e","slide":9,"text":"[Sources]\n- Novelty-Lens-Comprehensive-Development-Plan-EN-v1.1.docx (internal project plan)\n\n[/Sources]"}

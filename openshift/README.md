@@ -58,9 +58,20 @@ oc start-build backend  --from-dir=../backend  --follow
 oc new-build --name=frontend --binary --strategy=docker
 oc start-build frontend --from-dir=../frontend --follow
 
-# 5. Backend, then point the frontend at its Route.
+# 5. Backend, then the worker, then point the frontend at its Route.
 oc apply -f 04-backend.yaml
 oc rollout status deployment/backend
+
+# 06 carries TWO things: the checkpointer-setup Job (LangGraph owns its four
+# checkpoint tables; yoyo does not) and the worker Deployment -- the durable
+# executor that drives verified runs. Without the worker, POST /api/runs still
+# returns 201 and the run sits QUEUED forever, because the API never executes a
+# graph. POST /api/analyze and /api/analyze/stream are unaffected: they still run
+# inline in the API process.
+oc apply -f 06-worker.yaml
+oc logs job/noveltylens-checkpointer-setup
+oc rollout status deployment/worker
+
 oc apply -f 05-frontend.yaml
 oc set env deployment/frontend \
     API_URL="https://$(oc get route backend -o jsonpath='{.spec.host}')"
@@ -89,6 +100,19 @@ Schema change — a completed Job is immutable, so it must be recreated:
 oc delete job noveltylens-migrate
 oc apply -f 04-backend.yaml
 oc logs job/noveltylens-migrate
+```
+
+The schema has **two owners**, and only the first of them is yoyo's. LangGraph's
+`checkpoints`, `checkpoint_blobs`, `checkpoint_writes` and `checkpoint_migrations`
+are created and migrated by `PostgresSaver.setup()`, which tracks its own version
+in the last of them — deliberately, because two migration systems owning the same
+tables conflict the first time either side changes a column. Re-create that Job
+after upgrading `langgraph-checkpoint-postgres`:
+
+```bash
+oc delete job noveltylens-checkpointer-setup
+oc apply -f 06-worker.yaml
+oc logs job/noveltylens-checkpointer-setup
 ```
 
 ## Things that will bite

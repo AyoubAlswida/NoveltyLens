@@ -1,0 +1,143 @@
+{
+  "diagnostic": "spec \u00a715.1 case E",
+  "non_qualifying": true,
+  "note": "DIAGNOSTIC ONLY. This record cannot qualify any runtime: it carries no runtime_identity, no eligibility verdict, and its filename is outside the namespace capability.load_artifacts reads. A pass here is permission to spend the full gate's 39 calls, and its calls are never counted toward a qualification.",
+  "run_at": "2026-08-29T10:16:31.095189+00:00",
+  "case_id": "E",
+  "case_title": "referent not supplied, so UNCLEAR rather than absent",
+  "expected_outcome": "UNCLEAR",
+  "runs": 5,
+  "passing_runs": 0,
+  "all_runs_expected": false,
+  "operational_failures": 0,
+  "results": [
+    {
+      "run": 1,
+      "served_model": "gpt-5-mini-2025-08-07",
+      "usage": {
+        "prompt_tokens": 3421,
+        "completion_tokens": 4882,
+        "total_tokens": 8303,
+        "reasoning_tokens": 4352
+      },
+      "attempts": 1,
+      "operational": false,
+      "canonical_validation": "PASSED",
+      "consistency_check": "PASSED",
+      "statuses": {
+        "E1": "FOUND",
+        "E2": "FOUND",
+        "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+        "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+      },
+      "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+      "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+      "outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+      "expected_outcome": "UNCLEAR",
+      "passed": false,
+      "failure_category": "WRONG_OUTCOME"
+    },
+    {
+      "run": 2,
+      "served_model": "gpt-5-mini-2025-08-07",
+      "usage": {
+        "prompt_tokens": 3421,
+        "completion_tokens": 7774,
+        "total_tokens": 11195,
+        "reasoning_tokens": 6912
+      },
+      "attempts": 1,
+      "passed": false,
+      "operational": false,
+      "canonical_validation": "REJECTED at check 14",
+      "consistency_check": "not reached",
+      "failure_category": "CANONICAL_VALIDATION_FAILURE",
+      "statuses": {
+        "E1": "FOUND",
+        "E2": "FOUND",
+        "E3": "UNCLEAR",
+        "R1": "UNCLEAR"
+      },
+      "declared_outcome": "UNCLEAR",
+      "derived_outcome": "UNCLEAR"
+    },
+    {
+      "run": 3,
+      "served_model": "gpt-5-mini-2025-08-07",
+      "usage": {
+        "prompt_tokens": 3421,
+        "completion_tokens": 8405,
+        "total_tokens": 11826,
+        "reasoning_tokens": 7872
+      },
+      "attempts": 1,
+      "operational": false,
+      "canonical_validation": "PASSED",
+      "consistency_check": "PASSED",
+      "statuses": {
+        "E1": "FOUND",
+        "E2": "FOUND",
+        "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+        "R1": "UNCLEAR"
+      },
+      "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+      "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+      "outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+      "expected_outcome": "UNCLEAR",
+      "passed": false,
+      "failure_category": "WRONG_OUTCOME"
+    },
+    {
+      "run": 4,
+      "served_model": "gpt-5-mini-2025-08-07",
+      "usage": {
+        "prompt_tokens": 3421,
+        "completion_tokens": 4632,
+        "total_tokens": 8053,
+        "reasoning_tokens": 4096
+      },
+      "attempts": 1,
+      "operational": false,
+      "canonical_validation": "PASSED",
+      "consistency_check": "PASSED",
+      "statuses": {
+        "E1": "FOUND",
+        "E2": "FOUND",
+        "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+        "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+      },
+      "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+      "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+      "outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+      "expected_outcome": "UNCLEAR",
+      "passed": false,
+      "failure_category": "WRONG_OUTCOME"
+    },
+    {
+      "run": 5,
+      "served_model": "gpt-5-mini-2025-08-07",
+      "usage": {
+        "prompt_tokens": 3421,
+        "completion_tokens": 6340,
+        "total_tokens": 9761,
+        "reasoning_tokens": 5696
+      },
+      "attempts": 1,
+      "operational": false,
+      "canonical_validation": "PASSED",
+      "consistency_check": "PASSED",
+      "statuses": {
+        "E1": "FOUND",
+        "E2": "FOUND",
+        "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+        "R1": "UNCLEAR"
+      },
+      "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+      "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+      "outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+      "expected_outcome": "UNCLEAR",
+      "passed": false,
+      "failure_category": "WRONG_OUTCOME"
+    }
+  ]
+}

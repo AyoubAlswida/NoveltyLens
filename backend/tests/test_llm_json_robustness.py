@@ -11,9 +11,36 @@ from unittest.mock import patch
 
 import pytest
 
+import config
 import llm
+from deployment import LLMTarget, Profile, Provider
 from llm import LLMResponseError, LLMTruncatedError
 from models import PatentRecord
+
+
+@pytest.fixture(autouse=True)
+def openai_compatible_target():
+    """Declare which provider path these tests exercise.
+
+    They patch `llm.requests.post`, so they have always been about the
+    **OpenAI-compatible** transport specifically -- that was implicit while there
+    was only one provider and has to be stated now there are two. Under the
+    suite's own `test` profile there is no provider at all, and
+    `require_llm_credentials` correctly refuses: a test reaching a real call is a
+    test about to spend money.
+
+    This declares the target rather than relaxing the refusal. The truncation,
+    retry and `response_format` contracts asserted below are unchanged, and
+    `tests/test_openai_provider.py` asserts the same contracts on the OpenAI path.
+    """
+    target = LLMTarget(
+        profile=Profile.ARAMCO,
+        provider=Provider.OPENAI_COMPATIBLE,
+        base_url="https://gateway.invalid/v1/chat/completions",
+        model="test-model",
+    )
+    with patch.object(config, "llm_target", target):
+        yield
 
 GOOD_UNDERSTANDING = json.dumps({
     "concepts": ["c1"], "keywords": ["k1"],

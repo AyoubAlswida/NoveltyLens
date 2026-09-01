@@ -27,7 +27,9 @@ from graph.events import PHASES
 from graph.pipeline import run_graph_pipeline
 
 from models import PatentRecord
+from run_mock import _mock_verification
 from search.search import PatentSearchError
+from verification.prompt import PROMPT_MARKER as VERIFIER_MARKER
 
 DESCRIPTION = (
     "A portable, refillable drinking-water bottle that automatically sterilizes its "
@@ -72,6 +74,16 @@ result-mapping code)."""
 
 def _fake_llm_chat(prompt: str, **kwargs: object) -> str:
     """Stand in for the HTTP call in ``_llm_chat``, keyed off the real prompts."""
+    if VERIFIER_MARKER in str(kwargs.get("system", "")):
+        # Registered per the verification spec's section 17.8, which requires the
+        # marker to be known to this double *and* to ``run_mock.py``: both key off
+        # prompt substrings, so a new prompt that neither recognizes would fall
+        # through to a real, metered call. Nothing in the novelty-search pipeline
+        # calls the verifier today - the branch exists so that stays a deliberate
+        # fact rather than an accident waiting for the day it does. The response
+        # is deliberately the honest empty one; see ``run_mock._mock_verification``.
+        return _mock_verification(prompt)
+
     if "PatentScout AI" in prompt:
         return json.dumps({"concepts": CONCEPTS, "keywords": KEYWORDS, "queries": QUERIES})
 

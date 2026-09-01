@@ -2,6 +2,17 @@
 
 Usage, from backend/ with requirements installed and the Compose Postgres up:
     python migrate.py
+
+**This is not the whole schema.** LangGraph's checkpoint tables -- ``checkpoints``,
+``checkpoint_blobs``, ``checkpoint_writes`` and ``checkpoint_migrations`` -- are
+created and migrated by ``PostgresSaver.setup()``, which tracks its own schema
+version in the last of them. yoyo deliberately does not own them: two migration
+systems on the same tables is a guaranteed conflict the first time either side
+changes a column. Run that step separately, once, after this one::
+
+    python checkpointer.py setup
+
+See ``backend/checkpointer.py`` for the full reasoning.
 """
 
 from yoyo import get_backend, read_migrations

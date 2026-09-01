@@ -1,0 +1,1159 @@
+{
+  "gate": "spec \u00a714.2.1 structured-output capability",
+  "run_at": "2026-08-29T08:51:02.905287+00:00",
+  "runtime_identity": {
+    "deployment_profile": "local",
+    "provider": "openai",
+    "endpoint": {
+      "scheme": "https",
+      "host": "api.openai.com",
+      "port": "",
+      "path": "/v1"
+    },
+    "model": "gpt-5-mini-2025-08-07",
+    "model_revision": "gpt-5-mini-2025-08-07",
+    "adapter_revision": "openai-python/3.5.0+behaviour/3",
+    "schema_version": "sha256:cee4a3a1caa7df7e",
+    "wire_schema_version": "sha256:f9c0f9f1e3747938",
+    "validator_version": "sha256:a89ff8e7acd83c7c",
+    "runner_version": "4"
+  },
+  "model_pinned": true,
+  "schema_layers": {
+    "canonical": "sha256:cee4a3a1caa7df7e",
+    "wire_sent_to_provider": "sha256:f9c0f9f1e3747938",
+    "canonical_validator": "sha256:a89ff8e7acd83c7c",
+    "wire_omitted_keywords": [
+      "maxItems",
+      "minItems",
+      "minLength",
+      "uniqueItems"
+    ],
+    "wire_strict_violations": [],
+    "note": "Owner amendment 2026-08-29. The provider is sent the wire rendering; every keyword omitted from it is enforced by the canonical validator after parsing, and probe 6 exercises both halves in order."
+  },
+  "provider_response": {
+    "system_fingerprint": "",
+    "server_header": ""
+  },
+  "chat_dialect": {
+    "token_parameter": "max_completion_tokens",
+    "temperature_sent": false,
+    "reasoning_token_allowance": 8000,
+    "note": "The request shape follows the model (deployment.MODEL_DIALECTS). Where temperature_sent is false the parameter is OMITTED, not rewritten -- the reasoning families reject an explicit value -- so the verifier's temperature=0.0 is not in force on this runtime. Spec \u00a714 already states temperature 0 is best-effort rather than a determinism guarantee; probe 7's repeats are what measure the consequence."
+  },
+  "regression_coverage": {
+    "required_case_ids": [
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "H",
+      "I",
+      "J",
+      "K"
+    ],
+    "measured_case_ids": [
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "H",
+      "I",
+      "J",
+      "K"
+    ],
+    "coverage_complete": true,
+    "expected_calls": 33,
+    "scheduled_calls": 33,
+    "valid_responses": 33
+  },
+  "structured_output_setting": "json_schema",
+  "generic_json_decision_recorded": false,
+  "probes": [
+    {
+      "probe": "1. adapter exposes structured output",
+      "attempts": 1,
+      "outcome": "PARSED",
+      "passed": true,
+      "schema_violations": []
+    },
+    {
+      "probe": "2. json_schema accepted and honoured",
+      "attempts": 1,
+      "outcome": "PARSED",
+      "passed": true,
+      "schema_violations": []
+    },
+    {
+      "probe": "3. required fields enforced",
+      "attempts": 1,
+      "outcome": "PARSED",
+      "passed": true,
+      "schema_violations": []
+    },
+    {
+      "probe": "4. closed enums enforced",
+      "attempts": 1,
+      "outcome": "PARSED",
+      "passed": true,
+      "schema_violations": []
+    },
+    {
+      "probe": "5. additionalProperties rejected",
+      "attempts": 1,
+      "outcome": "PARSED",
+      "passed": true,
+      "schema_violations": []
+    },
+    {
+      "probe": "6. full schema within the token ceiling, then canonical validation",
+      "attempts": 1,
+      "outcome": "PARSED",
+      "passed": true,
+      "canonical_validation": "PASSED"
+    },
+    {
+      "probe": "7. stability across the full \u00a715.1 regression suite",
+      "outcome": "MEASURED",
+      "required_case_ids": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "G",
+        "H",
+        "I",
+        "J",
+        "K"
+      ],
+      "measured_case_ids": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "G",
+        "H",
+        "I",
+        "J",
+        "K"
+      ],
+      "missing_case_ids": [],
+      "unknown_case_ids": [],
+      "coverage_complete": true,
+      "runs_per_case": 3,
+      "expected_calls": 33,
+      "scheduled_calls": 33,
+      "valid_responses": 33,
+      "operational_failures": 0,
+      "validation_failures": 0,
+      "consistency_failures": 0,
+      "malformed_response_rate": 0.0,
+      "consistency_failure_rate": 0.0,
+      "all_scheduled_calls_valid": true,
+      "all_cases_stable": false,
+      "served_models": [
+        "gpt-5-mini-2025-08-07"
+      ],
+      "cases": {
+        "A": {
+          "title": "all requirements across a claim and its dependent",
+          "publication_number": "US1234567B2",
+          "expected_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+          "scheduled": 3,
+          "valid_responses": 3,
+          "operational_failures": 0,
+          "validation_failures": 0,
+          "consistency_failures": 0,
+          "outcomes": [
+            "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES"
+          ],
+          "matches_expected_outcome": true,
+          "runs": [
+            {
+              "run": 1,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3444,
+                "completion_tokens": 1697,
+                "total_tokens": 5141,
+                "reasoning_tokens": 1152
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "FOUND",
+                "E3": "FOUND",
+                "R1": "FOUND"
+              },
+              "declared_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            },
+            {
+              "run": 2,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3444,
+                "completion_tokens": 2149,
+                "total_tokens": 5593,
+                "reasoning_tokens": 1600
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "FOUND",
+                "E3": "FOUND",
+                "R1": "FOUND"
+              },
+              "declared_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            },
+            {
+              "run": 3,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3444,
+                "completion_tokens": 1565,
+                "total_tokens": 5009,
+                "reasoning_tokens": 1024
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "FOUND",
+                "E3": "FOUND",
+                "R1": "FOUND"
+              },
+              "declared_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            }
+          ],
+          "stable": true,
+          "passed": true
+        },
+        "B": {
+          "title": "E1 and E2 stated, E3 absent so R1 cannot be found",
+          "publication_number": "US1234567B2",
+          "expected_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+          "scheduled": 3,
+          "valid_responses": 3,
+          "operational_failures": 0,
+          "validation_failures": 0,
+          "consistency_failures": 0,
+          "outcomes": [
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES"
+          ],
+          "matches_expected_outcome": true,
+          "runs": [
+            {
+              "run": 1,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3446,
+                "completion_tokens": 2189,
+                "total_tokens": 5635,
+                "reasoning_tokens": 1728
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "FOUND",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            },
+            {
+              "run": 2,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3446,
+                "completion_tokens": 1995,
+                "total_tokens": 5441,
+                "reasoning_tokens": 1536
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "FOUND",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            },
+            {
+              "run": 3,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3446,
+                "completion_tokens": 2056,
+                "total_tokens": 5502,
+                "reasoning_tokens": 1600
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "FOUND",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            }
+          ],
+          "stable": true,
+          "passed": true
+        },
+        "C": {
+          "title": "adversarial: high similarity, different mechanism",
+          "publication_number": "US1234567B2",
+          "expected_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+          "scheduled": 3,
+          "valid_responses": 3,
+          "operational_failures": 0,
+          "validation_failures": 0,
+          "consistency_failures": 0,
+          "outcomes": [
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES"
+          ],
+          "matches_expected_outcome": true,
+          "runs": [
+            {
+              "run": 1,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3377,
+                "completion_tokens": 1325,
+                "total_tokens": 4702,
+                "reasoning_tokens": 896
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            },
+            {
+              "run": 2,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3377,
+                "completion_tokens": 1119,
+                "total_tokens": 4496,
+                "reasoning_tokens": 704
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            },
+            {
+              "run": 3,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3377,
+                "completion_tokens": 1060,
+                "total_tokens": 4437,
+                "reasoning_tokens": 640
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            }
+          ],
+          "stable": true,
+          "passed": true
+        },
+        "D": {
+          "title": "adversarial: conventional knowledge is not evidence",
+          "publication_number": "US1234567B2",
+          "expected_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+          "scheduled": 3,
+          "valid_responses": 3,
+          "operational_failures": 0,
+          "validation_failures": 0,
+          "consistency_failures": 0,
+          "outcomes": [
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES"
+          ],
+          "matches_expected_outcome": true,
+          "runs": [
+            {
+              "run": 1,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3429,
+                "completion_tokens": 1739,
+                "total_tokens": 5168,
+                "reasoning_tokens": 1280
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "FOUND",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            },
+            {
+              "run": 2,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3429,
+                "completion_tokens": 1747,
+                "total_tokens": 5176,
+                "reasoning_tokens": 1280
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "FOUND",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            },
+            {
+              "run": 3,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3429,
+                "completion_tokens": 1815,
+                "total_tokens": 5244,
+                "reasoning_tokens": 1280
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "FOUND",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            }
+          ],
+          "stable": true,
+          "passed": true
+        },
+        "E": {
+          "title": "referent not supplied, so UNCLEAR rather than absent",
+          "publication_number": "US1234567B2",
+          "expected_outcome": "UNCLEAR",
+          "scheduled": 3,
+          "valid_responses": 3,
+          "operational_failures": 0,
+          "validation_failures": 0,
+          "consistency_failures": 0,
+          "outcomes": [
+            "UNCLEAR",
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES"
+          ],
+          "matches_expected_outcome": false,
+          "runs": [
+            {
+              "run": 1,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3421,
+                "completion_tokens": 3509,
+                "total_tokens": 6930,
+                "reasoning_tokens": 2752
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "FOUND",
+                "E3": "UNCLEAR",
+                "R1": "UNCLEAR"
+              },
+              "declared_outcome": "UNCLEAR",
+              "derived_outcome": "UNCLEAR",
+              "failure_category": null
+            },
+            {
+              "run": 2,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3421,
+                "completion_tokens": 1815,
+                "total_tokens": 5236,
+                "reasoning_tokens": 1280
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "FOUND",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            },
+            {
+              "run": 3,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3421,
+                "completion_tokens": 3946,
+                "total_tokens": 7367,
+                "reasoning_tokens": 3264
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "FOUND",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "UNCLEAR"
+              },
+              "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            }
+          ],
+          "stable": false,
+          "passed": false
+        },
+        "F": {
+          "title": "no requirement appears; vocabulary overlap only",
+          "publication_number": "US1234567B2",
+          "expected_outcome": "NO_DISCLOSURE_FOUND_IN_SUPPLIED_PASSAGES",
+          "scheduled": 3,
+          "valid_responses": 3,
+          "operational_failures": 0,
+          "validation_failures": 0,
+          "consistency_failures": 0,
+          "outcomes": [
+            "NO_DISCLOSURE_FOUND_IN_SUPPLIED_PASSAGES",
+            "NO_DISCLOSURE_FOUND_IN_SUPPLIED_PASSAGES",
+            "NO_DISCLOSURE_FOUND_IN_SUPPLIED_PASSAGES"
+          ],
+          "matches_expected_outcome": true,
+          "runs": [
+            {
+              "run": 1,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3360,
+                "completion_tokens": 764,
+                "total_tokens": 4124,
+                "reasoning_tokens": 384
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "E2": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "NO_DISCLOSURE_FOUND_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "NO_DISCLOSURE_FOUND_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            },
+            {
+              "run": 2,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3360,
+                "completion_tokens": 765,
+                "total_tokens": 4125,
+                "reasoning_tokens": 384
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "E2": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "NO_DISCLOSURE_FOUND_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "NO_DISCLOSURE_FOUND_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            },
+            {
+              "run": 3,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3360,
+                "completion_tokens": 765,
+                "total_tokens": 4125,
+                "reasoning_tokens": 384
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "E2": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "NO_DISCLOSURE_FOUND_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "NO_DISCLOSURE_FOUND_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            }
+          ],
+          "stable": true,
+          "passed": true
+        },
+        "G": {
+          "title": "adversarial: prompt injection inside a passage",
+          "publication_number": "US1234567B2",
+          "expected_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+          "scheduled": 3,
+          "valid_responses": 3,
+          "operational_failures": 0,
+          "validation_failures": 0,
+          "consistency_failures": 0,
+          "outcomes": [
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES"
+          ],
+          "matches_expected_outcome": true,
+          "runs": [
+            {
+              "run": 1,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3384,
+                "completion_tokens": 933,
+                "total_tokens": 4317,
+                "reasoning_tokens": 512
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            },
+            {
+              "run": 2,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3384,
+                "completion_tokens": 1126,
+                "total_tokens": 4510,
+                "reasoning_tokens": 704
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            },
+            {
+              "run": 3,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3384,
+                "completion_tokens": 1185,
+                "total_tokens": 4569,
+                "reasoning_tokens": 768
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            }
+          ],
+          "stable": true,
+          "passed": true
+        },
+        "H": {
+          "title": "adversarial: unrelated embodiments are not combined",
+          "publication_number": "US1234567B2",
+          "expected_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+          "scheduled": 3,
+          "valid_responses": 3,
+          "operational_failures": 0,
+          "validation_failures": 0,
+          "consistency_failures": 0,
+          "outcomes": [
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES"
+          ],
+          "matches_expected_outcome": true,
+          "runs": [
+            {
+              "run": 1,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3412,
+                "completion_tokens": 1178,
+                "total_tokens": 4590,
+                "reasoning_tokens": 704
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "FOUND",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            },
+            {
+              "run": 2,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3412,
+                "completion_tokens": 1361,
+                "total_tokens": 4773,
+                "reasoning_tokens": 896
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "FOUND",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            },
+            {
+              "run": 3,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3412,
+                "completion_tokens": 1369,
+                "total_tokens": 4781,
+                "reasoning_tokens": 896
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "FOUND",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            }
+          ],
+          "stable": true,
+          "passed": true
+        },
+        "I": {
+          "title": "valid explicit link across a claim and its dependent",
+          "publication_number": "US1234567B2",
+          "expected_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+          "scheduled": 3,
+          "valid_responses": 3,
+          "operational_failures": 0,
+          "validation_failures": 0,
+          "consistency_failures": 0,
+          "outcomes": [
+            "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES"
+          ],
+          "matches_expected_outcome": true,
+          "runs": [
+            {
+              "run": 1,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3432,
+                "completion_tokens": 1838,
+                "total_tokens": 5270,
+                "reasoning_tokens": 1280
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "FOUND",
+                "E3": "FOUND",
+                "R1": "FOUND"
+              },
+              "declared_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            },
+            {
+              "run": 2,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3432,
+                "completion_tokens": 1877,
+                "total_tokens": 5309,
+                "reasoning_tokens": 1344
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "FOUND",
+                "E3": "FOUND",
+                "R1": "FOUND"
+              },
+              "declared_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            },
+            {
+              "run": 3,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3432,
+                "completion_tokens": 1386,
+                "total_tokens": 4818,
+                "reasoning_tokens": 832
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "FOUND",
+                "E3": "FOUND",
+                "R1": "FOUND"
+              },
+              "declared_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            }
+          ],
+          "stable": true,
+          "passed": true
+        },
+        "J": {
+          "title": "translated passage: quotes come from the original",
+          "publication_number": "EP1234567A1",
+          "expected_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+          "scheduled": 3,
+          "valid_responses": 3,
+          "operational_failures": 0,
+          "validation_failures": 0,
+          "consistency_failures": 0,
+          "outcomes": [
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES"
+          ],
+          "matches_expected_outcome": true,
+          "runs": [
+            {
+              "run": 1,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3382,
+                "completion_tokens": 1195,
+                "total_tokens": 4577,
+                "reasoning_tokens": 768
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            },
+            {
+              "run": 2,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3382,
+                "completion_tokens": 939,
+                "total_tokens": 4321,
+                "reasoning_tokens": 512
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            },
+            {
+              "run": 3,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3382,
+                "completion_tokens": 995,
+                "total_tokens": 4377,
+                "reasoning_tokens": 576
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "E3": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
+                "R1": "NOT_FOUND_IN_SUPPLIED_PASSAGES"
+              },
+              "declared_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            }
+          ],
+          "stable": true,
+          "passed": true
+        },
+        "K": {
+          "title": "a single passage is a complete verification",
+          "publication_number": "US1234567B2",
+          "expected_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+          "scheduled": 3,
+          "valid_responses": 3,
+          "operational_failures": 0,
+          "validation_failures": 0,
+          "consistency_failures": 0,
+          "outcomes": [
+            "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+            "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES"
+          ],
+          "matches_expected_outcome": true,
+          "runs": [
+            {
+              "run": 1,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3402,
+                "completion_tokens": 1310,
+                "total_tokens": 4712,
+                "reasoning_tokens": 768
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "FOUND",
+                "E3": "FOUND",
+                "R1": "FOUND"
+              },
+              "declared_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            },
+            {
+              "run": 2,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3402,
+                "completion_tokens": 1636,
+                "total_tokens": 5038,
+                "reasoning_tokens": 1088
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "FOUND",
+                "E3": "FOUND",
+                "R1": "FOUND"
+              },
+              "declared_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            },
+            {
+              "run": 3,
+              "served_model": "gpt-5-mini-2025-08-07",
+              "usage": {
+                "prompt_tokens": 3402,
+                "completion_tokens": 1187,
+                "total_tokens": 4589,
+                "reasoning_tokens": 640
+              },
+              "attempts": 1,
+              "counted_in_denominator": true,
+              "canonical_validation": "PASSED",
+              "consistency_check": "PASSED",
+              "statuses": {
+                "E1": "FOUND",
+                "E2": "FOUND",
+                "E3": "FOUND",
+                "R1": "FOUND"
+              },
+              "declared_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "derived_outcome": "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
+              "failure_category": null
+            }
+          ],
+          "stable": true,
+          "passed": true
+        }
+      },
+      "passed": false,
+      "scope": "Every executable verifier case in \u00a715.1 (A-K, 11 cases) at 3 independent runs each, through the real verifier: byte-pinned system prompt, generated wire schema, strict provider-side parsing, full canonical validation, and all eighteen \u00a79 checks. \u00a715.2's cases are application behaviour -- most are explicitly 'no LLM call' -- and are covered offline, not here."
+    }
+  ],
+  "operational_failures": [],
+  "token_limit_result": "PARSED",
+  "malformed_response_rate": 0.0,
+  "consistency_failure_rate": 0.0,
+  "eligible": false,
+  "note": "Eligibility means every probe passed on its own terms: probes 1-2 returned conforming structured output, probes 3-5 returned a conforming response despite being told to violate the schema, probe 6 was accepted by the provider AND passed canonical validation, and every one of the 33 scheduled stability calls -- all eleven \u00a715.1 cases at three runs each -- produced a canonically validated, self-consistent response. No operational outcome can contribute to any of that, and incomplete case coverage fails the probe outright. \u00a714.2.2's generic-JSON decision is NOT settled by this file, and probe 7 measured a representative subset of \u00a715.1 rather than the full regression suite. This record qualifies the runtime_identity above and NOTHING else -- each deployment profile is qualified independently."
+}

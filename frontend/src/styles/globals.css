@@ -750,6 +750,27 @@ button {
   align-items: center;
   gap: 30px;
   margin-top: 24px;
+  /* Two actions now, and on a narrow screen they stack rather than shrink the
+     labels: "Run with feature verification" is the longer of the two and must
+     stay readable, because the difference between the buttons is the whole
+     decision the reviewer is making here. */
+  flex-wrap: wrap;
+}
+
+/* The verified run sits beside the search, not above it: both are real ways to
+   use the tool, and search-only is still the faster and cheaper one. */
+.verify-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.verify-note {
+  margin-top: 14px;
+  max-width: 62ch;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted-foreground);
 }
 
 /* Buttons follow the Aramco Pixel component spec: a solid Contained button, an
@@ -2694,3 +2715,91 @@ button {
 :root[data-theme="dark"] .history-score.risk-low {
   color: var(--green-dark);
 }
+
+/* --- Human-in-the-Loop review screen (Implementation Gate D/E) ----------- */
+/*
+ * Every state class below carries an explicit dark counterpart. The dark rules
+ * in this file are written `:root[data-theme="dark"] .foo` -- specificity
+ * (0,3,0) -- and sit later in the file, so they silently beat a state rule like
+ * `.review-card[data-state="stale"]` and erase the state. That has happened four
+ * times in this stylesheet; the symptom is never an error, it is a state that
+ * renders identically to its neutral.
+ */
+
+.review-screen { max-width: 960px; margin: 0 auto; }
+
+.review-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 1rem; margin-bottom: 1.25rem;
+}
+.review-sub { color: var(--muted); margin-top: 0.25rem; }
+
+.review-card { padding: 1.5rem; display: flex; flex-direction: column; gap: 1.25rem; }
+.review-card h2 { display: flex; align-items: center; gap: 0.5rem; margin: 0; }
+.review-note { color: var(--muted); font-size: 0.875rem; margin: 0; }
+.review-empty { color: var(--muted); font-style: italic; }
+.review-audit { border-top: 1px solid var(--border); padding-top: 0.75rem; }
+
+.review-rules ul { margin: 0.5rem 0 0; padding-left: 1.25rem; }
+.review-rules li { color: var(--muted); font-size: 0.875rem; margin-bottom: 0.25rem; }
+
+.review-editor {
+  width: 100%; padding: 0.75rem; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--input-bg); color: var(--fg);
+  font-family: var(--font-mono); font-size: 0.8125rem; resize: vertical;
+}
+.review-editor:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.review-actions { display: flex; gap: 0.75rem; align-items: center; }
+
+/* A blocked gate lists EVERY outstanding condition. */
+.blocking-list { margin: 0.5rem 0 0; padding-left: 1.25rem; }
+.blocking-list li { margin-bottom: 0.375rem; }
+
+.candidate-list, .cell-list { list-style: none; margin: 0.5rem 0 0; padding: 0; }
+.candidate-list li, .cell-list li {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+  padding: 0.5rem 0; border-bottom: 1px solid var(--border);
+}
+.candidate-list label { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
+
+.cell-state {
+  font-size: 0.75rem; padding: 0.125rem 0.5rem; border-radius: 999px;
+  border: 1px solid var(--teal); color: var(--teal-ink);
+}
+/* Each state renders as itself. A VALIDATION_FAILURE never renders as a verdict. */
+.cell-state[data-cell-state="VALIDATION_FAILURE"],
+.cell-state[data-cell-state="NOT_EVALUATED"] {
+  border-color: var(--risk-high, #c0392b); color: var(--risk-high, #c0392b);
+}
+
+.add-candidate { margin-top: 1rem; }
+.add-row { display: flex; gap: 0.5rem; margin: 0.375rem 0; }
+.add-row input {
+  flex: 1; padding: 0.5rem 0.75rem; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--input-bg); color: var(--fg);
+}
+
+.field-error { color: var(--risk-high, #c0392b); font-size: 0.8125rem; margin: 0.375rem 0 0; }
+.field-note { color: var(--teal-ink); font-size: 0.8125rem; margin: 0.375rem 0 0; }
+
+.spinner-inline { width: 1em; height: 1em; display: inline-block; vertical-align: -0.125em; }
+
+.mono { font-family: var(--font-mono); }
+
+/* --- dark counterparts, one per state class above ----------------------- */
+:root[data-theme="dark"] .review-editor,
+:root[data-theme="dark"] .add-row input {
+  background: var(--card); border-color: var(--border); color: var(--fg);
+}
+:root[data-theme="dark"] .review-card { box-shadow: none; }
+:root[data-theme="dark"] .candidate-list li,
+:root[data-theme="dark"] .cell-list li,
+:root[data-theme="dark"] .review-audit { border-color: var(--border); }
+:root[data-theme="dark"] .cell-state { color: var(--teal-70); border-color: var(--teal-70); }
+:root[data-theme="dark"] .cell-state[data-cell-state="VALIDATION_FAILURE"],
+:root[data-theme="dark"] .cell-state[data-cell-state="NOT_EVALUATED"] {
+  color: #ff8a7a; border-color: #ff8a7a;
+}
+:root[data-theme="dark"] .field-error { color: #ff8a7a; }
+:root[data-theme="dark"] .field-note { color: var(--teal-70); }

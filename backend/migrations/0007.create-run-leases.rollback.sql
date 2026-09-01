@@ -1,0 +1,10 @@
+DROP FUNCTION commit_node_attempt(UUID, TEXT, BIGINT, UUID, INTEGER, INTEGER, TEXT);
+DROP TABLE node_attempts;
+DROP TYPE attempt_outcome;
+DROP FUNCTION release_run_lease(UUID, TEXT, BIGINT);
+DROP FUNCTION heartbeat_run_lease(UUID, TEXT, BIGINT, INTERVAL);
+DROP FUNCTION acquire_run_lease(UUID, TEXT, INTERVAL);
+DROP FUNCTION _lock_run_and_require_lease(UUID, TEXT, BIGINT);
+DROP TRIGGER run_leases_monotonic ON run_leases;
+DROP FUNCTION enforce_lease_monotonicity();
+DROP TABLE run_leases;

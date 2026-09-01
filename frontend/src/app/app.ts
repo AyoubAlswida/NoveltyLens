@@ -13,12 +13,28 @@ import { ReportScreen } from './screens/report-screen';
 import { ErrorScreen } from './screens/error-screen';
 import { HistoryScreen } from './screens/history-screen';
 import { LoginScreen } from './screens/login-screen';
+import { ActiveRunStore, RunsService, RunSummary } from './services/runs';
+import { UnderstandingReview } from './screens/understanding-review';
+import { StrategyReview } from './screens/strategy-review';
+import { CandidateReview } from './screens/candidate-review';
+import { EvidenceReview } from './screens/evidence-review';
+import { DraftReview } from './screens/draft-review';
+import { VerificationReport } from './screens/verification-report';
+import type { WorkflowGate } from './models/report';
 import { AnalysisService } from './services/analysis';
 import { AuthService } from './services/auth';
 import { HistoryService, reportFromHistory } from './services/history';
 import { AnalysisReport, HistoryEntry, Phase, PHASE_ORDER, StreamEvent } from './models/report';
 
-type Screen = 'submit' | 'running' | 'report' | 'error' | 'history';
+type Screen =
+  | 'submit'
+  | 'running'
+  | 'report'
+  | 'error'
+  | 'history'
+  | 'review'
+  | 'verification-report';
+
 
 const RECENTS_SHOWN = 8;
 /** How many past searches the sidebar lists. The History screen shows the full
@@ -38,8 +54,7 @@ const EXAMPLE_DESC =
     ReportScreen,
     ErrorScreen,
     HistoryScreen,
-    LoginScreen,
-  ],
+    LoginScreen, UnderstandingReview, StrategyReview, CandidateReview, EvidenceReview, DraftReview, VerificationReport],
   template: `
     <div class="app-shell">
       <!-- Signed out there is nothing to navigate: no screens, no recents, no
@@ -207,7 +222,12 @@ const EXAMPLE_DESC =
               <app-submit-screen
                 [description]="description()"
                 (descriptionChange)="description.set($event)"
+                [problemSolved]="problemSolved()"
+                (problemSolvedChange)="problemSolved.set($event)"
+                [noveltyStatement]="noveltyStatement()"
+                (noveltyStatementChange)="noveltyStatement.set($event)"
                 (run)="startRunning()"
+                (verify)="startVerifiedRun()"
               />
             }
             @case ('running') {
@@ -216,6 +236,63 @@ const EXAMPLE_DESC =
             @case ('report') {
               @if (reportData(); as report) {
                 <app-report-screen [data]="report" (back)="goBackFromReport()" />
+              }
+            }
+            @case ('review') {
+              @if (reviewRunId(); as runId) {
+                <!-- One screen per workflow gate. They ask different questions
+                     and enforce different completion rules, so a single generic
+                     editor could not implement any of them faithfully. -->
+                @switch (reviewGate()) {
+                  @case ('A') {
+                    <app-understanding-review
+                      [runId]="runId"
+                      (back)="closeReview()"
+                      (resumed)="afterDecision()"
+                    />
+                  }
+                  @case ('STRATEGY') {
+                    <app-strategy-review
+                      [runId]="runId"
+                      (back)="closeReview()"
+                      (resumed)="afterDecision()"
+                    />
+                  }
+                  @case ('B') {
+                    <app-candidate-review
+                      [runId]="runId"
+                      (back)="closeReview()"
+                      (resumed)="afterDecision()"
+                    />
+                  }
+                  @case ('C') {
+                    <app-evidence-review
+                      [runId]="runId"
+                      (back)="closeReview()"
+                      (resumed)="afterDecision()"
+                    />
+                  }
+                  @case ('D') {
+                    <app-draft-review
+                      [runId]="runId"
+                      (back)="closeReview()"
+                      (resumed)="afterDecision()"
+                    />
+                  }
+                }
+              }
+            }
+            @case ('verification-report') {
+              @if (finalReport(); as report) {
+                <div class="screen screen-scroll">
+                  <header class="gate-head">
+                    <h1>Final report</h1>
+                    <button class="btn-outlined" type="button" (click)="closeReview()">
+                      Back
+                    </button>
+                  </header>
+                  <app-verification-report [report]="report" status="APPROVED" />
+                </div>
               }
             }
             @case ('history') {
@@ -251,8 +328,200 @@ export class App {
   private readonly historyService = inject(HistoryService);
   readonly auth = inject(AuthService);
 
+  /** Account-namespaced memory of which verified run this browser is on. */
+
+  private readonly activeRuns = inject(ActiveRunStore);
+  private readonly runs = inject(RunsService);
+
+
   readonly screen = signal<Screen>('submit');
+
+  /** The verified run currently under review, and which gate it is parked at.
+   *
+   * Both are null on a search-only run, which never pauses. They are set
+   * together by `openReview` and cleared together, because a gate without a run
+   * names nothing and a run without a gate cannot be reviewed. */
+  readonly reviewRunId = signal<string | null>(null);
+  readonly reviewGate = signal<WorkflowGate | null>(null);
+
+  /** Admit a verified run, then wait at its first gate.
+   *
+   * **This posts and stops.** It does not stream, does not drive the graph and
+   * does not approve anything: `POST /api/runs` records the run `QUEUED`, and
+   * the worker picks it up on its next poll. The browser's only job afterwards
+   * is to remember which run this account is looking at and to show the gate
+   * when the run reaches one.
+   *
+   * Until this existed the four gate screens could only be reached by writing a
+   * run id into localStorage by hand -- the workflow was built, tested and
+   * unreachable from the product.
+   */
+  async startVerifiedRun(): Promise<void> {
+    const description = this.description().trim();
+    if (!description) return;
+    const email = this.auth.email();
+    this.errorDetail.set('');
+    try {
+      const created = await this.runs.createRun(description, {
+        problemSolved: this.problemSolved().trim(),
+        noveltyStatement: this.noveltyStatement().trim(),
+      });
+      const runId = String(created['run_id']);
+      if (email) this.activeRuns.remember(email, runId);
+      this.reviewRunId.set(runId);
+      // **The running screen, not the gate.** The run is `QUEUED`: no worker has
+      // claimed it and no decomposition exists yet.
+      //
+      // Opening Gate A here showed "Nothing here yet. This is a real result, not
+      // a failed load." -- the screen fetched its payload before the node that
+      // fills it had run, and `reload()` fetches once. So the reviewer was told
+      // the machine had proposed nothing, about a run that had not started, and
+      // nothing ever corrected it. That is exactly the substitution the state
+      // vocabulary exists to prevent, committed by the one path that skipped it.
+      this.phaseIdx.set(0);
+      this.phaseMessages.set({});
+      this.screen.set('running');
+      void this.loadHistory();
+      void this.followToGate(runId);
+    } catch (error) {
+      this.errorDetail.set(
+        error instanceof Error ? error.message : 'The run could not be started.',
+      );
+      this.screen.set('error');
+    }
+  }
+
+  /** Watch an admitted run until it parks at a gate, then open that gate.
+   *
+   * Polling rather than streaming: this asks the one question the screen needs
+   * -- "is there a decision to make yet?" -- and the answer lives in the run
+   * row, which any API process can answer. The SSE stream carries progress and
+   * is the better source for a phase checklist; wiring it here is worth doing
+   * and is not what fixes the empty gate.
+   *
+   * A terminal run is handled as itself: `COMPLETED` opens the report,
+   * `FAILED` opens the error screen with the sanitized detail. Neither is a
+   * gate, and neither should leave the reviewer on a spinner.
+   */
+  private async followToGate(runId: string): Promise<void> {
+    for (let attempt = 0; attempt < 600; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      // The reviewer navigated away -- to History, to a new search. Their
+      // choice wins, and the run is unaffected either way.
+      if (this.reviewRunId() !== runId) return;
+      let run: RunSummary;
+      try {
+        run = await this.runs.getRun(runId);
+      } catch {
+        // A dropped request is not a dropped run. Keep waiting.
+        continue;
+      }
+      if (run.status === 'WAITING_FOR_REVIEW' && run.current_gate) {
+        this.openReview(runId, run.current_gate);
+        return;
+      }
+      if (run.status === 'COMPLETED') {
+        this.finalReport.set(await this.runs.report(runId));
+        this.screen.set('verification-report');
+        return;
+      }
+      if (run.status === 'FAILED') {
+        this.errorDetail.set(run.failure_detail || 'The run failed.');
+        this.screen.set('error');
+        return;
+      }
+    }
+  }
+
+  /** Show the review screen for one gate of one run. */
+  openReview(runId: string, gate: WorkflowGate): void {
+    this.reviewRunId.set(runId);
+    this.reviewGate.set(gate);
+    this.screen.set('review');
+  }
+
+  /** Leave the review screen without deciding. The run is untouched: closing a
+   * tab, navigating away and refusing to decide are all the same thing to a
+   * worker that has never heard of this browser. */
+  closeReview(): void {
+    this.reviewRunId.set(null);
+    this.reviewGate.set(null);
+    this.screen.set('submit');
+  }
+
+  /** The approved final report, when one has been fetched. */
+  readonly finalReport = signal<Record<string, unknown> | null>(null);
+
+  /**
+   * After a decision commits, go back to watching the run rather than to submit.
+   *
+   * The run is `RESUMING`, not running: the executor picks it up on its next
+   * poll. The running screen says so, and reconnects to the stream from the
+   * cursor it already holds, so the next `review_required` arrives without the
+   * user doing anything.
+   */
+  afterDecision(): void {
+    this.reviewGate.set(null);
+    this.screen.set('running');
+  }
+
+  /**
+   * Remember which run this account is on, so a reload lands back on it.
+   *
+   * **Namespaced by email** (spec Gate F item 1): two accounts on one browser
+   * must not inherit each other's run. Cleared on sign-out, on any 401, and
+   * whenever the signed-in email changes (item 2).
+   */
+  rememberActiveRun(runId: string): void {
+    const email = this.auth.email();
+    if (email) this.activeRuns.remember(email, runId);
+  }
+
+  /**
+   * Restore the remembered run **after asking the backend whether it exists**.
+   *
+   * Never renders a run from localStorage alone: a 404 clears the key silently
+   * and returns to submit, because the backend answers 404 identically for "no
+   * such run" and "not yours" and this must not try to tell them apart.
+   */
+  async restoreActiveRun(): Promise<void> {
+    const email = this.auth.email();
+    if (!email) return;
+    try {
+      const run = await this.activeRuns.restore(email);
+      if (!run) return;
+      this.reviewRunId.set(run.run_id);
+      if (run.status === 'WAITING_FOR_REVIEW' && run.current_gate) {
+        this.reviewGate.set(run.current_gate);
+        this.screen.set('review');
+      } else if (run.status === 'COMPLETED') {
+        // **A finished run reopens its report, not a progress bar.** Sending
+        // every non-parked status to 'running' meant that after a restart -- or
+        // any reload once the run was over -- a reviewer was shown "Analyzing
+        // your invention..." with a spinner, for work that had finished and been
+        // approved. That is the same substitution the backend forbids, moved
+        // into the UI: a completed run reported as one still in progress.
+        const report = await this.runs.report(run.run_id);
+        this.finalReport.set(report);
+        this.screen.set('verification-report');
+      } else if (run.status === 'FAILED') {
+        // Its own branch for the same reason: a failed run is not a running one,
+        // and the error screen names the failure instead of spinning forever.
+        this.errorDetail.set(run.failure_detail || 'The run failed.');
+        this.screen.set('error');
+      } else {
+        this.screen.set('running');
+      }
+    } catch {
+      // A transport failure is not proof the run is gone. Stay where we are; the
+      // running screen shows a reconnecting state rather than dropping the run.
+    }
+  }
   readonly description = signal(EXAMPLE_DESC);
+  /** Optional Stage 1 context for a verified run. Empty is a real answer -- the
+   * inventor left it blank -- and is sent as an empty string, not omitted. */
+  readonly problemSolved = signal('');
+  readonly noveltyStatement = signal('');
   readonly phaseIdx = signal(-1);
   readonly phaseMessages = signal<Partial<Record<Phase, string>>>({});
   readonly reportData = signal<AnalysisReport | null>(null);
@@ -307,6 +576,18 @@ export class App {
         // Recents lives in the sidebar now, so history is fetched on sign-in
         // rather than only when the History screen opens.
         if (valid) void this.loadHistory();
+        // And a verified run that is parked at a gate is reopened at that gate.
+        //
+        // Without this call the app signed in, saw a remembered run id in
+        // localStorage, and rendered the submit screen anyway -- so a reviewer
+        // who closed the tab during a review had no way back to the gate, and
+        // the four gate screens were unreachable from the running product even
+        // though every one of them was built and tested.
+        //
+        // `restoreActiveRun` re-fetches the run before rendering anything and
+        // clears the key on a 404, so a stale or foreign id can never put a gate
+        // on screen.
+        if (valid) void this.restoreActiveRun();
       })
       .catch((failure) => {
         // A backend that is merely unreachable is NOT an ended session; keep the
