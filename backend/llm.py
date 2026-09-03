@@ -780,13 +780,13 @@ DECOMPOSITION_PROMPT_MARKER = "feature decomposition assistant"
 key off. Imported rather than duplicated as a literal, so a prompt edit that
 breaks the marker raises at the double instead of passing silently."""
 
-RELATIONSHIP_PROMPT_MARKER = "elements of one technical feature have been edited"
-"""Distinguishes `regenerate_relationships` from `propose_understanding` at the
-double. Both prompts open with `DECOMPOSITION_PROMPT_MARKER`, deliberately -- they
-are the same component doing the same job -- so a double that matched only on that
-would answer a relationship request with a whole decomposition. Checked FIRST in
-`run_mock.py` and in `tests/test_pipeline_contract.py`, for the same reason the
-"screening" check comes before "expert patent examiner" there."""
+# `RELATIONSHIP_PROMPT_MARKER` was REMOVED here, with the prompt it recognised.
+# Relationships are gone from the product: the invention understanding is a flat
+# list of technical elements, `decomposition_relationships` gets no rows, and the
+# `DANGLING_RELATIONSHIP_REFERENCE` check that guarded them went with them. A
+# marker exists so `run_mock.py` can recognise a prompt without making a metered
+# call; a marker for a prompt nothing builds is a branch nothing can reach.
+
 
 DECOMPOSITION_COMPONENT = "graph.verification_nodes.decompose_features"
 """**Spec §16 decision 8 is unresolved and this names what is unresolved.**
@@ -921,77 +921,19 @@ Invention:
     return {"summary": summary, "features": [dict(feature) for feature in features]}
 
 
-def regenerate_relationships(
-    feature_text: str,
-    elements: Sequence[dict],
-    *,
-    existing_ids: Sequence[str] = (),
-) -> list[dict]:
-    """Propose relationships for one feature's **current** element set.
-
-    Called whenever a human adds, edits or deletes an element. A relationship
-    describes how elements interact, so an element change can invalidate one
-    silently: "E2 is coupled to E4" survives the deletion of E4 as a requirement
-    the verifier would then be asked to find among elements that no longer exist.
-    That is a fabricated requirement with a citation slot attached, so
-    relationships are regenerated against the new element set rather than patched
-    or dropped.
-
-    `existing_ids` are the ids already in use by this feature's elements. The
-    prompt is told to avoid them and `workflow/review.py` refuses an approval
-    that reuses one anyway -- the requirement-id namespace is shared across
-    elements and relationships, and a collision silently drops a reviewed status.
-
-    Returns an empty list when the model proposes no relationships, which is a
-    real answer: a single-element feature has nothing to relate.
-    """
-    listing = "\n".join(
-        "- " + str(item.get("element_id")) + ": " + str(item.get("text"))
-        for item in elements
-    )
-    reserved = ", ".join(existing_ids) or "(none)"
-    trace("regenerate_relationships.start", elements=len(elements))
-    prompt = f"""You are a feature decomposition assistant for patent novelty analysis.
-
-The elements of one technical feature have been edited by a human. Propose the relationships that hold between the CURRENT elements listed below.
-
-FEATURE: {feature_text}
-
-CURRENT ELEMENTS:
-{listing}
-
-Rules:
-- A RELATIONSHIP is how two or more elements interact, are arranged, or are connected.
-- Refer only to the elements listed above. Never refer to an element that is not listed.
-- Do not restate a single element as a relationship.
-- Use relationship ids R1, R2, ... and never reuse any of these ids: {reserved}
-- Return an empty list if the elements have no meaningful relationships between them.
-
-Return ONLY valid JSON in this exact schema:
-{{"relationships": [{{"relationship_id": "R1", "text": "string", "order": 1}}]}}
-Do not change the schema. Do not add explanations. Return JSON only."""
-    data = _llm_json(
-        prompt,
-        max_tokens=200 + 120 * max(len(elements), 1),
-        temperature=0.0,
-        timeout=60,
-    )
-    relationships = data.get("relationships")
-    if not isinstance(relationships, list):
-        raise LLMResponseError(
-            "LLM returned no relationships array; an absent array is not the same "
-            "answer as an empty one and is not read as one here"
-        )
-    trace("regenerate_relationships.done", relationships=len(relationships))
-    return [dict(item) for item in relationships]
+# `regenerate_relationships` was REMOVED here. It asked the model for a fresh set
+# of relationships whenever a capability's elements were edited, which was the
+# real defence against a relationship naming a deleted element. There are no
+# relationships to regenerate and no caller left; spec section 4.2.3 removes the
+# check and the caller together.
 
 
 STRATEGY_PROMPT_MARKER = "patent search strategist"
 """The substring `run_mock.py` keys off for the search-strategy proposal.
 
-Deliberately shares no wording with `DECOMPOSITION_PROMPT_MARKER` or
-`RELATIONSHIP_PROMPT_MARKER`: those two overlap on purpose (same component, same
-job) and needed an ordering rule at the double to tell them apart. This one is a
+Deliberately shares no wording with `DECOMPOSITION_PROMPT_MARKER`. When there
+were two decomposition prompts they overlapped on purpose (same component, same
+job) and needed an ordering rule at the double to tell them apart; this one is a
 different component asking a different question, so it is a marker no other
 prompt contains and the double can match it in any order.
 

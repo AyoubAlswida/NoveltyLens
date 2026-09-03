@@ -69,16 +69,12 @@ describe('RunsService', () => {
   it('sends an idempotency key on every mutating call', async () => {
     auth.responder = () => json({ status: 'RESUMING' });
 
-    await runs.approveGateA('r1', { version: 1 }, 'key-a');
-    await runs.approveGateB('r1', ['EP1'], 1, 'key-b');
-    await runs.addCandidate('r1', 'EP2', 'key-c');
-    await runs.completeGateC('r1', 'key-d');
-    await runs.approveGateD('r1', 1, 'key-e');
-    await runs.reviewCell('r1', 'c1', {}, 'key-f');
-    await runs.waiveCell('r1', 'c1', {}, 'key-g');
-    await runs.rerunCell('r1', 'c1', [], 1, 'key-h');
+    // Two mutating calls, because two approvals are the whole mutating surface
+    // of a run now. The other six methods went with the routes behind them.
+    await runs.approveGateA('r1', 'a summary', ['an element'], 'key-a');
+    await runs.approveGateStrategy('r1', ['a query'], 'key-b');
 
-    expect(auth.calls).toHaveLength(8);
+    expect(auth.calls).toHaveLength(2);
     for (const call of auth.calls) {
       const body = JSON.parse(String(call.init.body));
       expect(body.idempotency_key, `${call.url} sent no key`).toBeTruthy();
@@ -103,14 +99,17 @@ describe('RunsService', () => {
     }
   });
 
-  it('surfaces a stale-result conflict as its own code', async () => {
+  it('surfaces a gate conflict as its own code', async () => {
+    // Was `STALE_RESULT_VERSION` on a cell rerun. That route is gone; the
+    // property -- a 409 keeps the backend's own code rather than being flattened
+    // into a generic failure -- is asserted on a surviving approval instead.
     auth.responder = () =>
-      json({ code: 'STALE_RESULT_VERSION', detail: 'cell is at v2' }, 409);
+      json({ code: 'WRONG_GATE', detail: 'run is waiting at STRATEGY, not A' }, 409);
     try {
-      await runs.rerunCell('r1', 'c1', [], 1, 'k');
+      await runs.approveGateA('r1', 'a summary', ['an element'], 'k');
       expect.unreachable('a 409 should have thrown');
     } catch (error) {
-      expect((error as RunApiError).failure.code).toBe('STALE_RESULT_VERSION');
+      expect((error as RunApiError).failure.code).toBe('WRONG_GATE');
     }
   });
 

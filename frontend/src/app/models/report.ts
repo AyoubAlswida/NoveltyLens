@@ -1,11 +1,17 @@
-/** Mirrors the terminal `result` payload documented in CLAUDE.md. */
+/**
+ * Mirrors the terminal `result` payload documented in CLAUDE.md.
+ *
+ * There is no numeric similarity anywhere in this file, and no overall verdict.
+ * `risk` is the only judgement the backend publishes: a per-patent
+ * High/Medium/Low rating derived from a score that is discarded before the
+ * payload is built. A report with no patents therefore carries no rating at
+ * all, and the report screen must not synthesise one.
+ */
 export type Risk = 'High' | 'Medium' | 'Low';
-export type Verdict = 'Strong' | 'Moderate' | 'Weak';
 
 export interface PatentMatch {
   num: string;
   title: string;
-  pct: number;
   risk: Risk;
   rationale: string;
   key_overlap: string[];
@@ -18,8 +24,6 @@ export interface AnalysisReport {
   date: string;
   concepts: string[];
   patents: PatentMatch[];
-  top_score: number;
-  verdict: Verdict;
   recommendations: string[];
   query_count: number;
 }
@@ -46,12 +50,12 @@ export const PHASE_ORDER = [
   'validate',
   'compare',
   'analyze',
-  // --- Verification workflow (Implementation Gate C) ---
+  // --- Advanced Search ---
   //
-  // Emitted only on a run that requested feature verification. A search-only
-  // run never sends these, so the checklist renders the seven above exactly as
-  // it does today -- `analysis.ts` matches on the phase name, and a name that
-  // never arrives is simply a step that never lights up.
+  // Emitted only on an Advanced Search run. A search-only run never sends
+  // these, so the checklist renders the eight above exactly as it does today --
+  // `analysis.ts` matches on the phase name, and a name that never arrives is
+  // simply a step that never lights up.
   //
   // This list must stay in step with `backend/graph/events.py`'s PHASES.
   // The backend refuses to emit a phase outside its own tuple; nothing catches
@@ -61,25 +65,18 @@ export const PHASE_ORDER = [
   // The SEARCH STRATEGY stage: the queries are proposed here, and
   // `gate_strategy` below is the run waiting for a person to approve them.
   'strategy',
-  'normalize',
-  'screen_dates',
-  'enrich_epo',
-  'build_passages',
-  'confirm_eligibility',
-  'rank_candidates',
-  'verify',
-  // --- Human-in-the-Loop gates (Implementation Gate D) ---
+  // --- Human-in-the-Loop gates ---
   //
-  // Emitted only on a verified run, immediately before it pauses for a person.
-  // They belong in the checklist because the run genuinely is at that step; the
-  // pause itself arrives as a `review_required` / `paused` event, which the
-  // running screen handles separately from the checklist.
+  // Emitted immediately before the run pauses for a person. They belong in the
+  // checklist because the run genuinely is at that step; the pause itself
+  // arrives as a `review_required` / `paused` event, which the running screen
+  // handles separately from the checklist.
+  //
+  // An Advanced Search run rejoins the ordinary pipeline after `gate_strategy`
+  // and ends with it, so the evidence-layer and Gate B/C/D phases that used to
+  // follow here were removed along with their nodes.
   'gate_a',
   'gate_strategy',
-  'gate_b',
-  'gate_c',
-  'draft_report',
-  'gate_d',
 ] as const;
 
 export type Phase = (typeof PHASE_ORDER)[number];
@@ -93,22 +90,10 @@ export const PHASE_LABELS: Record<Phase, string> = {
   validate: 'Checking relevance of candidates…',
   compare: 'Scoring patent similarities…',
   analyze: 'Writing detailed analysis…',
-  decompose: 'Proposing a feature decomposition…',
+  decompose: 'Proposing a technical summary and elements…',
   strategy: 'Planning the search…',
-  normalize: 'Normalizing publication numbers…',
-  screen_dates: 'Screening publications against the cutoff…',
-  enrich_epo: 'Retrieving full text from EPO…',
-  build_passages: 'Building citable passages…',
-  confirm_eligibility: 'Confirming which publications can be cited…',
-  rank_candidates: 'Preparing candidates for review…',
-  verify: 'Verifying features against publications…',
-  gate_a: 'Awaiting feature decomposition approval…',
-  gate_strategy: 'Awaiting search strategy approval…',
-  gate_b: 'Awaiting candidate publication review…',
-  gate_c: 'Awaiting evidence and verdict review…',
-  draft_report: 'Assembling the draft report…',
-  gate_d: 'Awaiting draft report approval…',
-
+  gate_a: 'Awaiting your review of the understanding…',
+  gate_strategy: 'Awaiting your approval of the search queries…',
 };
 
 export const PHASE_ICONS: Record<Phase, string> = {
@@ -122,20 +107,8 @@ export const PHASE_ICONS: Record<Phase, string> = {
   analyze: 'PenLine',
   decompose: 'Sparkles',
   strategy: 'Search',
-  normalize: 'Search',
-  screen_dates: 'History',
-  enrich_epo: 'FileText',
-  build_passages: 'FileType2',
-  confirm_eligibility: 'ShieldCheck',
-  rank_candidates: 'BarChart3',
-  verify: 'Radar',
   gate_a: 'ShieldCheck',
   gate_strategy: 'ShieldCheck',
-  gate_b: 'ShieldCheck',
-  gate_c: 'ShieldCheck',
-  draft_report: 'FileText',
-  gate_d: 'ShieldCheck',
-
 };
 
 /**
@@ -153,8 +126,6 @@ export interface HistoryEntry {
   created_at: string;
   concepts: string[];
   patents: PatentMatch[];
-  top_score: number;
-  verdict: Verdict;
   recommendations: string[];
   query_count: number;
 }
@@ -167,7 +138,19 @@ export interface HistoryEntry {
  * letters are internal either way — `gate-shell.ts` maps every one of them to a
  * stage name, and none of them reaches a screen.
  */
-export type WorkflowGate = 'A' | 'STRATEGY' | 'B' | 'C' | 'D';
+export type WorkflowGate = 'A' | 'STRATEGY';
+
+/**
+ * What a run row can actually carry, which is wider than what this app renders.
+ *
+ * `WorkflowGate` is the set of gates with a screen. A run parked before feature
+ * verification was withdrawn still holds `B`, `C` or `D` in its `current_gate`,
+ * and the backend still returns it -- the rows were kept, not deleted. Typing
+ * the wire field as `WorkflowGate` would make the compiler agree that those
+ * values cannot occur, and the app would then fall through to a blank review
+ * screen instead of saying the run cannot be continued. Section 6.3.
+ */
+export type StoredGate = WorkflowGate | (string & {});
 
 /**
  * Every frame `GET /api/runs/{id}/stream` can send.
@@ -194,7 +177,7 @@ export type StreamEvent =
       type: 'snapshot';
       run_id: string;
       status: string;
-      current_gate: WorkflowGate | null;
+      current_gate: StoredGate | null;
       last_event_id: number;
       events_compacted_below: number;
     }

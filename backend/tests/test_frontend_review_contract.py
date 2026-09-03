@@ -25,19 +25,28 @@ STYLES = FRONTEND.parent / "styles"
 APP = FRONTEND / "app.ts"
 RUNS_SERVICE = FRONTEND / "services" / "runs.ts"
 
+STAGES = FRONTEND / "screens" / "advanced-search-stages.ts"
+"""The three stages, in one component.
+
+Stages 1 and 2 are a single backend approval (the understanding) and stage 3 is
+a second one (the strategy) -- two approvals, three screens -- but the three
+screens are one flow a person walks forward and back through, so the drafts live
+in one component. `understanding-review.ts` and `strategy-review.ts` were
+replaced by it.
+"""
+
 GATE_SCREENS = {
-    # The stage an inventor sees is "Invention understanding"; the gate letter
-    # is internal and appears nowhere on the screen.
-    "A": FRONTEND / "screens" / "understanding-review.ts",
-    # The stage an inventor sees is "Search strategy"; STRATEGY is the internal
-    # gate value and, like the letters, appears nowhere on the screen.
-    "STRATEGY": FRONTEND / "screens" / "strategy-review.ts",
-    "B": FRONTEND / "screens" / "candidate-review.ts",
-    "C": FRONTEND / "screens" / "evidence-review.ts",
-    "D": FRONTEND / "screens" / "draft-review.ts",
+    # Both gates render the same three-stage flow; the gate decides which stage
+    # a reviewer lands on. The gate letters are internal and appear nowhere on
+    # any of the three stages.
+    "A": STAGES,
+    "STRATEGY": STAGES,
 }
+"""The two gates with a screen. `B`, `C` and `D` and their screens were removed
+with feature verification; `verification-report.ts` went with them, and a
+completed run now renders through the ordinary `report-screen.ts`."""
+
 SHELL = FRONTEND / "screens" / "gate-shell.ts"
-REPORT = FRONTEND / "screens" / "verification-report.ts"
 
 
 def read(path: Path) -> str:
@@ -57,13 +66,7 @@ def test_each_workflow_gate_has_its_own_screen(gate, path):
 
 def test_the_shell_renders_a_distinct_screen_per_gate():
     source = read(APP)
-    for selector in (
-        "app-understanding-review",
-        "app-strategy-review",
-        "app-candidate-review",
-        "app-evidence-review",
-        "app-draft-review",
-    ):
+    for selector in ("app-advanced-search-stages",):
         assert f"<{selector}" in source, f"{selector} is never rendered"
 
 
@@ -72,14 +75,64 @@ def test_the_shell_can_open_and_close_a_review():
     assert "openReview" in source and "closeReview" in source
 
 
+def test_a_decision_resumes_watching_the_run_rather_than_stopping():
+    """**Spec section 3.7, and the bug behind "I have to refresh after approving".**
+
+    `afterDecision()` used to clear the gate, switch to the running screen and
+    start nothing, so the poller that would notice the next stage or the finished
+    report was never started again. Every subsequent stage existed on the server
+    and nothing in the browser was looking for it.
+
+    Asserted here rather than in a component spec because it is a property of the
+    shell: the component emits `resumed`, and what the shell does next is what
+    decides whether the user has to reload the page.
+    """
+    source = read(APP)
+    body = source.split("afterDecision(): void {", 1)[1].split("\n  }", 1)[0]
+    assert "followToGate" in body, (
+        "afterDecision does not restart the poller; the next stage will never arrive"
+    )
+    # The run id is captured before the gate is cleared -- losing it would strand
+    # the run just as effectively as not polling at all.
+    assert "reviewRunId()" in body
+
+
+def test_a_completed_run_opens_the_standard_report_screen():
+    """**Spec section 3.8.** One display path, three ways in.
+
+    A durable Advanced Search run, a quick search and a run reopened from
+    History all render through `ReportScreen`, so none of them can drift from the
+    others. `verification-report` is gone; a completed run that still routed to
+    it would render an approved-verification frame around a report that contains
+    no verification.
+
+    Both entry points are checked -- the poller that notices a run finishing, and
+    the startup restore after a page reload -- because they are separate branches
+    and only one of them used to exist.
+    """
+    source = read(APP)
+    assert "'verification-report'" not in source.split("type Screen =", 1)[1].split(";", 1)[0]
+
+    # Anchored on the DEFINITIONS, not the first mention: `followToGate` is
+    # called from `afterDecision` above its own definition, and splitting on the
+    # bare name lands in the caller.
+    for definition in (
+        "private async followToGate(runId: string): Promise<void> {",
+        "async restoreActiveRun(): Promise<void> {",
+    ):
+        body = source.split(definition, 1)[1]
+        # Generous, because the branch carries a long comment explaining why a
+        # finished run reopens its report rather than a progress bar.
+        window = body[: body.index("COMPLETED") + 900]
+        assert "reportData.set" in window, (
+            f"the COMPLETED branch of `{definition}` does not open the report screen"
+        )
+        assert "verification-report" not in window
+
+
 def test_leaving_a_review_does_nothing_to_the_run():
     """A client disconnect never cancels, fails or pauses a run (constraint 10)."""
     assert "has never heard of this browser" in read(APP)
-
-
-def test_the_final_report_has_its_own_renderer():
-    assert REPORT.exists()
-    assert "app-verification-report" in read(APP)
 
 
 # --- every state is declared and distinct ----------------------------------
@@ -91,7 +144,6 @@ REQUIRED_STATES = (
     "review",
     "validating",
     "waiting",
-    "paused",
     "resuming",
     "blocked",
     "stale",
@@ -139,154 +191,32 @@ def test_a_stale_decision_is_never_resubmitted():
 # --- the contracts each gate must honour -----------------------------------
 
 
-def test_the_understanding_screen_cannot_produce_a_colliding_requirement_id():
-    """The §12.1 rule people get wrong: elements and relationships share one id
-    namespace.
-
-    The screen no longer lets anybody type an id -- elements are `E*`, minted
-    above the highest already present so deleting one and adding another cannot
-    reproduce it, and relationship ids are never authored here at all. That is a
-    stronger guarantee than the editable-id screen it replaced, which could only
-    warn. `workflow/review.py` still enforces the rule, because a UI that cannot
-    produce a collision is not the same as a backend that would refuse one.
-    """
-    source = read(GATE_SCREENS["A"])
-    assert "Math.max(0, ...used) + 1" in source, "element ids are minted from the count again"
-
-
-def test_the_understanding_screen_never_approves_a_stale_relationship():
-    """A relationship describes specific elements. One that survives an element
-    edit can name an element that is no longer there -- a requirement the
-    verifier would be asked to find among elements that do not exist."""
-    source = read(GATE_SCREENS["A"])
-    assert "elementsChanged" in source
-    # Dropped on edit rather than sent and rejected: the reviewer cannot act on
-    # a server-side dangling-reference refusal they did not cause.
-    assert "? []" in source
-
-
 def test_the_understanding_screen_shows_the_original_description_read_only():
     """The inventor is being asked whether the system understood them, which they
     cannot answer if what they wrote has been replaced by the system's version."""
-    source = read(GATE_SCREENS["A"])
+    source = read(STAGES)
     assert "originalDescription()" in source
-    assert "This is never changed." in source
-    # Rendered as a blockquote, never as a form control.
-    assert "<blockquote class=\"original-text\">{{ originalDescription() }}</blockquote>" in source
 
+    # Rendered as a paragraph, never as a form control. Checked structurally
+    # rather than by matching one exact line: what matters is that the class the
+    # description is rendered under never appears on an `input` or a `textarea`,
+    # because a box that accepts a caret invites the belief that it could be
+    # edited -- and the whole point of the stage is that it cannot.
+    assert '<p class="original-description">{{ originalDescription() }}</p>' in source
+    for control in ("input", "textarea"):
+        assert f'<{control} class="original-description"' not in source
+        assert f'{control} class="original-description"' not in source
 
-def test_the_strategy_screen_shows_coverage_and_names_it_that_way():
-    """The stage exists to make coverage reviewable, so the screen has to show it.
-
-    The label is the owner's wording. A screen that listed queries without saying
-    what each one is looking for would make the coverage rule unmeetable by
-    anyone who is not reading the backend.
-    """
-    source = read(GATE_SCREENS["STRATEGY"])
-    assert "AI-proposed query coverage" in source
-    assert "covered_element_ids" in source
-    assert "coverage-summary" in source
-
-
-def test_the_strategy_screen_blocks_on_an_uncovered_core_element():
-    """The one rule this stage cannot be approved around. Enforced in
-    `workflow/review.py` too -- that is the binding check and this is the one that
-    tells the reviewer before they submit."""
-    source = read(GATE_SCREENS["STRATEGY"])
-    assert "core elements have no search that will run" in source
-    assert "not searched for" in source
-
-
-def test_the_strategy_screen_sends_disabled_queries_rather_than_dropping_them():
-    """A switched-off search is a decision about the search. Filtering it out in
-    the client would leave the record unable to tell "deliberately not searched
-    for" from "never proposed"."""
-    source = read(GATE_SCREENS["STRATEGY"])
-    assert "enabled: query.enabled" in source
-    assert "deliberately not searched for" in source
-
-
-def test_the_strategy_screen_shows_the_approved_analysis_read_only():
-    """This stage approves queries. Editing the analysis here would change an
-    artifact that was already approved at its own version."""
-    source = read(GATE_SCREENS["STRATEGY"])
-    assert "approvedSummary()" in source
-    assert "Not editable here." in source
-    assert '<blockquote class="original-text">{{ approvedSummary() }}</blockquote>' in source
-
-
-def test_the_strategy_screen_computes_coverage_with_a_method_not_a_computed():
-    """`covered()` reads a signal AND plain nested objects. A `computed()` tracks
-    only signals, so toggling a query off would never invalidate it -- the same
-    defect `violations()` had on the understanding screen, where the approve
-    control stayed enabled after the summary was cleared."""
-    source = read(GATE_SCREENS["STRATEGY"])
-    assert "covered(): Set<string>" in source
-    assert "readonly covered = computed" not in source
-
-
-def test_gate_b_keeps_exclusions_in_their_own_table():
-    """Case AH: excluded publications are never matrix cells and never greyed
-    candidate rows."""
-    source = read(GATE_SCREENS["B"])
-    assert "exclusion-table" in source
-    assert "not evaluated" in source
-
-
-def test_gate_b_refuses_to_override_a_date_or_full_text_exclusion():
-    """Cases AK and AL. Date eligibility is arithmetic, not a judgement, and
-    there is no manual eligibility flag."""
-    source = read(GATE_SCREENS["B"])
-    assert "EXCLUDED_INELIGIBLE" in source
-    assert "overridable" in source
-
-
-def test_gate_c_derives_the_reviewed_outcome_and_offers_no_control_to_type_one():
-    """Gate F item 9. §13.4 check 4 rejects a reviewed outcome that contradicts
-    its own statuses, so the screen must not let one be typed."""
-    source = read(GATE_SCREENS["C"])
-    assert "derivedOutcome" in source
-    assert "read-only" in source
-
-
-def test_gate_c_shows_the_locator_and_its_kind():
-    """Gate F item 8: a reviewer needs to know whether `paragraph [0031]` is a
-    provider id or a reproducible source range."""
-    source = read(GATE_SCREENS["C"])
-    assert "locator-kind" in source
-    assert "locator_source" in source
-
-
-def test_gate_c_requires_a_reason_and_a_limitation_before_waiving():
-    """Gate F item 10, cases AJ/AZ."""
-    source = read(GATE_SCREENS["C"])
-    assert "waiverReason" in source and "waiverLimitation" in source
-    assert "never becomes a verdict" in source
-
-
-def test_gate_d_will_not_approve_a_report_into_existence():
-    """Case AC."""
-    assert "cannot be approved into existence" in read(GATE_SCREENS["D"])
+    # And the TEMPLATE never binds it as a model: a two-way binding would write
+    # the reviewer's typing back into the source input. Scoped to the template on
+    # purpose -- `load()` sets the signal from the server payload, which is how
+    # the description gets on screen at all, and is not an edit.
+    template = source.split("template: `", 1)[1].split("\n  `,\n})", 1)[0]
+    assert "originalDescription.set(" not in template
+    assert "[(ngModel)]=\"originalDescription" not in template
 
 
 # --- the report tells the truth about what it is ---------------------------
-
-
-def test_the_report_carries_the_non_legal_disclaimer():
-    source = read(REPORT)
-    assert "not a legal opinion" in source
-    assert "not an exhaustive prior-art search" in source
-    assert "not determine that anything is novel" in source
-
-
-def test_the_report_keeps_exclusions_out_of_the_matrix():
-    source = read(REPORT)
-    assert "report-exclusions" in source
-    assert "not evaluated" in source
-
-
-def test_the_report_shows_each_waiver_with_its_limitation():
-    assert "unresolved_limitation" in read(REPORT)
 
 
 # --- every mutating call carries an idempotency key -------------------------
@@ -295,15 +225,12 @@ def test_the_report_shows_each_waiver_with_its_limitation():
 MUTATIONS = (
     "approveGateA",
     "approveGateStrategy",
-    "regenerateStrategy",
-    "approveGateB",
-    "addCandidate",
-    "reviewCell",
-    "waiveCell",
-    "rerunCell",
-    "completeGateC",
-    "approveGateD",
 )
+"""Two approvals: the entire mutating surface of a run.
+
+The other eight went with their routes. `tests/test_workflow_api.py` asserts
+those paths now 404 as unknown, so a client method for one would be a call site
+that fails at runtime rather than at build time."""
 
 
 @pytest.mark.parametrize("method", MUTATIONS)
@@ -549,11 +476,15 @@ VOCABULARY = FRONTEND / "models" / "vocabulary.ts"
 # The screens an inventor reaches after approving a search strategy, plus the
 # report. `A` and `STRATEGY` already have their own vocabulary tests above.
 INVENTOR_FACING = {
-    "B": GATE_SCREENS["B"],
-    "C": GATE_SCREENS["C"],
-    "D": GATE_SCREENS["D"],
-    "report": REPORT,
+    "A": GATE_SCREENS["A"],
+    "STRATEGY": GATE_SCREENS["STRATEGY"],
 }
+"""The two surviving stage screens.
+
+Was `B`/`C`/`D`/`report`, all of which are gone. Pointing this at the two stages
+is not a narrowing: they had their own vocabulary tests before, and this list is
+now the whole inventor-facing surface, so the rule applies to every screen a
+reviewer sees rather than to the ones added last."""
 
 # Wording that names a position in a workflow graph, a storage row, or a piece of
 # machinery. None of it is what the reader is doing.
@@ -572,6 +503,15 @@ INTERNAL_VOCABULARY = (
     "verification cell",
     "matrix cell",
     "workflow gate",
+    # Spec section 8.1 row 11. Each names a concept the product removed: a
+    # reviewer no longer groups elements into capabilities, marks one core,
+    # relates two of them, or maps a query onto the elements it covers. A screen
+    # still saying any of these words would be offering a control that is not
+    # there. Added in the same change that removed what they name.
+    "capability",
+    "core element",
+    "relationship",
+    "coverage",
 )
 
 
@@ -622,41 +562,6 @@ def test_no_internal_workflow_vocabulary_reaches_the_screen(name, path):
         assert word not in rendered, f"{path.name} renders the internal term {word!r}"
 
 
-def test_the_scope_qualifier_survives_every_translation():
-    """The rule CLAUDE.md states outright, pinned.
-
-    `NOT_FOUND_IN_SUPPLIED_PASSAGES` and
-    `NO_DISCLOSURE_FOUND_IN_SUPPLIED_PASSAGES` **never** mean "not disclosed",
-    and shortening either in a UI is the same class of defect the zero-tolerance
-    policy forbids. Translating a code into words is exactly where that
-    shortening would happen and look like an improvement, so every label for a
-    scoped code has to still carry its scope.
-    """
-    source = read(VOCABULARY)
-    scoped = (
-        "NOT_FOUND_IN_SUPPLIED_PASSAGES",
-        "NO_DISCLOSURE_FOUND_IN_SUPPLIED_PASSAGES",
-        "PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
-        "FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES",
-    )
-    for code in scoped:
-        block = source.split(f"{code}: {{", 1)
-        assert len(block) > 1, f"{code} has no entry in the vocabulary"
-        label = block[1].split("label:", 1)[1].split("\n", 1)[0]
-        assert "passages examined" in label, (
-            f"the label for {code} drops the scope qualifier: {label.strip()}"
-        )
-
-
-def test_a_negative_result_is_never_rendered_as_a_statement_about_the_patent():
-    """The same rule, at the two places the words are put into a sentence."""
-    for path in (GATE_SCREENS["C"], REPORT):
-        rendered = rendered_text(path)
-        assert "passages examined" in rendered, (
-            f"{path.name} states a result without saying what it is scoped to"
-        )
-
-
 def test_the_vocabulary_covers_every_backend_enum_it_claims_to_translate():
     """A code with no entry renders as itself, which is safe but is not the job.
 
@@ -670,15 +575,18 @@ def test_the_vocabulary_covers_every_backend_enum_it_claims_to_translate():
     member to either one fails this test instead of quietly shipping a screen
     that renders a raw code.
     """
-    from verification.schema import Outcome, Status
-    from verification.states import CellState, PublicationExclusion
+    from verification.schema import Status
 
     source = read(VOCABULARY)
+    # `OUTCOME_TERMS`, `CELL_STATE_TERMS` and `EXCLUSION_TERMS` were removed with
+    # the screens that rendered them: a disclosure outcome, a matrix cell's state
+    # and why a publication was excluded from citation are all verification
+    # concepts, and no screen shows any of them now. The Python enums behind them
+    # are RETAINED (spec section 10.3) -- this test no longer claims the frontend
+    # translates them, because it does not, and a translation table for words
+    # nothing renders reads as evidence that something still does.
     expected = {
         "STATUS_TERMS": [member.value for member in Status],
-        "OUTCOME_TERMS": [member.value for member in Outcome],
-        "CELL_STATE_TERMS": [member.value for member in CellState],
-        "EXCLUSION_TERMS": [member.value for member in PublicationExclusion],
     }
     for table, codes in expected.items():
         block = source.split(f"export const {table}", 1)
@@ -688,7 +596,7 @@ def test_the_vocabulary_covers_every_backend_enum_it_claims_to_translate():
             assert f"{code}:" in body, f"{table} has no entry for {code}"
 
 
-@pytest.mark.parametrize("table", ["STATUS_TERMS", "OUTCOME_TERMS", "CELL_STATE_TERMS"])
+@pytest.mark.parametrize("table", ["STATUS_TERMS"])
 def test_no_two_codes_translate_to_the_same_words(table):
     """Two codes sharing a label collapses two situations into one on screen.
 
@@ -715,79 +623,9 @@ def test_no_two_codes_translate_to_the_same_words(table):
 # builder rather than against a fixture, so a change to either side fails here.
 
 
-def test_the_report_finds_waivers_where_the_draft_builder_puts_them():
-    """`build_draft` attaches each waiver to its own matrix entry.
-
-    It writes no top-level `waivers` key at all, and the report's waiver list was
-    read from one -- so a report with waivers rendered a count of zero and the
-    word "None". The waiver section exists to disclose a gap a reviewer chose not
-    to close; an empty one is indistinguishable from having nothing to disclose,
-    which makes this the worst possible shape for the defect.
-    """
-    builder = read(Path(__file__).resolve().parents[1] / "graph" / "report.py")
-    assert '"waivers": cell_waivers' in builder, (
-        "the draft builder no longer attaches waivers per cell; the report reader "
-        "below was written against that shape"
-    )
-    source = read(REPORT)
-    collector = source.split("readonly waivers = computed", 1)[1].split("});", 1)[0]
-    assert "this.matrix()" in collector, (
-        "the report does not collect waivers from the matrix entries that carry them"
-    )
-    assert "cell['waivers']" in collector
-
-
-def test_the_report_reads_unresolved_as_the_list_the_draft_holds():
-    """`build_draft`'s `unresolved` is a list of entries, not a count per state.
-
-    It was read as a dictionary and rendered as three numbers, so every report
-    showed zero unresolved however many there were. The list also carries the
-    failing check, which a count cannot, and which `graph/report.py`'s own
-    contract requires be printed beside the comparison.
-    """
-    builder = read(Path(__file__).resolve().parents[1] / "graph" / "report.py")
-    assert "unresolved: list[dict[str, Any]] = []" in builder
-    source = read(REPORT)
-    reader = source.split("readonly unresolved = computed", 1)[1].split("});", 1)[0]
-    assert "Array.isArray" in reader, "the report still treats `unresolved` as a dict"
-
-
-def test_the_report_prints_the_failing_check_beside_an_unvalidated_comparison():
-    """§9.1 and case AJ: a `VALIDATION_FAILURE` is recorded *with* its failing
-    check so the report can print it rather than blanking the row."""
-    rendered = rendered_text(REPORT)
-    assert "failed check" in rendered
-
-
-def test_the_report_finds_an_excluded_publication_under_either_key():
-    """`build_draft` emits `publication_number`; a stored exclusion row calls it
-    `requested_number`. The reader used one, so the column was blank in every
-    report."""
-    source = read(REPORT)
-    # The method, not the call site in the template above it.
-    reader = source.split("excludedNumber(item: Record", 1)[1].split("\n  }", 1)[0]
-    assert "publication_number" in reader and "requested_number" in reader
-
-
-def test_the_report_shows_the_caveats_the_reviewer_recorded():
-    """A caveat typed at the review and dropped from the rendered report is a
-    caveat nobody reading the report ever sees. `approve_report` stores both
-    columns; the report has to render them."""
-    source = read(REPORT)
-    assert "value('caveats')" in source
-    assert "value('comments')" in source
-
-
-def test_the_report_prints_the_coverage_statement_it_was_built_with():
-    """`COVERAGE_STATEMENT` is stored with the draft, so an approved report
-    carries the sentence that was approved rather than whatever the component
-    would say today."""
-    assert "value('coverage_statement')" in read(REPORT)
-
-
 @pytest.mark.parametrize(
     "gate,server_rules",
-    [("B", "GATE_B_RULES"), ("C", "GATE_C_RULES")],
+    [("A", "GATE_A_RULES"), ("STRATEGY", "GATE_STRATEGY_RULES")],
 )
 def test_the_screen_glosses_every_rule_the_server_enforces(gate, server_rules):
     """The rules a reviewer reads are the server's, said in plain words.
@@ -807,8 +645,9 @@ def test_the_screen_glosses_every_rule_the_server_enforces(gate, server_rules):
     server = gates.split(f"{server_rules}: tuple[str, ...] = (", 1)[1].split("\n)", 1)[0]
     server_count = len([line for line in server.splitlines() if line.strip().startswith('"')])
 
-    screen = read(GATE_SCREENS[gate])
-    body = screen.split("readonly RULES = [", 1)[1].split("\n  ];", 1)[0]
+    screen = read(STAGES)
+    table = screen.split("export const STAGE_RULES", 1)[1].split("\n};", 1)[0]
+    body = table.split(f"{gate}: [", 1)[1].split("],", 1)[0]
     screen_count = len([line for line in body.splitlines() if line.strip().startswith("'")])
 
     assert server_count == screen_count, (

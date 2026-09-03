@@ -585,33 +585,39 @@ def blocking_conditions(
 
 
 def _gate_a_blocking(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """Spec section 12.1, plus the inventor-facing understanding stage's own rules.
+    """Stages 1 and 2: exactly two of spec section 3.5's three rules.
 
-    The stage shows an editable technical summary and editable technical elements
-    grouped under capabilities. Everything a reviewer can change is checked here
-    rather than in the endpoint, so the executor, a test harness and the API all
-    get the same answer.
+    The stage shows a read-only description, an editable technical summary and a
+    flat editable list of technical elements. Everything a reviewer can change is
+    checked here rather than in the endpoint, so the executor, a test harness and
+    the API all get the same answer.
 
-    **Limits are enforced on both sides, and this is the binding one.** The
-    frontend refuses the same edits, but a browser check is a courtesy and this
-    is the boundary a request has to cross.
+    **Nothing else blocks, and that is a requirement rather than an omission.**
+    Section 3.5 fixes the blocking list at three rules; the reviewer's on-screen
+    list pairs one-to-one and in order with `GATE_A_RULES`, so a check here with
+    no rule beside it would refuse an approval for a reason the screen never
+    showed.
+
+    What was removed, and why each has nothing left to check:
+
+    * `TOO_MANY_CAPABILITIES`, `NO_ELEMENTS`, `TOO_MANY_ELEMENTS` -- capability
+      grouping is gone; there is one flat list, not groups to count or bound.
+    * `TOO_MANY_ELEMENTS_TOTAL` -- the total limit was derived from
+      `MAX_CAPABILITIES` x the matrix cell cap, and there is no matrix.
+    * `DUPLICATE_REQUIREMENT_ID` -- ids are minted on write, never submitted, so
+      a caller cannot produce a duplicate.
+    * `DANGLING_RELATIONSHIP_REFERENCE` -- relationships are gone from the
+      product and no row is ever written to `decomposition_relationships`.
+    * `NO_VERSION` -- the version is supplied by the endpoint, not the reviewer.
+    * `NO_CORE_ELEMENT` -- `core` is no longer something a reviewer sets. Every
+      approved element is written `core = TRUE`, which makes this condition
+      **unreachable** rather than deleted and hoped for.
     """
-    # Deferred: `graph.limits` pulls in the verification nodes to derive
-    # MAX_CAPABILITIES from the reviewed matrix constants, and importing that at
-    # module scope would drag the graph into every importer of this module. The
-    # same deferred-import pattern `api/runs.py` uses for the gate rules.
-    from graph.limits import (
-        MAX_CAPABILITIES,
-        MAX_ELEMENTS_PER_CAPABILITY,
-        MAX_ELEMENTS_TOTAL,
-    )
-
-    features = payload.get("decomposition") or []
     blocking: list[dict[str, Any]] = []
 
-    # The approved summary is half of what this stage approves. An empty one is
-    # refused here as well as by `approve_understanding_by_owner`, so the reviewer
-    # is told which rule they tripped instead of getting a write error.
+    # Rule 1: a non-empty technical summary. Refused here as well as by
+    # `approve_understanding_by_owner`, so the reviewer is told which rule they
+    # tripped instead of getting a write error.
     if "summary" in payload and not str(payload.get("summary") or "").strip():
         blocking.append(
             {
@@ -621,303 +627,66 @@ def _gate_a_blocking(payload: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
 
-    if not features:
-        blocking.append({"code": "NO_FEATURES", "reason": "at least one feature is required"})
-        return blocking
-
-    if len(features) > MAX_CAPABILITIES:
+    # Rule 2: at least one non-empty technical element. Emptiness is measured
+    # after trimming, and a list of nothing but blanks is an empty list -- a
+    # reviewer who deleted every element's text has approved no elements.
+    elements = [
+        element
+        for feature in (payload.get("decomposition") or [])
+        for element in (feature.get("elements") or [])
+    ]
+    if not any(str(element.get("text") or "").strip() for element in elements):
         blocking.append(
             {
-                "code": "TOO_MANY_CAPABILITIES",
-                "reason": f"at most {MAX_CAPABILITIES} technical capabilities may be "
-                f"approved; this understanding has {len(features)}",
-            }
-        )
-
-    total_elements = 0
-    any_core = False
-
-    for feature in features:
-        feature_id = feature.get("feature_id") or "<unnamed>"
-        elements = feature.get("elements") or []
-        relationships = feature.get("relationships") or []
-        total_elements += len(elements)
-        if any(bool(element.get("core")) for element in elements):
-            any_core = True
-
-        if not elements:
-            blocking.append(
-                {
-                    "code": "NO_ELEMENTS",
-                    "feature_id": feature_id,
-                    "reason": f"feature {feature_id} has no elements",
-                }
-            )
-        if len(elements) > MAX_ELEMENTS_PER_CAPABILITY:
-            blocking.append(
-                {
-                    "code": "TOO_MANY_ELEMENTS",
-                    "feature_id": feature_id,
-                    "reason": f"at most {MAX_ELEMENTS_PER_CAPABILITY} technical "
-                    f"elements are allowed in one capability; {feature_id} has "
-                    f"{len(elements)}",
-                }
-            )
-
-        ids = [e.get("element_id") for e in elements] + [
-            r.get("relationship_id") for r in relationships
-        ]
-        # Unique ACROSS elements and relationships -- the same rule
-        # `decomposition_requirement_ids` enforces in the database. A relationship
-        # sharing an element's id would make every locator ambiguous.
-        duplicates = sorted({name for name in ids if ids.count(name) > 1 and name})
-        if duplicates:
-            blocking.append(
-                {
-                    "code": "DUPLICATE_REQUIREMENT_ID",
-                    "feature_id": feature_id,
-                    "reason": f"requirement ids must be unique across elements and "
-                    f"relationships; duplicated: {', '.join(duplicates)}",
-                }
-            )
-        for requirement in list(elements) + list(relationships):
-            if not (requirement.get("text") or "").strip():
-                blocking.append(
-                    {
-                        "code": "EMPTY_REQUIREMENT_TEXT",
-                        "feature_id": feature_id,
-                        "reason": "every element and relationship needs non-empty text",
-                    }
-                )
-                break
-
-        dangling = _dangling_element_references(elements, relationships)
-        if dangling:
-            blocking.append(
-                {
-                    "code": "DANGLING_RELATIONSHIP_REFERENCE",
-                    "feature_id": feature_id,
-                    "reason": f"a relationship in {feature_id} refers to elements that "
-                    f"are not in it: {', '.join(dangling)}. Relationships are "
-                    f"regenerated when elements change; one left pointing at a "
-                    f"deleted element is a requirement the verifier would be asked "
-                    f"to find among elements that no longer exist",
-                }
-            )
-
-        if not (feature.get("feature_version") or "").strip():
-            blocking.append(
-                {
-                    "code": "NO_VERSION",
-                    "feature_id": feature_id,
-                    "reason": f"feature {feature_id} does not name a version",
-                }
-            )
-
-    if total_elements > MAX_ELEMENTS_TOTAL:
-        blocking.append(
-            {
-                "code": "TOO_MANY_ELEMENTS_TOTAL",
-                "reason": f"at most {MAX_ELEMENTS_TOTAL} technical elements may be "
-                f"approved in one understanding; this one has {total_elements}",
-            }
-        )
-
-    # At least one element, somewhere, must be core. Without one the matrix asks
-    # only about detail: `core` is what says "the invention is not the invention
-    # without this", and a set with none of them cannot support a novelty finding.
-    if not any_core:
-        blocking.append(
-            {
-                "code": "NO_CORE_ELEMENT",
-                "reason": "at least one technical element must be marked as core; "
-                "a core element is what the invention is not itself without",
+                "code": "NO_ELEMENTS",
+                "reason": "at least one non-empty technical element is required",
             }
         )
 
     return blocking
-
-
-_ELEMENT_REFERENCE = re.compile(r"\bE\d{1,3}\b")
-"""Element ids as this pipeline mints them (`E1`, `E2`, ...), matched inside
-relationship prose.
-
-**A textual check, and it is stated as one.** A relationship carries no foreign
-key to the elements it relates -- `decomposition_relationships` stores text and an
-ordinal -- so the only detectable dangling reference is one the text names. This
-catches the failure that actually happens (an element is deleted and a
-relationship goes on naming it, because the two were edited at different times),
-and it cannot catch a relationship that describes a deleted element in words. It
-is a guard, never a proof, and the real defence is regenerating relationships
-whenever elements change rather than patching them.
-"""
-
-
-def _dangling_element_references(
-    elements: Sequence[dict[str, Any]], relationships: Sequence[dict[str, Any]]
-) -> list[str]:
-    """Element ids a relationship names that this feature no longer has."""
-    present = {
-        str(element.get("element_id") or "").strip()
-        for element in elements
-        if str(element.get("element_id") or "").strip()
-    }
-    named: set[str] = set()
-    for relationship in relationships:
-        named.update(_ELEMENT_REFERENCE.findall(str(relationship.get("text") or "")))
-    return sorted(named - present)
 
 
 def _gate_strategy_blocking(
     conn: psycopg.Connection, *, run_id: str, payload: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    """The SEARCH STRATEGY stage's completion rules.
+    """Stage 3: the last of spec section 3.5's three rules, and nothing else.
 
-    **The rule this stage exists for is coverage**, and it is the one that cannot
-    be moved into the UI as a courtesy: every **core** element of the approved
-    understanding must be covered by at least one **enabled** query. A core
-    element is one the invention is not itself without, so a run that searches
-    without covering one and then reports "no prior art found" has made a claim
-    about prior art on the strength of a search nobody performed for it.
+    The stage shows a plain editable list of query strings. One rule blocks: at
+    least one non-empty query. A strategy with no queries would search for
+    nothing and then report that nothing was found, which is the one failure here
+    that would look exactly like a genuine empty result.
 
-    Coverage is an **id-set comparison against the approved decomposition** at
-    the strategy's `understanding_version`, and it is stated as one:
-    `approved_strategy_queries.covered_element_ids` carries no foreign key, so
-    what is checked is that the ids exist and that the core ones are named -- never
-    that a query would actually retrieve prior art for them. That second thing is
-    a judgement, which is why a person approves this stage at all.
+    **Nothing else blocks**, and each removal is a rule whose subject the product
+    no longer has:
 
-    **The ids are feature-qualified (`F1.E1`), and they have to be.** A
-    requirement id is unique within one feature and not across a run -- the
-    database says so: `decomposition_requirement_ids` is keyed by
-    `(decomposition_id, requirement_id)`, one decomposition per feature. A bare
-    `E1` in two features is two different elements, and treating a coverage claim
-    for one as covering the other would report a core element as searched for when
-    nobody searched for it.
+    * `NO_ENABLED_QUERY` -- enable/disable switches are gone. Every stored query
+      is enabled, so "all of them are off" is unreachable.
+    * `DUPLICATE_QUERY_ID`, `NO_QUERY_ID` -- ids are minted on write, never
+      submitted, so a caller cannot produce a missing or duplicated one.
+    * `TOO_MANY_QUERIES` -- a reviewer meets the limit while editing.
+    * `NO_UNDERSTANDING_VERSION`, `STALE_UNDERSTANDING_VERSION`,
+      `UNKNOWN_ELEMENT_REFERENCE`, `UNCOVERED_CORE_ELEMENT` -- all four are about
+      the element-to-query coverage mapping, which is gone from the public shape.
+      A reviewer can no longer see or set coverage, and a rule the screen cannot
+      show is one an approval fails on invisibly.
 
-    The version check is the other half. A strategy is approved *against* one
-    understanding version; if the understanding has since been regenerated and
-    re-approved, coverage was computed over element ids that are no longer the
-    ones the run will verify against, and re-using it would report coverage of
-    requirements it was never checked against.
+    The coverage rule is the significant loss and it is worth naming plainly: it
+    guaranteed that every core element was searched for, so that "no prior art
+    found" could not rest on a search nobody performed for part of the invention.
+    Advanced Search makes no such guarantee, states no such conclusion, and
+    presents its queries to a person to approve instead. `conn` and `run_id` are
+    still taken because `require_gate_clear` dispatches uniformly on gate.
     """
-    from graph.limits import MAX_STRATEGY_QUERIES
-
     queries = list(payload.get("queries") or ())
-    version = int(payload.get("understanding_version") or 0)
-    blocking: list[dict[str, Any]] = []
-
-    if not queries:
-        blocking.append(
+    if not any(str(query.get("query_text") or "").strip() for query in queries):
+        return [
             {
                 "code": "NO_QUERIES",
                 "reason": "a search strategy with no queries would search for "
                 "nothing and then report that nothing was found",
             }
-        )
-        return blocking
-
-    if len(queries) > MAX_STRATEGY_QUERIES:
-        blocking.append(
-            {
-                "code": "TOO_MANY_QUERIES",
-                "reason": f"at most {MAX_STRATEGY_QUERIES} queries may be approved; "
-                f"this strategy has {len(queries)}",
-            }
-        )
-
-    enabled = [query for query in queries if bool(query.get("enabled"))]
-    if not enabled:
-        blocking.append(
-            {
-                "code": "NO_ENABLED_QUERY",
-                "reason": "every query is switched off, so nothing would be "
-                "dispatched and the run could report nothing honestly",
-            }
-        )
-
-    ids = [str(query.get("query_id") or "").strip() for query in queries]
-    duplicates = sorted({name for name in ids if name and ids.count(name) > 1})
-    if duplicates:
-        blocking.append(
-            {
-                "code": "DUPLICATE_QUERY_ID",
-                "reason": "query ids must be unique within a strategy; duplicated: "
-                + ", ".join(duplicates),
-            }
-        )
-    if any(not name for name in ids):
-        blocking.append(
-            {
-                "code": "NO_QUERY_ID",
-                "reason": "every query needs an id, or its coverage claim cannot be "
-                "attributed to anything",
-            }
-        )
-    for query in queries:
-        if not str(query.get("query_text") or "").strip():
-            blocking.append(
-                {
-                    "code": "EMPTY_QUERY_TEXT",
-                    "query_id": str(query.get("query_id") or ""),
-                    "reason": "every query needs non-empty text",
-                }
-            )
-            break
-
-    if version < 1:
-        blocking.append(
-            {
-                "code": "NO_UNDERSTANDING_VERSION",
-                "reason": "a search strategy must name the approved understanding "
-                "it covers; coverage over an unnamed version is not a coverage "
-                "claim at all",
-            }
-        )
-        return blocking
-
-    elements = _approved_elements(conn, run_id=run_id, version=version)
-    if elements is None:
-        blocking.append(
-            {
-                "code": "STALE_UNDERSTANDING_VERSION",
-                "reason": f"there is no approved understanding at version {version} "
-                "for this run, so the coverage claimed here was computed against "
-                "requirements this run will not verify against",
-            }
-        )
-        return blocking
-
-    known, core = elements
-    claimed: set[str] = set()
-    for query in queries:
-        named = {str(item).strip() for item in (query.get("covered_element_ids") or ())}
-        unknown = sorted(name for name in named if name and name not in known)
-        if unknown:
-            blocking.append(
-                {
-                    "code": "UNKNOWN_ELEMENT_REFERENCE",
-                    "query_id": str(query.get("query_id") or ""),
-                    "reason": "a query claims to cover elements the approved "
-                    "understanding does not contain: " + ", ".join(unknown),
-                }
-            )
-        if bool(query.get("enabled")):
-            claimed |= named
-
-    uncovered = sorted(core - claimed)
-    if uncovered:
-        blocking.append(
-            {
-                "code": "UNCOVERED_CORE_ELEMENT",
-                "element_ids": uncovered,
-                "reason": "every core element must be covered by at least one "
-                "enabled query; not covered: " + ", ".join(uncovered) + ". A core "
-                "element is one the invention is not itself without, and finding no "
-                "prior art for something nobody searched for is not a finding",
-            }
-        )
-    return blocking
+        ]
+    return []
 
 
 def _approved_elements(

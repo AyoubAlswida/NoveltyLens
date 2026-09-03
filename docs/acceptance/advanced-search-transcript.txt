@@ -1,0 +1,78 @@
+==============================================================================
+ADVANCED SEARCH ACCEPTANCE — real graph, real approvals, mocked providers
+==============================================================================
+reviewer: advsearch-d6346c3b@example.invalid
+
+--- start `python run_mock.py --workflow --fast` (API + in-process executor)
+    pid 32822; server log -> advanced-search-server.log
+    healthy on http://127.0.0.1:8095; outbound HTTP to any non-local host is blocked
+    signed in (tokens held in memory, never printed)
+
+--- ADMISSION: a description, and nothing else
+  $ POST /api/runs  {"description": "A portable, refillable drinking-water bottle that sterilises its contents with an integrated 
+    -> 201 {"run_id": "5f62bdb7-b7a7-45f6-b007-071534933695", "status": "QUEUED", "stream_url": "/api/runs/5f62bdb7-b7a7-45f6-b007-071534933695/stream"}
+    no verifier-policy check ran, and no capability field was returned
+
+--- a withdrawn admission field is REFUSED, not ignored
+  $ POST /api/runs  {"description": "A portable, refillable drinking-water bottle that sterilises its contents with an integrated 
+    -> 422 {"detail": [{"type": "extra_forbidden", "loc": ["body", "problem_solved"], "msg": "Extra inputs are not permitted", "input": "x"}]}
+    a client that has not been updated is told so
+
+--- STAGES 1 AND 2: the understanding
+    parked at gate A (last_event_id=7)
+  $ GET /api/runs/5f62bdb7-b7a7-45f6-b007-071534933695/gates/A
+    -> 200 {"original_description": "A portable, refillable drinking-water bottle that sterilises its contents with an integrated UV-C emitter and filters particulates through a replaceable graphene-ox
+    5 elements, as plain strings
+
+--- APPROVE the understanding, with an edit
+  $ POST /api/runs/5f62bdb7-b7a7-45f6-b007-071534933695/gates/A/approve  {"idempotency_key": "<redacted>", "technical_summary": "A drinking vessel that sterilises with UV-C and filter
+    -> 200 {"decomposition_version": 1, "understanding_version": 1, "status": "RESUMING"}
+    committed; the executor resumes the run on its next poll
+
+--- a REPLAYED approval returns the stored response rather than mutating twice
+  $ POST /api/runs/5f62bdb7-b7a7-45f6-b007-071534933695/gates/A/approve  {"idempotency_key": "<redacted>", "technical_summary": "A drinking vessel that sterilises with UV-C and filter
+    -> 200 {"status": "RESUMING", "decomposition_version": 1, "understanding_version": 1}
+
+--- STAGE 3: the searches
+    parked at gate STRATEGY (last_event_id=13)
+  $ GET /api/runs/5f62bdb7-b7a7-45f6-b007-071534933695/gates/STRATEGY
+    -> 200 {"queries": ["mock query 1 for F1"], "editable": true, "approved_version": null, "completion_rules": ["at least one non-empty search query"], "limits": {"max_queries": 10}}
+    1 queries, as plain strings
+
+--- another account cannot read or approve this run
+  $ GET /api/runs/5f62bdb7-b7a7-45f6-b007-071534933695/gates/STRATEGY
+    -> 404 {"code": "RUN_NOT_FOUND", "detail": "No run 5f62bdb7-b7a7-45f6-b007-071534933695 was found for this account."}
+    404, identical to an unknown run: never 403
+
+--- APPROVE the searches, replacing one entirely
+  $ POST /api/runs/5f62bdb7-b7a7-45f6-b007-071534933695/gates/STRATEGY/approve  {"idempotency_key": "<redacted>", "queries": ["graphene oxide membrane ultraviolet drinking vessel"]}
+    -> 200 {"strategy_version": 1, "queries_approved": 1, "queries_enabled": 1, "status": "RESUMING"}
+    the run is released into the search
+
+--- THE SEARCH RUNS, and the run completes
+    COMPLETED
+
+--- ONLY the approved queries were dispatched
+    approved: ['graphene oxide membrane ultraviolet drinking vessel']
+
+--- THE REPORT: the standard one, with no score anywhere
+  $ GET /api/runs/5f62bdb7-b7a7-45f6-b007-071534933695/report
+    -> 200 {"date": "Today", "title": "A portable, refillable drinking-water bottle ...", "patents": [{"num": "EP3218319A1", "url": "https://patents.example/EP3218319A1", "risk": "Medium", "title": "Gr
+    8 matches, each rated High/Medium/Low and nothing else
+
+--- the report a non-owner asks for does not exist
+  $ GET /api/runs/5f62bdb7-b7a7-45f6-b007-071534933695/report
+    -> 404 {"code": "RUN_NOT_FOUND", "detail": "No run 5f62bdb7-b7a7-45f6-b007-071534933695 was found for this account."}
+
+--- EXACTLY ONE standard History row, carrying the same report
+    one row, same matches in the same order, no score
+
+--- every WITHDRAWN route answers 404 as an unknown path
+    10 routes, all gone
+
+--- QUICK SEARCH is untouched: same endpoint, same shape, no run row
+    identical report shape, and no score on either path
+
+==============================================================================
+PASS — 53 checks, 0 paid calls
+==============================================================================

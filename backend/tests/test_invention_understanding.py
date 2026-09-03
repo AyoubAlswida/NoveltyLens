@@ -63,184 +63,110 @@ def test_a_clean_understanding_has_no_blocking_conditions():
     assert _gate_a_blocking(_payload()) == []
 
 
+def test_the_blocking_list_is_exactly_the_two_rules_this_stage_has():
+    """**Spec section 8.1 row 9: no other condition blocks.**
+
+    The reviewer's on-screen list pairs one-to-one and in order with
+    `GATE_A_RULES`, so a check with no rule beside it refuses an approval for a
+    reason the screen never showed. Asserting the whole set, rather than each
+    surviving rule individually, is what makes re-adding a hidden check fail.
+    """
+    from graph.gates import GATE_A_RULES
+
+    every_code = {
+        item["code"]
+        for payload in (
+            _payload(summary="   "),
+            _payload(features=[]),
+            _payload(features=[_feature(elements=[])]),
+            _payload(features=[
+                _feature(elements=[{"element_id": "E1", "text": "  ", "core": True, "order": 1}])
+            ]),
+            _payload(features=[
+                _feature(elements=[{"element_id": "E1", "text": "a membrane", "core": False, "order": 1}])
+            ]),
+        )
+        for item in _gate_a_blocking(payload)
+    }
+    assert every_code == {"NO_SUMMARY", "NO_ELEMENTS"}
+    assert len(GATE_A_RULES) == 2, "the screen and the server must shrink together"
+
+
 def test_an_empty_summary_blocks_approval():
-    """The summary is what the inventor confirmed the system understood. An empty
-    one is not an interpretation anybody can correct."""
+    """Rule 1. The summary is what the inventor confirmed the system understood.
+    An empty one is not an interpretation anybody can correct."""
     codes = [item["code"] for item in _gate_a_blocking(_payload(summary="   "))]
     assert codes == ["NO_SUMMARY"]
 
 
-def test_no_capability_blocks_approval():
-    codes = [item["code"] for item in _gate_a_blocking(_payload(features=[]))]
-    assert codes == ["NO_FEATURES"]
+def test_an_empty_summary_after_trimming_also_blocks():
+    """Whitespace is not a summary. Section 3.5 says "after trimming"."""
+    for blank in ("", " ", "\t", "\n  \n"):
+        codes = [item["code"] for item in _gate_a_blocking(_payload(summary=blank))]
+        assert "NO_SUMMARY" in codes, f"{blank!r} was accepted as a summary"
 
 
-def test_a_capability_with_no_elements_blocks_approval():
-    codes = [item["code"] for item in _gate_a_blocking(_payload(features=[_feature(elements=[])]))]
-    assert "NO_ELEMENTS" in codes
+def test_zero_elements_blocks_approval():
+    """Rule 2, in each of the shapes that can produce it."""
+    for payload in (
+        _payload(features=[]),
+        _payload(features=[_feature(elements=[])]),
+    ):
+        codes = [item["code"] for item in _gate_a_blocking(payload)]
+        assert "NO_ELEMENTS" in codes
 
 
-def test_an_empty_element_text_blocks_approval():
-    blocked = _payload(
-        features=[_feature(elements=[{"element_id": "E1", "text": "  ", "core": True, "order": 1}])]
+def test_elements_that_are_only_whitespace_are_zero_elements():
+    """A reviewer who blanked every element's text has approved no elements, and
+    an approval of nothing must not read as an approval of something."""
+    blanked = _payload(
+        features=[_feature(elements=[
+            {"element_id": "E1", "text": "  ", "core": True, "order": 1},
+            {"element_id": "E2", "text": "", "core": True, "order": 2},
+        ])]
     )
-    assert "EMPTY_REQUIREMENT_TEXT" in [item["code"] for item in _gate_a_blocking(blocked)]
+    assert "NO_ELEMENTS" in [item["code"] for item in _gate_a_blocking(blanked)]
 
 
-def test_no_core_element_anywhere_blocks_approval():
-    """`core` is what says "the invention is not the invention without this". A
-    set with none of them cannot support a novelty finding, so it cannot be
-    approved into one."""
-    blocked = _payload(
-        features=[_feature(elements=[{"element_id": "E1", "text": "a membrane", "core": False, "order": 1}])]
+def test_one_non_empty_element_is_enough():
+    kept = _payload(
+        features=[_feature(elements=[
+            {"element_id": "E1", "text": "  ", "core": True, "order": 1},
+            {"element_id": "E2", "text": "a graphene membrane", "core": True, "order": 2},
+        ])]
     )
-    assert "NO_CORE_ELEMENT" in [item["code"] for item in _gate_a_blocking(blocked)]
+    assert _gate_a_blocking(kept) == []
 
 
-def test_one_core_element_anywhere_is_enough():
-    """The rule is about the understanding, not about every capability: a
-    supporting capability may legitimately have no core element of its own."""
-    features = [
-        _feature("F1", elements=[{"element_id": "E1", "text": "a membrane", "core": True, "order": 1}]),
-        _feature("F2", elements=[{"element_id": "E1", "text": "a housing", "core": False, "order": 1}]),
-    ]
-    assert _gate_a_blocking(_payload(features=features)) == []
-
-
-def test_a_requirement_id_shared_by_an_element_and_a_relationship_blocks_approval():
-    """The requirement-id namespace is shared across both. A collision silently
-    drops one requirement's reviewed status when the two are merged into one map."""
-    blocked = _payload(
-        features=[
-            _feature(
-                elements=[{"element_id": "R1", "text": "a membrane", "core": True, "order": 1}],
-                relationships=[{"relationship_id": "R1", "text": "a link", "order": 1}],
-            )
-        ]
-    )
-    assert "DUPLICATE_REQUIREMENT_ID" in [item["code"] for item in _gate_a_blocking(blocked)]
-
-
-# --- relationship integrity after an element changes ------------------------
-
-
-def test_a_relationship_naming_a_deleted_element_blocks_approval():
-    """The defect this stage had to prevent.
-
-    An inventor deletes E4. A relationship reading "E1 is coupled to E4" survives,
-    and the verifier is then asked to find a relationship among elements that no
-    longer exist -- a fabricated requirement with a citation slot attached.
-    """
-    blocked = _payload(
-        features=[
-            _feature(
-                elements=[{"element_id": "E1", "text": "a membrane", "core": True, "order": 1}],
-                relationships=[
-                    {"relationship_id": "R1", "text": "E1 is coupled to E4", "order": 1}
-                ],
-            )
-        ]
-    )
-    conditions = _gate_a_blocking(blocked)
-    assert "DANGLING_RELATIONSHIP_REFERENCE" in [item["code"] for item in conditions]
-    # The reviewer is told *which* element is missing, not merely that something is.
-    assert "E4" in " ".join(item["reason"] for item in conditions)
-
-
-def test_a_relationship_naming_only_present_elements_is_clean():
-    clean = _payload(
-        features=[
-            _feature(
-                elements=[
-                    {"element_id": "E1", "text": "a membrane", "core": True, "order": 1},
-                    {"element_id": "E2", "text": "a sensor", "core": True, "order": 2},
-                ],
-                relationships=[
-                    {"relationship_id": "R1", "text": "E1 is coupled to E2", "order": 1}
-                ],
-            )
-        ]
-    )
-    assert _gate_a_blocking(clean) == []
-
-
-# --- the limits -------------------------------------------------------------
-
-
-def test_the_capability_limit_is_derived_from_the_reviewed_matrix_constants():
-    """Not a second copy of a reviewed constant.
-
-    `MATRIX_CELL_CAP` and `MAX_APPROVED_CANDIDATES` are reviewed constants (spec
-    section 16 decision 5). The capability limit is their quotient, so raising one
-    of them deliberately does not leave a stale 5 behind in another file.
-    """
-    from graph.evidence_nodes import MAX_APPROVED_CANDIDATES
-    from graph.limits import MAX_CAPABILITIES
-    from graph.verification_nodes import MATRIX_CELL_CAP
-
-    assert MAX_CAPABILITIES == MATRIX_CELL_CAP // MAX_APPROVED_CANDIDATES
-    # The value today, pinned so a change to either source constant is visible
-    # here as well as arithmetically correct.
-    assert MAX_CAPABILITIES == 5
-
-
-def test_too_many_capabilities_blocks_approval():
-    from graph.limits import MAX_CAPABILITIES
-
-    features = [_feature(f"F{i}") for i in range(MAX_CAPABILITIES + 1)]
-    assert "TOO_MANY_CAPABILITIES" in [
-        item["code"] for item in _gate_a_blocking(_payload(features=features))
-    ]
-
-
-def test_exactly_the_capability_limit_is_allowed():
-    from graph.limits import MAX_CAPABILITIES
-
-    features = [_feature(f"F{i}") for i in range(MAX_CAPABILITIES)]
-    assert _gate_a_blocking(_payload(features=features)) == []
-
-
-def test_too_many_elements_in_one_capability_blocks_approval():
-    from graph.limits import MAX_ELEMENTS_PER_CAPABILITY
-
-    elements = [
-        {"element_id": f"E{i}", "text": f"element {i}", "core": i == 0, "order": i + 1}
-        for i in range(MAX_ELEMENTS_PER_CAPABILITY + 1)
-    ]
-    assert "TOO_MANY_ELEMENTS" in [
-        item["code"] for item in _gate_a_blocking(_payload(features=[_feature(elements=elements)]))
-    ]
-
-
-def test_too_many_elements_in_total_blocks_approval():
-    """Enforced across the whole understanding, not per capability: five
-    capabilities of eight elements each is forty, which each per-capability check
-    would pass and the stage is not meant to ask anyone to review."""
-    from graph.limits import MAX_ELEMENTS_PER_CAPABILITY, MAX_ELEMENTS_TOTAL
-
-    features = []
-    made = 0
-    index = 0
-    while made <= MAX_ELEMENTS_TOTAL:
-        count = min(MAX_ELEMENTS_PER_CAPABILITY, MAX_ELEMENTS_TOTAL + 1 - made)
-        features.append(
-            _feature(
-                f"F{index}",
-                elements=[
-                    {"element_id": f"E{i}", "text": f"element {i}", "core": True, "order": i + 1}
-                    for i in range(count)
-                ],
-            )
-        )
-        made += count
-        index += 1
-    codes = [item["code"] for item in _gate_a_blocking(_payload(features=features))]
-    assert "TOO_MANY_ELEMENTS_TOTAL" in codes
-
-
-# =========================================================================
-# The LLM contract
-# =========================================================================
+# The following completion-rule tests were REMOVED with the rules they covered.
+# Each is listed with the reason the rule has nothing left to check -- a removed
+# test is a removed guarantee, and these are guarantees whose subject the product
+# no longer has (spec sections 3.3, 3.5 and 4.2.3):
+#
+# * `test_no_capability_blocks_approval`,
+#   `test_too_many_capabilities_blocks_approval`,
+#   `test_exactly_the_capability_limit_is_allowed`,
+#   `test_too_many_elements_in_one_capability_blocks_approval`,
+#   `test_too_many_elements_in_total_blocks_approval`,
+#   `test_the_capability_limit_is_derived_from_the_reviewed_matrix_constants` --
+#   capability grouping is gone. There is one flat list of strings, so there are
+#   no groups to count and no per-group limit; the total limit was derived from
+#   MAX_CAPABILITIES x the matrix cell cap, and there is no matrix.
+#
+# * `test_no_core_element_anywhere_blocks_approval`,
+#   `test_one_core_element_anywhere_is_enough` -- `core` is no longer something a
+#   reviewer sets. Every approved element is written `core = TRUE`, which makes
+#   NO_CORE_ELEMENT unreachable rather than deleted and hoped for. That is
+#   asserted directly by `test_every_approved_element_is_written_core` below.
+#
+# * `test_a_requirement_id_shared_by_an_element_and_a_relationship_blocks_approval`
+#   -- ids are minted on write and never submitted, so a caller cannot collide
+#   them.
+#
+# * `test_a_relationship_naming_a_deleted_element_blocks_approval`,
+#   `test_a_relationship_naming_only_present_elements_is_clean` -- relationships
+#   are gone from the product and no row is written to
+#   `decomposition_relationships`.
 
 
 def test_a_proposal_with_no_summary_fails_rather_than_rendering_empty():
@@ -298,35 +224,13 @@ def test_regeneration_feedback_reaches_the_prompt_as_a_correction():
     assert "Do not repeat the previous one." in captured["prompt"]
 
 
-def test_relationships_are_regenerated_against_the_current_elements_only():
-    """The prompt lists the elements that exist now and forbids naming others."""
-    import llm
-
-    captured = {}
-
-    def capture(prompt, **kwargs):
-        captured["prompt"] = prompt
-        return {"relationships": []}
-
-    with patch.object(llm, "_llm_json", side_effect=capture):
-        result = llm.regenerate_relationships(
-            "a feature",
-            [{"element_id": "E1", "text": "a membrane"}, {"element_id": "E2", "text": "a sensor"}],
-            existing_ids=("E1", "E2"),
-        )
-    assert result == []
-    assert "- E1: a membrane" in captured["prompt"]
-    assert "Never refer to an element that is not listed." in captured["prompt"]
-
-
-def test_an_absent_relationships_array_is_not_read_as_an_empty_one():
-    """"The model returned nothing" and "the model returned no relationships" are
-    different answers and only one of them is usable."""
-    import llm
-
-    with patch.object(llm, "_llm_json", return_value={}):
-        with pytest.raises(llm.LLMResponseError):
-            llm.regenerate_relationships("a feature", [{"element_id": "E1", "text": "x"}])
+# `test_relationships_are_regenerated_against_the_current_elements_only` and
+# `test_an_absent_relationships_array_is_not_read_as_an_empty_one` were REMOVED
+# with `llm.regenerate_relationships`. They asserted that the regeneration prompt
+# listed only the elements that exist now, and that an absent relationships array
+# was not read as an empty one. Relationships are gone from the product: the
+# understanding is a flat list of element strings, no row is ever written to
+# `decomposition_relationships`, and no prompt asks for them.
 
 
 # =========================================================================
@@ -354,27 +258,25 @@ def test_the_understanding_stage_sits_before_the_search_in_the_graph():
     assert ("decompose", "search_orchestrator") not in edges
 
 
-def test_a_rejected_analysis_routes_back_to_the_analysis_not_on_to_the_search():
-    """A regeneration is not an approval. The graph returns to `decompose`, which
-    proposes a NEW version and pauses again."""
+def test_an_approved_understanding_leads_to_the_strategy_stage_and_nowhere_else():
+    """Replaces `test_a_rejected_analysis_routes_back_to_the_analysis_not_on_to_the_search`.
+
+    That test asserted the regeneration loop `gate_a -> regenerate_understanding
+    -> decompose`. Regeneration was removed from the product (spec section 10.2):
+    editing the summary and the elements replaces asking the model for a new
+    version, so there is no rejection branch and `gate_a` is a plain edge with one
+    destination.
+
+    The guarantee that survives -- and the reason the loop existed -- is that an
+    approved understanding leads to the SEARCH STRATEGY stage rather than to a
+    provider, so there are still two approvals in front of any search.
+    """
     from graph.pipeline import build_graph
-    from graph.work_requests import route_after_gate_a
 
     edges = {(edge.source, edge.target) for edge in build_graph().get_graph().edges}
-    assert ("regenerate_understanding", "decompose") in edges
-    assert any(
-        source == "gate_a" and target == "regenerate_understanding" for source, target in edges
-    )
-
-    with patch(
-        "graph.work_requests.pending_understanding_regeneration",
-        return_value={"from_version": 1, "feedback": "wrong"},
-    ):
-        assert route_after_gate_a({"run_id": "r1"}) == "regenerate_understanding"
-    with patch("graph.work_requests.pending_understanding_regeneration", return_value=None):
-        # An approved understanding goes to the SEARCH STRATEGY stage, not to the
-        # search: there are two approvals in front of a provider call now.
-        assert route_after_gate_a({"run_id": "r1"}) == "propose_strategy"
+    out_of_gate_a = {target for source, target in edges if source == "gate_a"}
+    assert out_of_gate_a == {"propose_strategy"}
+    assert "regenerate_understanding" not in set(build_graph().get_graph().nodes)
 
 
 def test_a_read_failure_takes_the_branch_that_does_the_work():
@@ -394,7 +296,7 @@ def test_a_search_only_run_never_reaches_the_understanding_stage():
     exactly the nodes it did before, which the SSE contract depends on."""
     from graph.pipeline import _route_after_understanding
 
-    assert _route_after_understanding({"verification_requested": False}) == "search_orchestrator"
+    assert _route_after_understanding({"advanced_search": False}) == "search_orchestrator"
 
 
 # =========================================================================
@@ -645,7 +547,7 @@ class TestPersistence:
 
     # --- the HTTP surface ---------------------------------------------------
 
-    def test_the_stage_payload_shows_the_original_beside_the_proposal(
+    def test_the_stage_payload_is_the_description_summary_and_flat_elements(
         self, client, pg, paused_run
     ):
         understanding_store.record_proposal(
@@ -661,10 +563,19 @@ class TestPersistence:
             response = client.get(f"/api/runs/{paused_run}/gates/A", headers=self.auth())
         assert response.status_code == 200, response.text
         body = response.json()
-        assert body["original_description"]
-        assert body["candidate_decomposition"]["summary"] == "machine summary"
-        assert body["proposal"]["summary"] == "machine summary"
-        assert body["limits"]["max_capabilities"] == 5
+        # Read from the RUN ROW, not from graph state: the row survives a
+        # checkpoint compaction and is the record of what was submitted. It is
+        # never rewritten -- not by a proposal, not by an edit, not by an
+        # approval -- and the approval endpoint does not accept it.
+        assert body["original_description"] == pg.execute(
+            "SELECT description FROM verification_runs WHERE id = %s", (paused_run,)
+        ).fetchone()[0]
+        # The flat business payload (spec section 4.2.1): three fields, and
+        # nothing that revives a removed concept.
+        assert body["technical_summary"] == "machine summary"
+        assert body["technical_elements"] == ["a membrane"]
+        assert "candidate_decomposition" not in body
+        assert "proposal" not in body
 
     def test_an_unreadable_checkpoint_is_not_rendered_as_an_empty_analysis(
         self, client, paused_run
@@ -681,7 +592,8 @@ class TestPersistence:
             f"/api/runs/{paused_run}/gates/A/approve",
             json={
                 "idempotency_key": "k1",
-                "decomposition": {"version": 1, "summary": "", "features": [_feature()]},
+                "technical_summary": "",
+                "technical_elements": ["a membrane"],
             },
             headers=self.auth(),
         )
@@ -695,11 +607,8 @@ class TestPersistence:
             f"/api/runs/{paused_run}/gates/A/approve",
             json={
                 "idempotency_key": "k1",
-                "decomposition": {
-                    "version": 1,
-                    "summary": "the approved restatement",
-                    "features": [_feature()],
-                },
+                "technical_summary": "the approved restatement",
+                "technical_elements": ["a membrane"],
             },
             headers=self.auth(),
         )
@@ -709,60 +618,6 @@ class TestPersistence:
         ] == "the approved restatement"
         history = understanding_store.proposal_history(pg, run_id=paused_run, actor_email=OWNER)
         assert any(item["source"] == understanding_store.SOURCE_USER_EDIT for item in history)
-
-    def test_requesting_a_regeneration_is_202_and_calls_no_model(self, client, paused_run):
-        """The API records the request; the worker does the work. Generating here
-        would put an LLM call on a request thread with no lease and no recovery."""
-        import llm
-
-        with patch.object(llm, "_llm_json") as never:
-            response = client.post(
-                f"/api/runs/{paused_run}/understanding/regenerate",
-                json={"idempotency_key": "k1", "from_version": 1, "feedback": "wrong"},
-                headers=self.auth(),
-            )
-        assert response.status_code == 202, response.text
-        never.assert_not_called()
-
-    def test_a_regeneration_request_never_writes_an_approved_artifact(
-        self, client, pg, paused_run
-    ):
-        """A rejection is not an approval, and must not be recorded as one."""
-        client.post(
-            f"/api/runs/{paused_run}/understanding/regenerate",
-            json={"idempotency_key": "k1", "from_version": 1, "feedback": "wrong"},
-            headers=self.auth(),
-        )
-        assert approvals.latest_approved_understanding_version(pg, run_id=paused_run) is None
-        assert approvals.latest_approved_decomposition_version(pg, run_id=paused_run) is None
-
-    def test_a_repeated_regeneration_request_replays_rather_than_asking_twice(
-        self, client, pg, paused_run
-    ):
-        body = {"idempotency_key": "k1", "from_version": 1, "feedback": "wrong"}
-        first = client.post(
-            f"/api/runs/{paused_run}/understanding/regenerate", json=body, headers=self.auth()
-        )
-        second = client.post(
-            f"/api/runs/{paused_run}/understanding/regenerate", json=body, headers=self.auth()
-        )
-        assert first.status_code == 202 and second.status_code == 202
-        count = pg.execute(
-            "SELECT count(*) FROM understanding_regeneration_requests WHERE run_id = %s",
-            (paused_run,),
-        ).fetchone()[0]
-        assert count == 1
-
-    def test_another_user_cannot_request_a_regeneration(self, client, paused_run):
-        response = client.post(
-            f"/api/runs/{paused_run}/understanding/regenerate",
-            json={"idempotency_key": "k1", "from_version": 1},
-            headers=self.auth(OTHER),
-        )
-        assert response.status_code == 404
-        assert response.json()["code"] == "RUN_NOT_FOUND"
-
-    # --- the review state survives a refresh --------------------------------
 
     def test_the_review_state_survives_a_refresh(self, client, pg, paused_run):
         """Nothing about the stage lives in the browser. A second GET after a
@@ -780,8 +635,19 @@ class TestPersistence:
         with patch("workflow.gate_state.read_state", return_value=state):
             first = client.get(f"/api/runs/{paused_run}/gates/A", headers=self.auth()).json()
             second = client.get(f"/api/runs/{paused_run}/gates/A", headers=self.auth()).json()
-        assert first["proposal"] == second["proposal"]
-        assert first["original_description"] == second["original_description"]
+        # The business payload is what has to survive a refresh -- it is what
+        # the reviewer is editing.
+        for field in ("original_description", "technical_summary", "technical_elements"):
+            assert first[field] == second[field]
+
+    # The three regeneration tests were REMOVED with the endpoint they covered
+    # (`POST /api/runs/{id}/understanding/regenerate`). They asserted that asking
+    # for a re-analysis was recorded as a request and called no model on the
+    # request thread, that repeating it replayed, and that another user could not
+    # ask. Regeneration is gone from the product (spec section 10.2): editing the
+    # summary and the elements replaces asking the model for a new version, so
+    # there is no request to record. The `*_regeneration_requests` table, its
+    # migration and its existing rows are all retained.
 
     # --- historical runs stay readable --------------------------------------
 

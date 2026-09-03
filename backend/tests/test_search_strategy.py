@@ -62,23 +62,21 @@ def test_the_strategy_stage_sits_between_the_approved_understanding_and_the_sear
     assert ("gate_strategy", "search_orchestrator") in edges
 
 
-def test_a_rejected_strategy_routes_back_to_the_planning_not_on_to_the_search():
-    """A regeneration is not an approval. The graph returns to `propose_strategy`,
-    which proposes a NEW version and pauses again."""
+def test_an_approved_strategy_leads_to_the_search_and_nowhere_else():
+    """Replaces `test_a_rejected_strategy_routes_back_to_the_planning_not_on_to_the_search`.
+
+    Same reasoning as the understanding stage: regeneration is gone (spec section
+    10.2), editing the queries replaces it, and `gate_strategy` is a plain edge.
+    What must remain true is that the ONLY way out of the gate is the search --
+    an approved strategy releases the run, and nothing else does.
+    """
     from graph.pipeline import build_graph
-    from graph.work_requests import route_after_gate_strategy
 
-    edges = {(edge.source, edge.target) for edge in build_graph().get_graph().edges}
-    assert ("regenerate_strategy", "propose_strategy") in edges
-    assert ("gate_strategy", "regenerate_strategy") in edges
-
-    with patch(
-        "graph.work_requests.pending_strategy_regeneration",
-        return_value={"from_version": 1, "feedback": "too narrow"},
-    ):
-        assert route_after_gate_strategy({"run_id": "r1"}) == "regenerate_strategy"
-    with patch("graph.work_requests.pending_strategy_regeneration", return_value=None):
-        assert route_after_gate_strategy({"run_id": "r1"}) == "search_orchestrator"
+    graph = build_graph().get_graph()
+    edges = {(edge.source, edge.target) for edge in graph.edges}
+    out_of_gate = {target for source, target in edges if source == "gate_strategy"}
+    assert out_of_gate == {"search_orchestrator"}
+    assert "regenerate_strategy" not in set(graph.nodes)
 
 
 def test_a_read_failure_takes_the_branch_that_does_the_work():
@@ -98,7 +96,7 @@ def test_a_search_only_run_never_reaches_the_strategy_stage():
     exactly the nodes it did before, which the SSE contract depends on."""
     from graph.pipeline import _route_after_understanding
 
-    assert _route_after_understanding({"verification_requested": False}) == "search_orchestrator"
+    assert _route_after_understanding({"advanced_search": False}) == "search_orchestrator"
 
 
 def test_the_gate_refuses_to_pause_a_run_it_cannot_be_resumed_for():
@@ -178,146 +176,79 @@ class TestCompletionRules:
             payload={"queries": queries, "understanding_version": version},
         )
 
-    def test_a_strategy_covering_every_core_element_is_clean(self, pg, approved_run):
-        blocking = self._blocking(
-            pg,
-            approved_run,
-            [
-                _query("Q1", covers=["F1.E1", "F1.E2"]),
-                _query("Q2", covers=["F2.E1"]),
-            ],
-        )
+    def test_a_strategy_with_queries_is_clean(self, pg, approved_run):
+        blocking = self._blocking(pg, approved_run, [_query("Q1"), _query("Q2")])
         assert blocking == []
-
-    def test_an_uncovered_core_element_blocks_approval(self, pg, approved_run):
-        """The rule this stage exists for."""
-        blocking = self._blocking(pg, approved_run, [_query("Q1", covers=["F1.E1", "F1.E2"])])
-        codes = {item["code"] for item in blocking}
-        assert codes == {"UNCOVERED_CORE_ELEMENT"}
-        assert blocking[0]["element_ids"] == ["F2.E1"]
-
-    def test_an_uncovered_non_core_element_does_not_block(self, pg, approved_run):
-        """`F1.E3` is not core. A supporting element nobody searches for narrows
-        the search; a core one nobody searches for makes the finding unsupportable."""
-        blocking = self._blocking(
-            pg,
-            approved_run,
-            [_query("Q1", covers=["F1.E1", "F1.E2"]), _query("Q2", covers=["F2.E1"])],
-        )
-        assert blocking == []
-
-    def test_a_disabled_query_covers_nothing(self, pg, approved_run):
-        """Coverage is computed over the queries that will actually run. A
-        switched-off query claiming an element would report it as searched for
-        when nothing will search for it."""
-        blocking = self._blocking(
-            pg,
-            approved_run,
-            [
-                _query("Q1", covers=["F1.E1", "F1.E2"]),
-                _query("Q2", covers=["F2.E1"], enabled=False),
-            ],
-        )
-        assert [item["code"] for item in blocking] == ["UNCOVERED_CORE_ELEMENT"]
-        assert blocking[0]["element_ids"] == ["F2.E1"]
-
-    def test_a_bare_element_id_is_not_a_coverage_claim(self, pg, approved_run):
-        """`E1` exists in BOTH features and means a different element in each, so
-        an unqualified id names neither. It is refused rather than resolved to
-        whichever one happens to sort first."""
-        blocking = self._blocking(
-            pg, approved_run, [_query("Q1", covers=["E1", "E2", "F2.E1"])]
-        )
-        codes = {item["code"] for item in blocking}
-        assert "UNKNOWN_ELEMENT_REFERENCE" in codes
-        assert "UNCOVERED_CORE_ELEMENT" in codes
-
-    def test_an_element_the_understanding_does_not_contain_is_refused(self, pg, approved_run):
-        blocking = self._blocking(
-            pg,
-            approved_run,
-            [_query("Q1", covers=["F1.E1", "F1.E2", "F2.E1", "F9.E9"])],
-        )
-        assert "UNKNOWN_ELEMENT_REFERENCE" in {item["code"] for item in blocking}
-
-    def test_every_query_switched_off_blocks_approval(self, pg, approved_run):
-        """Nothing would be dispatched, and the run would then report that nothing
-        was found -- a statement about prior art rather than about a search that
-        never ran."""
-        blocking = self._blocking(
-            pg,
-            approved_run,
-            [
-                _query("Q1", covers=["F1.E1", "F1.E2"], enabled=False),
-                _query("Q2", covers=["F2.E1"], enabled=False),
-            ],
-        )
-        assert "NO_ENABLED_QUERY" in {item["code"] for item in blocking}
 
     def test_no_queries_at_all_blocks_approval(self, pg, approved_run):
+        """The one rule this stage has. A strategy with no queries would search
+        for nothing and then report that nothing was found -- the single failure
+        here that would look exactly like a genuine empty result."""
         blocking = self._blocking(pg, approved_run, [])
         assert [item["code"] for item in blocking] == ["NO_QUERIES"]
 
-    def test_an_empty_query_text_blocks_approval(self, pg, approved_run):
+    def test_queries_that_are_only_whitespace_are_no_queries(self, pg, approved_run):
         blocking = self._blocking(
-            pg,
-            approved_run,
-            [_query("Q1", text="   ", covers=["F1.E1", "F1.E2"]), _query("Q2", covers=["F2.E1"])],
+            pg, approved_run, [_query("Q1", text="   "), _query("Q2", text="")]
         )
-        assert "EMPTY_QUERY_TEXT" in {item["code"] for item in blocking}
+        assert [item["code"] for item in blocking] == ["NO_QUERIES"]
 
-    def test_duplicate_query_ids_block_approval(self, pg, approved_run):
+    def test_one_non_empty_query_is_enough(self, pg, approved_run):
         blocking = self._blocking(
-            pg,
-            approved_run,
-            [_query("Q1", covers=["F1.E1", "F1.E2"]), _query("Q1", covers=["F2.E1"])],
+            pg, approved_run, [_query("Q1", text="  "), _query("Q2", text="graphene membrane")]
         )
-        assert "DUPLICATE_QUERY_ID" in {item["code"] for item in blocking}
+        assert blocking == []
 
-    def test_too_many_queries_blocks_approval(self, pg, approved_run):
-        from graph.limits import MAX_STRATEGY_QUERIES
-
-        queries = [
-            _query(f"Q{index}", covers=["F1.E1", "F1.E2", "F2.E1"])
-            for index in range(1, MAX_STRATEGY_QUERIES + 2)
-        ]
-        blocking = self._blocking(pg, approved_run, queries)
-        assert "TOO_MANY_QUERIES" in {item["code"] for item in blocking}
-
-    def test_exactly_the_limit_is_allowed(self, pg, approved_run):
-        from graph.limits import MAX_STRATEGY_QUERIES
-
-        queries = [
-            _query(f"Q{index}", covers=["F1.E1", "F1.E2", "F2.E1"])
-            for index in range(1, MAX_STRATEGY_QUERIES + 1)
-        ]
-        assert self._blocking(pg, approved_run, queries) == []
-
-    def test_a_strategy_naming_no_understanding_version_is_refused(self, pg, approved_run):
-        """Coverage over an unnamed version is not a coverage claim at all."""
-        blocking = self._blocking(
-            pg, approved_run, [_query("Q1", covers=["F1.E1"])], version=0
-        )
-        assert [item["code"] for item in blocking] == ["NO_UNDERSTANDING_VERSION"]
-
-    def test_a_strategy_naming_a_version_that_was_never_approved_is_stale(
+    def test_the_blocking_list_is_exactly_the_one_rule_this_stage_has(
         self, pg, approved_run
     ):
-        """A strategy approved against version 1 claims coverage of version 1's
-        elements. Version 2 is a different set of requirements, and reusing the
-        claim would report coverage that was never checked."""
-        blocking = self._blocking(
-            pg, approved_run, [_query("Q1", covers=["F1.E1"])], version=2
-        )
-        assert [item["code"] for item in blocking] == ["STALE_UNDERSTANDING_VERSION"]
+        """**Spec section 8.1 row 9: no other condition blocks.**
+
+        The reviewer's on-screen list pairs one-to-one with `GATE_STRATEGY_RULES`,
+        so a check with no rule beside it refuses an approval for a reason the
+        screen never showed.
+        """
+        from graph.gates import GATE_STRATEGY_RULES
+
+        every_code = {
+            item["code"]
+            for queries in ([], [_query("Q1", text=" ")], [_query("Q1"), _query("Q1")])
+            for item in self._blocking(pg, approved_run, queries)
+        }
+        assert every_code == {"NO_QUERIES"}
+        assert len(GATE_STRATEGY_RULES) == 1, "the screen and the server shrink together"
 
 
-# =========================================================================
-# Persistence, versioning, ownership and the API -- real PostgreSQL
-# =========================================================================
+# The following completion-rule tests were REMOVED with the rules they covered.
+# Each names the reason the rule has nothing left to check (spec sections 3.4,
+# 3.5 and 4.2.2):
+#
+# * `test_an_uncovered_core_element_blocks_approval`,
+#   `test_an_uncovered_non_core_element_does_not_block`,
+#   `test_a_disabled_query_covers_nothing`,
+#   `test_a_bare_element_id_is_not_a_coverage_claim`,
+#   `test_an_element_the_understanding_does_not_contain_is_refused`,
+#   `test_a_strategy_naming_no_understanding_version_is_refused`,
+#   `test_a_strategy_naming_a_version_that_was_never_approved_is_stale` -- all
+#   seven are about element-to-query coverage, which is gone from the public
+#   shape. This is the significant loss and is worth stating plainly: the
+#   coverage rule guaranteed every core element was searched for, so that "no
+#   prior art found" could not rest on a search nobody performed for part of the
+#   invention. Advanced Search makes no such guarantee and states no such
+#   conclusion -- it shows the queries to a person and asks them to approve them.
+#
+# * `test_every_query_switched_off_blocks_approval` -- enable/disable switches
+#   are gone; every stored query is enabled, so "all of them are off" is
+#   unreachable.
+#
+# * `test_duplicate_query_ids_block_approval`, and the id half of
+#   `test_an_empty_query_text_blocks_approval` -- query ids are minted on write
+#   and never submitted, so a caller cannot produce a missing or duplicated one.
+#
+# * `test_too_many_queries_blocks_approval`, `test_exactly_the_limit_is_allowed`
+#   -- a reviewer meets the limit while editing rather than at approval.
 
 
-@pytest.mark.postgres
 class TestPersistence:
     @pytest.fixture
     def client(self, real_db):
@@ -575,7 +506,7 @@ class TestPersistence:
 
     # --- the HTTP surface -------------------------------------------------
 
-    def test_the_stage_payload_shows_the_approved_analysis_and_its_elements(
+    def test_the_stage_payload_is_a_plain_list_of_query_strings(
         self, client, pg, parked_run
     ):
         """Read from the checkpoint, which is patched here because no executor has
@@ -605,17 +536,19 @@ class TestPersistence:
             response = client.get(f"/api/runs/{parked_run}/gates/STRATEGY", headers=self.auth())
         assert response.status_code == 200
         body = response.json()
-        assert body["approved_summary"].startswith("A device that filters")
-        assert body["elements"] == [
-            {
-                "id": "F1.E1",
-                "feature_id": "F1",
-                "feature_text": "filtration",
-                "text": "a membrane",
-                "core": True,
-            }
-        ]
-        assert body["candidate_search_strategy"]["queries"][0]["query_id"] == "Q1"
+        # The flat business payload (spec section 4.2.2): one field, a list of
+        # strings. Everything the reviewer can no longer see or set is absent --
+        # coverage, the approved summary it was judged against, query ids, the
+        # enabled flag and the rationale.
+        assert body["queries"] == ["graphene oxide membrane"]
+        for withdrawn in (
+            "approved_summary",
+            "elements",
+            "candidate_search_strategy",
+            "understanding_version",
+            "proposal",
+        ):
+            assert withdrawn not in body, f"{withdrawn} is back in the payload"
         assert body["limits"]["max_queries"] >= 1
 
     def test_an_unreadable_checkpoint_is_not_rendered_as_an_empty_strategy(
@@ -638,23 +571,21 @@ class TestPersistence:
     def test_an_invalid_strategy_is_refused_with_the_rules_it_broke(
         self, client, pg, parked_run
     ):
-        """`409 GATE_BLOCKED` listing every condition, and **nothing written**."""
+        """`409 GATE_BLOCKED` listing every condition, and **nothing written**.
+
+        The invalid strategy is now an empty one: with coverage gone, a query
+        that covers nothing is perfectly valid, so the only way to break this
+        stage's single rule is to approve no queries at all.
+        """
         response = client.post(
             f"/api/runs/{parked_run}/gates/STRATEGY/approve",
             headers=self.auth(),
-            json={
-                "idempotency_key": "k-blocked",
-                "strategy": {
-                    "version": 1,
-                    "understanding_version": 1,
-                    "queries": [_query("Q1", covers=[], enabled=True)],
-                },
-            },
+            json={"idempotency_key": "k-blocked", "queries": []},
         )
         assert response.status_code == 409
         body = response.json()
         assert body["code"] == "GATE_BLOCKED"
-        assert "UNCOVERED_CORE_ELEMENT" in {item["code"] for item in body["blocking"]}
+        assert "NO_QUERIES" in {item["code"] for item in body["blocking"]}
         assert approvals.latest_approved_search_strategy_version(pg, run_id=parked_run) is None
 
     def test_an_approval_records_both_the_edit_and_the_approved_artifact(
@@ -665,25 +596,20 @@ class TestPersistence:
             headers=self.auth(),
             json={
                 "idempotency_key": "k-approve",
-                "strategy": {
-                    "version": 1,
-                    "understanding_version": 1,
-                    "queries": [
-                        _query("Q1", text="membrane filtration", covers=["F1.E1"]),
-                        _query("Q2", text="uv sterilisation", covers=["F1.E1"], enabled=False),
-                    ],
-                },
+                "queries": ["membrane filtration", "uv sterilisation"],
             },
         )
         assert response.status_code == 200, response.json()
         assert response.json() == {
             "strategy_version": 1,
             "queries_approved": 2,
-            "queries_enabled": 1,
+            # Every stored query is enabled: the reviewer has no switch to turn
+            # one off, so a strategy cannot carry a query that will not be run.
+            "queries_enabled": 2,
             "status": "RESUMING",
         }
         approved = approvals.require_approved_search_strategy(pg, run_id=parked_run, version=1)
-        assert approved["enabled_queries"] == ["membrane filtration"]
+        assert approved["enabled_queries"] == ["membrane filtration", "uv sterilisation"]
         edit = strategy_store.latest_proposal(pg, run_id=parked_run, actor_email=OWNER)
         assert edit["source"] == strategy_store.SOURCE_USER_EDIT
 
@@ -692,11 +618,7 @@ class TestPersistence:
     ):
         body = {
             "idempotency_key": "k-replay",
-            "strategy": {
-                "version": 1,
-                "understanding_version": 1,
-                "queries": [_query("Q1", covers=["F1.E1"])],
-            },
+            "queries": ["membrane filtration", "uv sterilisation"],
         }
         first = client.post(
             f"/api/runs/{parked_run}/gates/STRATEGY/approve", headers=self.auth(), json=body
@@ -720,11 +642,7 @@ class TestPersistence:
                 headers=self.auth(),
                 json={
                     "idempotency_key": "k-nograph",
-                    "strategy": {
-                        "version": 1,
-                        "understanding_version": 1,
-                        "queries": [_query("Q1", covers=["F1.E1"])],
-                    },
+                    "queries": ["membrane filtration", "uv sterilisation"],
                 },
             )
         assert response.status_code == 200
@@ -736,11 +654,7 @@ class TestPersistence:
             headers=self.auth(OTHER),
             json={
                 "idempotency_key": "k-intruder",
-                "strategy": {
-                    "version": 1,
-                    "understanding_version": 1,
-                    "queries": [_query("Q1", covers=["F1.E1"])],
-                },
+                "queries": ["membrane filtration", "uv sterilisation"],
             },
         )
         assert response.status_code == 404
@@ -754,57 +668,14 @@ class TestPersistence:
         ).fetchone()[0]
         assert rows == 0
 
-    def test_requesting_fresh_queries_is_202_and_calls_no_model(self, client, pg, parked_run):
-        with patch("llm.propose_search_strategy") as propose:
-            response = client.post(
-                f"/api/runs/{parked_run}/strategy/regenerate",
-                headers=self.auth(),
-                json={"idempotency_key": "k-regen", "from_version": 1, "feedback": "too narrow"},
-            )
-        assert response.status_code == 202, response.json()
-        assert response.json()["status"] == "RESUMING"
-        propose.assert_not_called()
-        assert store._system_pending_strategy_regeneration(pg, run_id=parked_run) == {
-            "from_version": 1,
-            "feedback": "too narrow",
-        }
-
-    def test_a_regeneration_request_never_writes_an_approved_artifact(
-        self, client, pg, parked_run
-    ):
-        client.post(
-            f"/api/runs/{parked_run}/strategy/regenerate",
-            headers=self.auth(),
-            json={"idempotency_key": "k-regen2", "from_version": 1},
-        )
-        assert approvals.latest_approved_search_strategy_version(pg, run_id=parked_run) is None
-
-    def test_a_repeated_regeneration_request_replays_rather_than_asking_twice(
-        self, client, pg, parked_run
-    ):
-        body = {"idempotency_key": "k-regen3", "from_version": 1, "feedback": "again"}
-        first = client.post(
-            f"/api/runs/{parked_run}/strategy/regenerate", headers=self.auth(), json=body
-        )
-        second = client.post(
-            f"/api/runs/{parked_run}/strategy/regenerate", headers=self.auth(), json=body
-        )
-        assert first.status_code == second.status_code == 202
-        assert first.json() == second.json()
-        count = pg.execute(
-            "SELECT count(*) FROM strategy_regeneration_requests WHERE run_id = %s",
-            (parked_run,),
-        ).fetchone()[0]
-        assert count == 1
-
-    def test_another_user_cannot_request_fresh_queries(self, client, parked_run):
-        response = client.post(
-            f"/api/runs/{parked_run}/strategy/regenerate",
-            headers=self.auth(OTHER),
-            json={"idempotency_key": "k-regen4", "from_version": 1},
-        )
-        assert response.status_code == 404
-        assert response.json()["code"] == "RUN_NOT_FOUND"
+    # The regeneration tests were REMOVED with the endpoint they covered
+    # (`POST /api/runs/{id}/strategy/regenerate`). They asserted that asking for
+    # fresh queries was recorded as a request rather than an approval, called no
+    # model on the request thread, replayed on repeat, and was refused to another
+    # user. Regeneration is gone from the product (spec section 10.2): editing
+    # the queries replaces asking the model for a new version, so there is no
+    # request to record. `strategy_regeneration_requests`, its migration and its
+    # existing rows are all retained.
 
     def test_approving_the_wrong_stage_is_a_conflict_not_an_internal_error(
         self, client, pg, make_run
@@ -818,11 +689,7 @@ class TestPersistence:
             headers=self.auth(),
             json={
                 "idempotency_key": "k-wrong",
-                "strategy": {
-                    "version": 1,
-                    "understanding_version": 1,
-                    "queries": [_query("Q1", covers=["F1.E1"])],
-                },
+                "queries": ["membrane filtration", "uv sterilisation"],
             },
         )
         assert response.status_code == 409

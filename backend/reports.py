@@ -65,8 +65,6 @@ def save_report(
     claims: str | None,
     concepts: list[str],
     query_count: int,
-    top_score: int,
-    verdict: str,
     recommendations: list[str],
     matches: list[dict[str, object]],
     patents: list[PatentRecord],
@@ -75,24 +73,34 @@ def save_report(
 
     ``matches`` is the same list that becomes the ``result`` event's ``patents[]``
     array (``graph/ranking.py``'s ``format_matches``) -- each entry already
-    carries num/title/pct/risk/rationale/source. ``patents`` is the
+    carries num/title/risk/rationale/key_overlap/source. ``patents`` is the
     ``PatentRecord`` behind each of those entries, upserted first so
     ``search_run_matches``' foreign key resolves.
+
+    No similarity number is stored. The ``rank`` column below is written from
+    the caller's ordering and is now the **only** record of it, since the score
+    that ordering was derived from is discarded before this function is
+    reached; ``list_history`` therefore orders by ``rank`` and never re-sorts.
 
     The whole thing runs in one transaction despite the autocommit connection:
     a run whose matches half-inserted would render as a truncated report in
     History, indistinguishable from a genuine short result.
+
+    Called both by ``graph/pipeline.py``'s inline ``persist_run`` and, for a
+    durable Advanced Search run, by the executor's ``persist_result`` callback.
+    In the latter case this function's transaction block is a savepoint inside
+    the executor's outer transaction, not a separate commit.
     """
     with conn.transaction(), conn.cursor() as cur:
         _upsert_patents(cur, patents)
 
         cur.execute(
             """
-            INSERT INTO search_runs (description, claims, concepts, query_count, top_score, verdict, recommendations)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO search_runs (description, claims, concepts, query_count, recommendations)
+            VALUES (%s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (description, claims, concepts, query_count, top_score, verdict, recommendations),
+            (description, claims, concepts, query_count, recommendations),
         )
         row = cur.fetchone()
         assert row is not None
@@ -101,14 +109,13 @@ def save_report(
         for rank, match in enumerate(matches):
             cur.execute(
                 """
-                INSERT INTO search_run_matches (run_id, rank, patent_id, pct, risk, rationale, key_overlap, source)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO search_run_matches (run_id, rank, patent_id, risk, rationale, key_overlap, source)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     run_id,
                     rank,
                     _normalize(str(match["num"])),
-                    match["pct"],
                     match["risk"],
                     match["rationale"],
                     # .get, not [], so a caller built before key_overlap existed
@@ -162,7 +169,7 @@ def list_history(conn: psycopg.Connection, limit: int = 50) -> list[dict[str, ob
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT id, description, concepts, query_count, top_score, verdict, recommendations, created_at
+            SELECT id, description, concepts, query_count, recommendations, created_at
             FROM search_runs
             ORDER BY created_at DESC
             LIMIT %s
@@ -182,7 +189,7 @@ def list_history(conn: psycopg.Connection, limit: int = 50) -> list[dict[str, ob
         # changed one.
         cur.execute(
             """
-            SELECT srm.run_id, srm.patent_id, p.title, srm.pct, srm.risk, srm.rationale,
+            SELECT srm.run_id, srm.patent_id, p.title, srm.risk, srm.rationale,
                    srm.key_overlap, srm.source, p.url
             FROM search_run_matches srm
             JOIN patents p ON p.id = srm.patent_id
@@ -192,11 +199,10 @@ def list_history(conn: psycopg.Connection, limit: int = 50) -> list[dict[str, ob
             (run_ids,),
         )
         matches_by_run: dict[str, list[dict[str, object]]] = {str(rid): [] for rid in run_ids}
-        for run_id, patent_id, title, pct, risk, rationale, key_overlap, source, url in cur.fetchall():
+        for run_id, patent_id, title, risk, rationale, key_overlap, source, url in cur.fetchall():
             matches_by_run[str(run_id)].append({
                 "num": patent_id,
                 "title": title,
-                "pct": pct,
                 "risk": risk,
                 "rationale": rationale,
                 "key_overlap": list(key_overlap),
@@ -211,10 +217,8 @@ def list_history(conn: psycopg.Connection, limit: int = 50) -> list[dict[str, ob
             "created_at": created_at.isoformat(),
             "concepts": concepts,
             "query_count": query_count,
-            "top_score": top_score,
-            "verdict": verdict,
             "recommendations": recommendations,
             "patents": matches_by_run[str(run_id)],
         }
-        for run_id, description, concepts, query_count, top_score, verdict, recommendations, created_at in runs
+        for run_id, description, concepts, query_count, recommendations, created_at in runs
     ]

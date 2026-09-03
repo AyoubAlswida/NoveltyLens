@@ -67,32 +67,24 @@ def paused_run(pg, make_run):
     return run_id
 
 
-DECOMPOSITION = {
-    "version": 1,
-    # The understanding stage approves a technical summary and the capabilities
-    # together, at one version -- `workflow/review.py` refuses an empty summary
-    # and `approve_understanding_by_owner` refuses to write one. A fixture
-    # without it would be approving half an artifact.
-    "summary": "A closed-loop controller recovers exhaust heat via a duct-mounted exchanger.",
-    "features": [
-        {
-            "feature_id": "F2",
-            "feature_version": "3",
-            "feature_text": "closed-loop control of exhaust heat recovery",
-            "elements": [
-                {"element_id": "E1", "text": "a heat exchanger in the exhaust duct",
-                 "core": True, "order": 1}
-            ],
-            "relationships": [],
-        }
-    ],
-}
+SUMMARY = "A closed-loop controller recovers exhaust heat via a duct-mounted exchanger."
+ELEMENTS = ["a heat exchanger in the exhaust duct"]
+"""The flat understanding body (spec section 4.2.1).
+
+A technical summary and a list of element **strings**. No version, no capability
+objects, no `core`, no relationships and no per-element ids: the version is
+minted by the endpoint and the ids on write.
+"""
 
 
-def approve(client, run_id: str, key: str, *, decomposition=None):
+def approve(client, run_id: str, key: str, *, summary=None, elements=None):
     return client.post(
         f"/api/runs/{run_id}/gates/A/approve",
-        json={"idempotency_key": key, "decomposition": decomposition or DECOMPOSITION},
+        json={
+            "idempotency_key": key,
+            "technical_summary": SUMMARY if summary is None else summary,
+            "technical_elements": ELEMENTS if elements is None else elements,
+        },
         headers=auth(),
     )
 
@@ -174,8 +166,7 @@ def test_the_same_key_with_a_different_payload_is_a_conflict(client, paused_run)
     different request, and being told so is the only safe answer."""
     assert approve(client, paused_run, "key-1").status_code == 200
 
-    other = {**DECOMPOSITION, "version": 2}
-    response = approve(client, paused_run, "key-1", decomposition=other)
+    response = approve(client, paused_run, "key-1", summary="a different summary")
     assert response.status_code == 409
     assert response.json()["code"] == "IDEMPOTENCY_CONFLICT"
 
@@ -184,7 +175,7 @@ def test_a_mutating_request_without_an_idempotency_key_is_422(client, paused_run
     """A server-generated key would make every retry a new mutation."""
     response = client.post(
         f"/api/runs/{paused_run}/gates/A/approve",
-        json={"decomposition": DECOMPOSITION},
+        json={"technical_summary": SUMMARY, "technical_elements": ELEMENTS},
         headers=auth(),
     )
     assert response.status_code == 422
@@ -199,18 +190,18 @@ def test_a_mutating_request_without_an_idempotency_key_is_422(client, paused_run
 # three of eight. `test_the_list_above_is_actually_every_mutating_route` now
 # fails if a new route is added without being listed here.
 MUTATING_ROUTES = [
-    ("gates/A/approve", {"decomposition": DECOMPOSITION}),
-    ("gates/STRATEGY/approve", {"strategy": {"version": 1, "queries": []}}),
-    ("gates/B/approve", {"publication_numbers": []}),
-    ("gates/C/complete", {}),
-    ("gates/D/approve", {"report_version": 1}),
-    ("understanding/regenerate", {"from_version": 1}),
-    ("strategy/regenerate", {"from_version": 1}),
-    ("candidates", {"publication_number": "EP1234567"}),
-    ("cells/cell-1/review", {"overlay": {}}),
-    ("cells/cell-1/waiver", {"waiver": {}}),
-    ("cells/cell-1/rerun", {"source_result_version": 1, "context_requests": []}),
+    ("gates/A/approve", {"technical_summary": SUMMARY, "technical_elements": ELEMENTS}),
+    ("gates/STRATEGY/approve", {"queries": ["a query"]}),
 ]
+"""Two approvals, and that is the entire mutating surface of a run.
+
+It was eleven. The nine that went -- Gate B/C/D, both regeneration routes, the
+candidate route and the three cell routes -- were removed with feature
+verification, not merely delisted here;
+`test_every_removed_route_is_gone_from_the_router` asserts they answer 404 as
+unknown paths, and `test_the_list_above_is_actually_every_mutating_route`
+compares this list against the router so a re-added route cannot slip past.
+"""
 
 
 @pytest.mark.parametrize("path,body", MUTATING_ROUTES)
@@ -282,7 +273,7 @@ def test_every_error_body_carries_code_and_detail_at_the_top_level(client, pause
     `detail` would hide it exactly where that branch happens."""
     response = client.post(
         f"/api/runs/{paused_run}/gates/A/approve",
-        json={"decomposition": DECOMPOSITION},
+        json={"technical_summary": SUMMARY, "technical_elements": ELEMENTS},
         headers=auth(),
     )
     body = response.json()
@@ -293,7 +284,7 @@ def test_every_error_body_carries_code_and_detail_at_the_top_level(client, pause
 def test_no_error_body_carries_a_traceback_or_a_provider_body(client, paused_run):
     response = client.post(
         f"/api/runs/{paused_run}/gates/A/approve",
-        json={"decomposition": DECOMPOSITION},
+        json={"technical_summary": SUMMARY, "technical_elements": ELEMENTS},
         headers=auth(),
     )
     rendered = response.text.lower()
@@ -304,29 +295,81 @@ def test_no_error_body_carries_a_traceback_or_a_provider_body(client, paused_run
 # --- admission ----------------------------------------------------------------
 
 
-def test_admission_refuses_before_writing_anything_when_a_policy_is_unrecorded(client, pg):
-    """`422 POLICY_NOT_APPROVED`, and **no run, no lease, no event**. There is
-    nothing to clean up because nothing was made."""
+def test_admission_runs_no_verifier_policy_check(client, pg, created_runs):
+    """Replaces `test_admission_refuses_before_writing_anything_when_a_policy_is_unrecorded`.
+
+    That test asserted `422 POLICY_NOT_APPROVED` when a verifier policy was
+    unrecorded. Advanced Search screens no dates, selects no text version and
+    runs no verifier, so refusing a search over that configuration would block a
+    feature on settings for a feature that no longer exists (spec section 10.4).
+
+    The guarantee is inverted rather than dropped: admission must **not** consult
+    the policy module at all. Patching it to explode proves the call is gone --
+    if anything on this path still reached it, this admission would fail.
+    """
     before = pg.execute("SELECT count(*) FROM verification_runs").fetchone()[0]
 
     with patch("evidence.policy.validate_admission_policies") as validate:
-        from evidence.policy import PolicyNotApproved
-
-        validate.side_effect = PolicyNotApproved(["DATE_SCREENING_DECISION is unset"])
+        validate.side_effect = AssertionError(
+            "admission must not consult the verifier policy module"
+        )
         response = client.post(
             "/api/runs", json={"description": "an exhaust heat recovery system"},
             headers=auth(),
         )
 
-    assert response.status_code == 422
-    assert response.json()["code"] == "POLICY_NOT_APPROVED"
-    assert response.json()["missing"]
+    assert response.status_code == 201
+    body = response.json()
+    created_runs.append(body["run_id"])
+    assert body["status"] == "QUEUED"
+    assert "capability_qualified" not in body, "the withdrawn field is back"
     after = pg.execute("SELECT count(*) FROM verification_runs").fetchone()[0]
-    assert after == before, "a refused admission created a run"
+    assert after == before + 1
+
+
+def test_admission_records_the_legacy_policy_columns_as_not_applicable(
+    client, pg, created_runs
+):
+    """The columns are NOT NULL and survive (constraint 7), so something must go
+    in them. An explicit sentinel says the question does not apply to this run,
+    where a real policy name would record a screening decision nobody made."""
+    run_id = client.post(
+        "/api/runs", json={"description": "a graphene desalination membrane"},
+        headers=auth(),
+    ).json()["run_id"]
+    created_runs.append(run_id)
+
+    row = pg.execute(
+        "SELECT date_policy, text_version_policy, cutoff_date, problem_solved,"
+        " inventor_novelty_statement FROM verification_runs WHERE id = %s",
+        (run_id,),
+    ).fetchone()
+    assert row[0] == "advanced_search_not_applicable"
+    assert row[1] == "advanced_search_not_applicable"
+    assert row[2] is None, "cutoff_date is no longer collected"
+    assert not row[3] and not row[4], "the context columns are no longer collected"
 
 
 def test_admission_requires_a_description(client):
     response = client.post("/api/runs", json={}, headers=auth())
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "withdrawn",
+    ["problem_solved", "inventor_novelty_statement", "cutoff_date", "anything_else"],
+)
+def test_admission_refuses_an_unknown_field_rather_than_ignoring_it(client, withdrawn):
+    """A client still sending the withdrawn fields has not been updated.
+
+    Accepting the request would drop what it sent while reporting success, so the
+    caller would believe context reached the run when nothing did.
+    """
+    response = client.post(
+        "/api/runs",
+        json={"description": "an exhaust heat recovery system", withdrawn: "x"},
+        headers=auth(),
+    )
     assert response.status_code == 422
 
 
@@ -347,123 +390,55 @@ def test_the_existing_endpoints_are_still_registered_and_unchanged(client):
         assert path in paths, f"{path} disappeared from the app"
 
 
-# --- POST /candidates: a request, never an approval and never a bypass ------
+# --- the removed surface -----------------------------------------------------
+#
+# The candidate and rerun test blocks were REMOVED here with the routes they
+# covered (`POST /candidates`, `POST /cells/{id}/rerun`). They asserted that a
+# manually added publication was a *request* rather than an approval and never
+# touched a provider, and that a rerun produced a new version rather than
+# editing one. Both are guarantees about human work requests against the
+# verification matrix; feature verification was withdrawn, so there is no matrix,
+# no candidate set and no cell to rerun. `graph/work_requests.py` is retained as
+# legacy (spec section 10.3) with its own focused unit tests, and
+# `tests/test_work_requests.py` asserts no compiled graph can reach it.
+#
+# What replaces them is the assertion below: the routes are gone from the router
+# entirely, so a client calling one gets an unknown path rather than a handler
+# that half-works.
 
 
-def test_adding_a_candidate_is_accepted_but_grants_nothing(client, paused_run, pg):
-    """Spec case T. A `202` records that a person asked for a publication to go
-    through the pipeline. It does not put it in the candidate set, does not make
-    it eligible, and does not fetch anything."""
-    response = client.post(
-        f"/api/runs/{paused_run}/candidates",
-        json={"idempotency_key": "cand-1", "publication_number": "EP4778509"},
+REMOVED_ROUTES = [
+    ("POST", "understanding/regenerate"),
+    ("POST", "strategy/regenerate"),
+    ("GET", "gates/B"),
+    ("POST", "gates/B/approve"),
+    ("GET", "gates/C"),
+    ("POST", "gates/C/complete"),
+    ("POST", "gates/D/approve"),
+    ("POST", "candidates"),
+    ("GET", "cells/cell-1"),
+    ("POST", "cells/cell-1/review"),
+    ("POST", "cells/cell-1/waiver"),
+    ("POST", "cells/cell-1/rerun"),
+]
+
+
+@pytest.mark.parametrize("method,path", REMOVED_ROUTES)
+def test_every_removed_route_is_gone_from_the_router(client, paused_run, method, path):
+    """**Spec section 8.5 row 30.** Not disabled, not 403, not a stub: absent.
+
+    A 404 from an unknown path is the honest answer for a route the product no
+    longer has. Asserted with the OWNER's token, so a 404 here cannot be the
+    ownership 404 in disguise -- this caller owns the run.
+    """
+    response = client.request(
+        method, f"/api/runs/{paused_run}/{path}",
+        json={"idempotency_key": "k1"} if method == "POST" else None,
         headers=auth(),
     )
-    assert response.status_code == 202
-    body = response.json()
-    assert body["accepted"] is True
-    assert body["already_requested"] is False
-
-    # It is a REQUEST row, and nothing else was created.
-    requested = pg.execute(
-        "SELECT requested_number, requested_by, processed_at FROM manual_candidates"
-        " WHERE run_id = %s",
-        (paused_run,),
-    ).fetchall()
-    assert requested == [("EP4778509", OWNER, None)]
-    assert pg.execute(
-        "SELECT count(*) FROM candidate_sets WHERE run_id = %s", (paused_run,)
-    ).fetchone()[0] == 0, "a 202 must not create an approved candidate set"
-
-
-def test_adding_a_candidate_does_not_touch_the_provider_or_the_graph(client, paused_run):
-    """The endpoint fetches nothing. The outbound guard in `conftest.py` would
-    fail the test if it tried, and the graph is patched to prove it is not run."""
-    import graph.adapter as adapter
-
-    with patch.object(adapter, "build") as build:
-        response = client.post(
-            f"/api/runs/{paused_run}/candidates",
-            json={"idempotency_key": "cand-2", "publication_number": "EP4778509"},
-            headers=auth(),
-        )
-    assert response.status_code == 202
-    build.assert_not_called()
-
-
-def test_the_same_publication_twice_is_the_same_request(client, paused_run, pg):
-    """Asking twice is not a conflict; it is the same request, and the response
-    says which happened."""
-    first = client.post(
-        f"/api/runs/{paused_run}/candidates",
-        json={"idempotency_key": "cand-a", "publication_number": "EP4778509"},
-        headers=auth(),
-    )
-    second = client.post(
-        f"/api/runs/{paused_run}/candidates",
-        json={"idempotency_key": "cand-b", "publication_number": "EP4778509"},
-        headers=auth(),
-    )
-    assert first.status_code == second.status_code == 202
-    assert second.json()["already_requested"] is True
-    assert pg.execute(
-        "SELECT count(*) FROM manual_candidates WHERE run_id = %s", (paused_run,)
-    ).fetchone()[0] == 1
-
-
-def test_a_candidate_with_no_publication_number_is_refused(client, paused_run):
-    response = client.post(
-        f"/api/runs/{paused_run}/candidates",
-        json={"idempotency_key": "cand-3", "publication_number": "  "},
-        headers=auth(),
-    )
-    assert response.status_code in (409, 422)
-
-
-def test_adding_a_candidate_requires_an_idempotency_key(client, paused_run):
-    response = client.post(
-        f"/api/runs/{paused_run}/candidates",
-        json={"publication_number": "EP4778509"},
-        headers=auth(),
-    )
-    assert response.status_code == 422
-    assert response.json()["code"] == "MISSING_IDEMPOTENCY_KEY"
-
-
-# --- POST /cells/{id}/rerun: a new version, never an edit -------------------
-
-
-def test_a_rerun_on_a_cell_with_no_result_is_refused(client, paused_run):
-    """A rerun supersedes a result; it does not create the first one."""
-    response = client.post(
-        f"/api/runs/{paused_run}/cells/{paused_run}:F2:US1234567B2/rerun",
-        json={"idempotency_key": "rr-1", "context_requests": [], "source_result_version": 1},
-        headers=auth(),
-    )
-    assert response.status_code == 409
-    assert response.json()["code"] == "WRONG_GATE"
-
-
-def test_a_rerun_must_name_the_result_the_reviewer_saw(client, paused_run):
-    """Without `source_result_version` a rerun could attach to a result that
-    superseded the one under review while the request sat in the queue."""
-    response = client.post(
-        f"/api/runs/{paused_run}/cells/{paused_run}:F2:US1234567B2/rerun",
-        json={"idempotency_key": "rr-2", "context_requests": []},
-        headers=auth(),
-    )
-    assert response.status_code == 422
-    assert response.json()["code"] == "INVALID_REQUEST"
-
-
-def test_a_rerun_requires_an_idempotency_key(client, paused_run):
-    response = client.post(
-        f"/api/runs/{paused_run}/cells/{paused_run}:F2:US1234567B2/rerun",
-        json={"context_requests": [], "source_result_version": 1},
-        headers=auth(),
-    )
-    assert response.status_code == 422
-    assert response.json()["code"] == "MISSING_IDEMPOTENCY_KEY"
+    assert response.status_code == 404
+    # The ownership 404 carries a code; an unknown path does not.
+    assert response.json().get("code") != "RUN_NOT_FOUND"
 
 
 # --- error detail: trusted where it is safe, rebuilt where it is not -------

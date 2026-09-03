@@ -71,31 +71,22 @@ def endpoints(run_id: str) -> list[tuple[str, str, dict | None]]:
     discovered list. The count is asserted below so a new endpoint added without
     a row here fails.
     """
-    cell = f"{run_id}:F2:US1234567B2"
     body = {"idempotency_key": "k1"}
+    # **The catalogue shrank with the surface, and the walk is unchanged.** The
+    # Gate B/C/D routes, both regeneration routes, the candidate and cell routes
+    # were removed with feature verification; a walk that still listed them would
+    # be asserting ownership scoping on paths that answer 404 for everyone,
+    # which passes for the wrong reason. `test_the_catalogue_is_every_run_route`
+    # keeps this list honest against the router itself.
     return [
         ("GET", f"/api/runs/{run_id}", None),
         ("GET", f"/api/runs/{run_id}/stream", None),
         ("GET", f"/api/runs/{run_id}/gates/A", None),
-        ("POST", f"/api/runs/{run_id}/gates/A/approve", {**body, "decomposition": {}}),
+        ("POST", f"/api/runs/{run_id}/gates/A/approve",
+         {**body, "technical_summary": "s", "technical_elements": ["e"]}),
         ("GET", f"/api/runs/{run_id}/gates/STRATEGY", None),
-        ("POST", f"/api/runs/{run_id}/gates/STRATEGY/approve",
-         {**body, "strategy": {"version": 1, "queries": []}}),
-        ("POST", f"/api/runs/{run_id}/strategy/regenerate", {**body, "from_version": 1}),
-        ("GET", f"/api/runs/{run_id}/gates/B", None),
-        ("POST", f"/api/runs/{run_id}/gates/B/approve", {**body, "publication_numbers": []}),
-        ("GET", f"/api/runs/{run_id}/gates/C", None),
-        ("GET", f"/api/runs/{run_id}/cells/{cell}", None),
-        ("POST", f"/api/runs/{run_id}/cells/{cell}/review", {**body, "overlay": {}}),
-        ("POST", f"/api/runs/{run_id}/cells/{cell}/waiver", {**body, "waiver": {}}),
-        ("POST", f"/api/runs/{run_id}/understanding/regenerate",
-         {**body, "from_version": 1}),
-        ("POST", f"/api/runs/{run_id}/candidates", {**body, "publication_number": "EP4778509"}),
-        ("POST", f"/api/runs/{run_id}/cells/{cell}/rerun",
-         {**body, "context_requests": [], "source_result_version": 1}),
-        ("POST", f"/api/runs/{run_id}/gates/C/complete", body),
+        ("POST", f"/api/runs/{run_id}/gates/STRATEGY/approve", {**body, "queries": ["q"]}),
         ("GET", f"/api/runs/{run_id}/report", None),
-        ("POST", f"/api/runs/{run_id}/gates/D/approve", {**body, "report_version": 1}),
     ]
 
 

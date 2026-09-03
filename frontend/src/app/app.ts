@@ -14,13 +14,8 @@ import { ErrorScreen } from './screens/error-screen';
 import { HistoryScreen } from './screens/history-screen';
 import { LoginScreen } from './screens/login-screen';
 import { ActiveRunStore, RunsService, RunSummary } from './services/runs';
-import { UnderstandingReview } from './screens/understanding-review';
-import { StrategyReview } from './screens/strategy-review';
-import { CandidateReview } from './screens/candidate-review';
-import { EvidenceReview } from './screens/evidence-review';
-import { DraftReview } from './screens/draft-review';
-import { VerificationReport } from './screens/verification-report';
-import type { WorkflowGate } from './models/report';
+import { AdvancedSearchStages } from './screens/advanced-search-stages';
+import type { StoredGate } from './models/report';
 import { AnalysisService } from './services/analysis';
 import { AuthService } from './services/auth';
 import { HistoryService, reportFromHistory } from './services/history';
@@ -32,8 +27,12 @@ type Screen =
   | 'report'
   | 'error'
   | 'history'
-  | 'review'
-  | 'verification-report';
+  | 'review';
+/**
+ * `'verification-report'` is gone. A completed Advanced Search run renders
+ * through the ordinary `'report'` screen -- one display path for a live run, a
+ * run reopened from History, and a durable run, so none of them can drift.
+ */
 
 
 const RECENTS_SHOWN = 8;
@@ -54,7 +53,9 @@ const EXAMPLE_DESC =
     ReportScreen,
     ErrorScreen,
     HistoryScreen,
-    LoginScreen, UnderstandingReview, StrategyReview, CandidateReview, EvidenceReview, DraftReview, VerificationReport],
+    LoginScreen,
+    AdvancedSearchStages,
+  ],
   template: `
     <div class="app-shell">
       <!-- Signed out there is nothing to navigate: no screens, no recents, no
@@ -222,10 +223,6 @@ const EXAMPLE_DESC =
               <app-submit-screen
                 [description]="description()"
                 (descriptionChange)="description.set($event)"
-                [problemSolved]="problemSolved()"
-                (problemSolvedChange)="problemSolved.set($event)"
-                [noveltyStatement]="noveltyStatement()"
-                (noveltyStatementChange)="noveltyStatement.set($event)"
                 (run)="startRunning()"
                 (verify)="startVerifiedRun()"
               />
@@ -245,54 +242,45 @@ const EXAMPLE_DESC =
                      editor could not implement any of them faithfully. -->
                 @switch (reviewGate()) {
                   @case ('A') {
-                    <app-understanding-review
+                    <app-advanced-search-stages
                       [runId]="runId"
+                      gate="A"
                       (back)="closeReview()"
                       (resumed)="afterDecision()"
                     />
                   }
                   @case ('STRATEGY') {
-                    <app-strategy-review
+                    <app-advanced-search-stages
                       [runId]="runId"
+                      gate="STRATEGY"
                       (back)="closeReview()"
                       (resumed)="afterDecision()"
                     />
                   }
-                  @case ('B') {
-                    <app-candidate-review
-                      [runId]="runId"
-                      (back)="closeReview()"
-                      (resumed)="afterDecision()"
-                    />
-                  }
-                  @case ('C') {
-                    <app-evidence-review
-                      [runId]="runId"
-                      (back)="closeReview()"
-                      (resumed)="afterDecision()"
-                    />
-                  }
-                  @case ('D') {
-                    <app-draft-review
-                      [runId]="runId"
-                      (back)="closeReview()"
-                      (resumed)="afterDecision()"
-                    />
+                  @default {
+                    <!--
+                      A run parked at a gate this app no longer knows: B, C or D
+                      from before feature verification was withdrawn. It must
+                      fail HONESTLY -- not a spinner, not an empty gate screen,
+                      not a 500. The run's data is retained; there is simply no
+                      way to continue it. Spec section 6.3.
+                    -->
+                    <div class="screen screen-scroll">
+                      <header class="gate-head">
+                        <h1>This run cannot be continued</h1>
+                        <button class="btn-outlined" type="button" (click)="closeReview()">
+                          Back
+                        </button>
+                      </header>
+                      <p class="gate-note">
+                        It is paused at a review step that has been removed from the
+                        product. Its results are still stored and nothing has been
+                        deleted, but there is no way to carry it forward. Start a new
+                        search to analyse the same invention again.
+                      </p>
+                    </div>
                   }
                 }
-              }
-            }
-            @case ('verification-report') {
-              @if (finalReport(); as report) {
-                <div class="screen screen-scroll">
-                  <header class="gate-head">
-                    <h1>Final report</h1>
-                    <button class="btn-outlined" type="button" (click)="closeReview()">
-                      Back
-                    </button>
-                  </header>
-                  <app-verification-report [report]="report" status="APPROVED" />
-                </div>
               }
             }
             @case ('history') {
@@ -342,7 +330,12 @@ export class App {
    * together by `openReview` and cleared together, because a gate without a run
    * names nothing and a run without a gate cannot be reviewed. */
   readonly reviewRunId = signal<string | null>(null);
-  readonly reviewGate = signal<WorkflowGate | null>(null);
+  /**
+   * `StoredGate`, not `WorkflowGate`: a legacy run can be parked at `B`, `C` or
+   * `D`, and the review `@switch` has a `@default` arm that says so plainly
+   * rather than rendering nothing. Section 6.3.
+   */
+  readonly reviewGate = signal<StoredGate | null>(null);
 
   /** Admit a verified run, then wait at its first gate.
    *
@@ -362,10 +355,7 @@ export class App {
     const email = this.auth.email();
     this.errorDetail.set('');
     try {
-      const created = await this.runs.createRun(description, {
-        problemSolved: this.problemSolved().trim(),
-        noveltyStatement: this.noveltyStatement().trim(),
-      });
+      const created = await this.runs.createRun(description);
       const runId = String(created['run_id']);
       if (email) this.activeRuns.remember(email, runId);
       this.reviewRunId.set(runId);
@@ -421,8 +411,11 @@ export class App {
         return;
       }
       if (run.status === 'COMPLETED') {
-        this.finalReport.set(await this.runs.report(runId));
-        this.screen.set('verification-report');
+        // The STANDARD report screen, the same one a quick search and a run
+        // reopened from History use. One display path, so a durable run cannot
+        // render differently from the report it stored.
+        this.reportData.set(await this.runs.report(runId));
+        this.screen.set('report');
         return;
       }
       if (run.status === 'FAILED') {
@@ -434,7 +427,7 @@ export class App {
   }
 
   /** Show the review screen for one gate of one run. */
-  openReview(runId: string, gate: WorkflowGate): void {
+  openReview(runId: string, gate: StoredGate): void {
     this.reviewRunId.set(runId);
     this.reviewGate.set(gate);
     this.screen.set('review');
@@ -450,19 +443,27 @@ export class App {
   }
 
   /** The approved final report, when one has been fetched. */
-  readonly finalReport = signal<Record<string, unknown> | null>(null);
 
   /**
-   * After a decision commits, go back to watching the run rather than to submit.
+   * After a decision commits, **resume watching the run**.
    *
    * The run is `RESUMING`, not running: the executor picks it up on its next
-   * poll. The running screen says so, and reconnects to the stream from the
-   * cursor it already holds, so the next `review_required` arrives without the
-   * user doing anything.
+   * poll. This has to restart `followToGate` for the same run, because that
+   * poller is the only thing that notices the next stage, the completed report
+   * or a failure.
+   *
+   * It used to clear the gate, switch to the running screen and start nothing.
+   * That is the whole bug behind "the user has to refresh after approving":
+   * every subsequent stage existed on the server and nothing in the browser was
+   * looking for it, so the screen sat on a spinner until the user reloaded the
+   * page by hand. Losing the run id here would strand the run just as
+   * effectively, which is why it is captured before the gate is cleared.
    */
   afterDecision(): void {
+    const runId = this.reviewRunId();
     this.reviewGate.set(null);
     this.screen.set('running');
+    if (runId) void this.followToGate(runId);
   }
 
   /**
@@ -502,8 +503,8 @@ export class App {
         // approved. That is the same substitution the backend forbids, moved
         // into the UI: a completed run reported as one still in progress.
         const report = await this.runs.report(run.run_id);
-        this.finalReport.set(report);
-        this.screen.set('verification-report');
+        this.reportData.set(report);
+        this.screen.set('report');
       } else if (run.status === 'FAILED') {
         // Its own branch for the same reason: a failed run is not a running one,
         // and the error screen names the failure instead of spinning forever.
@@ -520,8 +521,6 @@ export class App {
   readonly description = signal(EXAMPLE_DESC);
   /** Optional Stage 1 context for a verified run. Empty is a real answer -- the
    * inventor left it blank -- and is sent as an empty string, not omitted. */
-  readonly problemSolved = signal('');
-  readonly noveltyStatement = signal('');
   readonly phaseIdx = signal(-1);
   readonly phaseMessages = signal<Partial<Record<Phase, string>>>({});
   readonly reportData = signal<AnalysisReport | null>(null);
@@ -762,7 +761,6 @@ export class App {
               patents: (backend.patents ?? []).map((patent) => ({
                 num: patent.num || 'Unknown publication',
                 title: patent.title || 'Untitled patent record',
-                pct: Math.round(patent.pct),
                 risk: patent.risk,
                 rationale:
                   patent.rationale || 'No detailed rationale was returned for this record.',
@@ -770,8 +768,6 @@ export class App {
                 source: patent.source || 'Patent database',
                 url: patent.url || '',
               })),
-              top_score: Math.round(backend.top_score ?? 0),
-              verdict: backend.verdict ?? 'Strong',
               recommendations: backend.recommendations ?? [],
               query_count: backend.query_count ?? 0,
             };

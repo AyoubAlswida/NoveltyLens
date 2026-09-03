@@ -21,7 +21,7 @@ pytestmark = pytest.mark.postgres
 TTL = 60.0
 OWNER = "worker-1"
 
-RESULT_PAYLOAD = {"type": "result", "data": {"top_score": 62, "verdict": "Moderate"}}
+RESULT_PAYLOAD = {"type": "result", "data": {"query_count": 5}}
 ERROR_PAYLOAD = {"type": "error", "code": "PROVIDER_UNAVAILABLE", "detail": "EPO 503"}
 
 
@@ -161,7 +161,7 @@ def test_the_same_dedupe_key_with_a_different_payload_raises_fn003(pg, make_run)
             run_id=run_id,
             owner_id=OWNER,
             fence_token=token,
-            payload={"type": "result", "data": {"top_score": 99}},
+            payload={"type": "result", "data": {"query_count": 99}},
         )
 
 

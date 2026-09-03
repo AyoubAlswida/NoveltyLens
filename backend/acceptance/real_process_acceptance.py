@@ -199,28 +199,15 @@ def child_env() -> dict:
     Two settings are added here and **no value from `.env` is read, printed or
     copied by this script** — the children load their own configuration.
 
-    `VERIFIER_CAPABILITY_ENFORCEMENT=deferred` is the owner's recorded local
-    decision: paid qualification is deferred, and a deferral records that the
-    runtime is *not* qualified rather than pretending it is. Nothing here
-    fabricates an eligible artifact.
+    **No verifier policy is set.** This script used to export
+    `DATE_SCREENING_POLICY`, `TEXT_VERSION_POLICY` and a capability deferral,
+    because admission refused a run without them. Advanced Search screens no
+    dates, selects no text version and runs no verifier, so admission consults
+    none of it (spec section 10.4) -- exporting them would configure a feature
+    the product no longer has, and would hide it if admission started reading
+    them again.
     """
     env = dict(os.environ)
-
-    # The §3.6 policies and their recorded decisions. These are NOT invented
-    # here: they are the values approved by the repository owner on 2026-08-28
-    # and written down in docs/decisions/2026-08-28-evidence-layer-policies.md --
-    # the evaluated publication's own publication date, exclusive, and the
-    # provider's publication date as the text version. Admission refuses without
-    # them, which is the correct behaviour and is exactly what it did on the
-    # first attempt at this run.
-    env["DATE_SCREENING_POLICY"] = "publication_lt_cutoff"
-    env["DATE_SCREENING_DECISION"] = (
-        "owner, 2026-08-28, docs/decisions/2026-08-28-evidence-layer-policies.md"
-    )
-    env["TEXT_VERSION_POLICY"] = "provider_publication_date"
-    env["TEXT_VERSION_DECISION"] = (
-        "owner, 2026-08-28, docs/decisions/2026-08-28-evidence-layer-policies.md"
-    )
 
     # `test` has NO LLM provider and no credential at all -- `require_llm_credentials`
     # raises for it rather than returning a key. Combined with the mock graph
@@ -229,10 +216,6 @@ def child_env() -> dict:
     # what the parent happened to export.
     env["DEPLOYMENT_PROFILE"] = "test"
 
-    env["VERIFIER_CAPABILITY_ENFORCEMENT"] = "deferred"
-    env["VERIFIER_CAPABILITY_DEFERRAL_DECISION"] = (
-        "acceptance run: paid qualification deferred by owner decision 2026-08-29"
-    )
     env["WORKFLOW_EXECUTOR"] = "worker"
     env["PYTHONUNBUFFERED"] = "1"
     env["SERVER_PORT"] = str(API_PORT)

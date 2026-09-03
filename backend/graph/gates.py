@@ -1,13 +1,13 @@
 """The Human-in-the-Loop gate nodes.
 
-Spec §11.1 and §12: a verified run is not a black box that emits a report. It
-**pauses**, and a person decides whether it continues. These nodes are where it
-pauses.
+An Advanced Search run is not a black box that emits a report. It **pauses**, and
+a person decides whether it continues. These two nodes are where it pauses.
 
-Four of them came from Implementation Gate D. The fifth, `gate_strategy_node`,
-is the SEARCH STRATEGY stage, and it sits between the approved understanding and
-the search: nothing is dispatched to a provider until a person has approved both
-what the invention is and what the run will go looking for.
+`gate_a_node` is the invention understanding (stages 1 and 2); `gate_strategy_node`
+is the search strategy (stage 3), and it sits between the approved understanding
+and the search: nothing is dispatched to a provider until a person has approved
+both what the invention is and what the run will go looking for. Gates B, C and D
+were removed with feature verification -- see the note where they used to be.
 
 ## What an `interrupt()` here does and does not do
 
@@ -176,176 +176,42 @@ def gate_a_node(state: GraphState) -> dict[str, Any]:
 
 GATE_A_RULES: tuple[str, ...] = (
     "a non-empty technical summary",
-    "at least one technical capability, and at least one element in it",
-    "at least one element marked as core",
-    "every element and relationship carries non-empty text",
-    "requirement ids unique across elements AND relationships",
-    "no relationship refers to an element that is no longer present",
-    "the approval names a version explicitly",
+    "at least one non-empty technical element",
 )
-"""Spec section 12.1's completion rules plus the understanding stage's own,
-surfaced to the reviewer.
+"""What stages 1 and 2 require, surfaced to the reviewer.
 
 Advisory in this payload and **binding** in `workflow/review.py`, which refuses an
 approval that violates any of them. A rule shown but not enforced is a suggestion;
 these are checked before anything is written.
 
-The element and capability *limits* are deliberately not listed here. They are
-enforced in the same place, but a reviewer meets them while editing rather than
-at the moment they try to approve, and a completion rule that reads "at most 25
-elements" invites the question this stage should not have to answer -- see
-`graph/limits.py` on why the derivation stays out of the UI."""
+**Exactly two of the three rules in spec section 3.5** (the third is the strategy
+stage's own). The list shrank from seven when capability grouping, Core flags and
+relationships were removed from the product: a rule about relationship references
+or requirement-id uniqueness across relationships cannot be broken by a flat list
+of strings, and `core` is no longer something a reviewer sets -- every approved
+element is written `core = TRUE`, which is what makes the internal
+`NO_CORE_ELEMENT` condition unreachable rather than deleted and hoped for.
+
+**The reviewer's on-screen list must stay one-to-one and in order with this
+tuple.** Shrinking one side alone is how a stage starts refusing an approval for
+a reason it never showed."""
 
 
-# --- Workflow Gate B: candidate publications ------------------------------
-
-
-def gate_b_node(state: GraphState) -> dict[str, Any]:
-    """Pause for spec §12.2 — a human curates the candidate set.
-
-    The payload carries `ranked_candidates` (machine output) **and** the
-    exclusions, because §12.2 requires every excluded publication to be visible
-    with its reason. An exclusion is not a candidate the reviewer can restore by
-    ticking a box: `EXCLUDED_DATE` and `EXCLUDED_NO_FULL_TEXT` are not overridable
-    (case AL, AK), and `workflow/review.py` refuses an approval naming one.
-    """
-    run_id = _run_id(state, WorkflowGate.B)
-    emit_progress("gate_b", "Awaiting candidate publication review…")
-
-    interrupt(
-        {
-            "gate": str(WorkflowGate.B),
-            "run_id": run_id,
-            "ranked_candidates": list(state.get("ranked_candidates") or ()),
-            "excluded": list(state.get("publication_exclusions") or ()),
-            "passages_built": {
-                number: len(passages)
-                for number, passages in (state.get("passages_by_publication") or {}).items()
-            },
-            "dates": state.get("publication_dates") or {},
-            "completion_rules": list(GATE_B_RULES),
-        }
-    )
-
-    with db.connect() as conn:
-        version = approvals.latest_approved_candidate_set_version(conn, run_id=run_id)
-        publications = approvals.require_approved_candidate_set(
-            conn, run_id=run_id, version=version
-        )
-    # An approved-but-EMPTY set is legal and is not a failure: "none of these are
-    # worth verifying" is a real decision. It produces a matrix with no cells,
-    # which is a different thing from a matrix nobody approved.
-    return {
-        "approved_candidate_set": publications,
-        "candidate_set_version": version,
-    }
-
-
-GATE_B_RULES: tuple[str, ...] = (
-    "every approved publication is date-eligible",
-    "every approved publication completed enrichment",
-    "every approved publication has at least one built passage",
-    "EXCLUDED_DATE and EXCLUDED_NO_FULL_TEXT are not overridable",
-)
-"""Spec §12.2 plus §3.7. The third rule is the one that makes "eligible with
-nothing to cite" impossible: eligibility is *derived* from passages actually
-built, so approving a publication with none would approve a comparison that cannot
-be made."""
-
-
-# --- Workflow Gate C: evidence and verdicts -------------------------------
-
-
-def gate_c_node(state: GraphState) -> dict[str, Any]:
-    """Pause for spec §12.3 — a human reviews every cell.
-
-    Nothing is written back into state on resume. Reviews, waivers and audit rows
-    live in the database beside the machine results (§13), never over them, and
-    the report reads them from there. A resumed Gate C returns `{}` precisely
-    because a human review must not be able to edit the machine result it reviews.
-    """
-    run_id = _run_id(state, WorkflowGate.C)
-    cells = list(state.get("cells") or ())
-    emit_progress("gate_c", "Awaiting evidence and verdict review…")
-
-    interrupt(
-        {
-            "gate": str(WorkflowGate.C),
-            "run_id": run_id,
-            "cells_total": len(cells),
-            "excluded_publications": len(state.get("publication_exclusions") or ()),
-            "completion_rules": list(GATE_C_RULES),
-        }
-    )
-    return {}
-
-
-GATE_C_RULES: tuple[str, ...] = (
-    "no cell may remain PENDING",
-    "no UNCLEAR requirement may remain unresolved",
-    "no outstanding context request",
-    "every VALIDATION_FAILURE is rerun or waived — never overridden or converted",
-    "every NOT_EVALUATED is acknowledged or waived",
-)
-"""Spec §12.3. The fourth is the one case AI and AJ pin: an invalid model output
-cannot be laundered into a verdict, and a waiver discloses the gap rather than
-filling it."""
-
-
-# --- Workflow Gate D: the draft report ------------------------------------
-
-
-def gate_d_node(state: GraphState) -> dict[str, Any]:
-    """Pause for spec §12.4 — a human approves the draft report.
-
-    A draft must already exist and have been presented (case AC). The node reads
-    it from `report_versions` rather than from state, because a draft is a
-    persisted, versioned artifact: an edited caveat creates a **new** version
-    requiring fresh approval, and the previously approved one stays immutable
-    (case AD).
-    """
-    run_id = _run_id(state, WorkflowGate.D)
-    emit_progress("gate_d", "Awaiting draft report approval…")
-
-    from workflow import review as review_store
-
-    with db.connect() as conn:
-        draft = review_store.latest_report_version(conn, run_id=run_id)
-    if draft is None:
-        raise UnapprovedArtifactError(
-            "workflow gate D was reached with no draft report to present. Spec "
-            "§12.4 and case AC: approval requires a draft that exists and was "
-            "shown, and a report cannot be approved into existence."
-        )
-
-    interrupt(
-        {
-            "gate": str(WorkflowGate.D),
-            "run_id": run_id,
-            "report_version": draft["version"],
-            "status": draft["status"],
-            "completion_rules": list(GATE_D_RULES),
-        }
-    )
-
-    with db.connect() as conn:
-        approved = review_store.require_approved_report(conn, run_id=run_id)
-    return {"report_version": approved["version"]}
-
-
-GATE_D_RULES: tuple[str, ...] = (
-    "a draft exists and was presented",
-    "every unresolved cell is listed",
-    "every excluded publication is listed",
-    "every waiver appears with its unresolved limitation",
-    "the draft carries 'DRAFT — NOT APPROVED' until approved",
-)
-"""Spec §12.4. The last four are why a report can be honest about what it does not
-cover: the exclusions and the waivers are part of the deliverable, not omissions
-from it."""
-
-
-# --- The SEARCH STRATEGY stage --------------------------------------------
+# --- Workflow Gates B, C and D: REMOVED ------------------------------------
+#
+# `gate_b_node`, `gate_c_node`, `gate_d_node` and their `GATE_*_RULES` tuples were
+# removed here when feature verification was withdrawn from the product. They
+# paused for candidate curation, the evidence matrix review and the draft report
+# approval; none of those exist, none of the nodes is in the compiled graph, and
+# each emitted a phase (`gate_b`, `gate_c`, `draft_report`, `gate_d`) that is no
+# longer in `graph/events.py`'s vocabulary -- so calling one would raise
+# `SSEContractError` rather than pause anything.
+#
+# This file is NOT part of the legacy subsystem retained by spec section 10.3.
+# `backend/verification/`, `backend/evidence/`, `graph/evidence_nodes.py`,
+# `graph/verification_nodes.py`, `graph/report.py` and `graph/work_requests.py`
+# are; the gate nodes that used to call into them are not, because a pause node
+# with no gate, no route and no screen is not retained code, it is dead code.
 
 
 def gate_strategy_node(state: GraphState) -> dict[str, Any]:
@@ -408,56 +274,49 @@ def gate_strategy_node(state: GraphState) -> dict[str, Any]:
 
 
 GATE_STRATEGY_RULES: tuple[str, ...] = (
-    "at least one query, and at least one of them enabled",
-    "every query carries non-empty text and a unique id",
-    "every core technical element is covered by at least one enabled query",
-    "no query claims to cover an element the approved analysis does not contain",
-    "the strategy names the approved analysis version it covers",
+    "at least one non-empty search query",
 )
-"""What this stage requires, surfaced to the reviewer.
+"""What stage 3 requires, surfaced to the reviewer.
 
-Advisory here and **binding** in `workflow/review.py`, which refuses an approval
-that violates any of them. The third is the one the stage exists for: finding no
-prior art for something nobody searched for is not a finding.
+Advisory here and **binding** in `workflow/review.py`. The third and last of spec
+section 3.5's rules; nothing else blocks.
 
-The query *limit* is deliberately absent, for the same reason the element limits
-are absent from `GATE_A_RULES` -- a reviewer meets it while editing rather than at
-the moment they try to approve."""
+The list shrank from five with the concepts behind it. Enable/disable switches are
+gone, so "at least one of them enabled" has no control to describe -- every stored
+query is enabled. Query ids are gone from the public shape, so uniqueness has
+nothing to apply to. Element-to-query coverage is gone, so the two coverage rules
+describe a mapping the reviewer can no longer see or set: a rule the screen cannot
+show is one an approval can fail on invisibly."""
 
 
 GATE_RULES: dict[WorkflowGate, tuple[str, ...]] = {
     WorkflowGate.A: GATE_A_RULES,
     WorkflowGate.STRATEGY: GATE_STRATEGY_RULES,
-    WorkflowGate.B: GATE_B_RULES,
-    WorkflowGate.C: GATE_C_RULES,
-    WorkflowGate.D: GATE_D_RULES,
 }
 
 
 GATE_NODES: dict[WorkflowGate, str] = {
     WorkflowGate.A: "gate_a",
     WorkflowGate.STRATEGY: "gate_strategy",
-    WorkflowGate.B: "gate_b",
-    WorkflowGate.C: "gate_c",
-    WorkflowGate.D: "gate_d",
 }
-"""Gate -> graph node name. Used by the adapter to describe a pause and by the
-tests to assert every gate in the enum is actually wired into the graph — an
-unwired gate is a review nobody is ever asked for."""
+"""**Live** gate -> graph node name. Used by the adapter to describe a pause and
+by the tests to assert every gate here is actually wired into the graph — an
+unwired gate is a review nobody is ever asked for.
+
+`WorkflowGate.B`, `.C` and `.D` are deliberately absent: their nodes were removed
+with feature verification, so mapping them would claim a pause the product can no
+longer reach. They stay in the `WorkflowGate` enum so a run parked at one before
+the withdrawal can still be read back and reported as uncontinuable (spec §6.3);
+removing the members would turn a legacy row into an enum error at exactly the
+moment the product is supposed to explain itself."""
 
 
 __all__ = [
     "GATE_A_RULES",
     "GATE_STRATEGY_RULES",
-    "GATE_B_RULES",
-    "GATE_C_RULES",
-    "GATE_D_RULES",
     "GATE_NODES",
     "GATE_RULES",
     "gate_a_node",
     "gate_strategy_node",
-    "gate_b_node",
-    "gate_c_node",
-    "gate_d_node",
 ]
 

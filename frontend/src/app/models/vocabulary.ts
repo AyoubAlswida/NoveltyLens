@@ -78,152 +78,10 @@ export const STATUS_TERMS: Readonly<Record<string, Term>> = {
   },
 };
 
-/**
- * Feature-level outcomes (`verification/schema.py::Outcome`).
- *
- * Derived by `verification/outcome.py::derive_outcome`, never asserted by a
- * model and never typed by a reviewer.
- */
-export const OUTCOME_TERMS: Readonly<Record<string, Term>> = {
-  FULLY_DISCLOSED_IN_SUPPLIED_PASSAGES: {
-    label: 'Every requirement found in the passages examined',
-    meaning:
-      'Each requirement of this capability was found in the passages examined for this publication.',
-  },
-  PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES: {
-    label: 'Some requirements found in the passages examined',
-    meaning:
-      'Some requirements were found and some were not, with nothing left ambiguous.',
-  },
-  NO_DISCLOSURE_FOUND_IN_SUPPLIED_PASSAGES: {
-    label: 'No requirement found in the passages examined',
-    meaning:
-      'No requirement of this capability was found in the passages examined. This is not a finding that the publication discloses none of them.',
-  },
-  UNCLEAR: {
-    label: 'Unclear from the passages examined',
-    meaning:
-      'At least one requirement was ambiguous, so no overall answer can be given for this capability.',
-  },
-};
 
-/**
- * Cell states (`verification/states.py::CellState`).
- *
- * Two of the three are **not** verdicts, and their labels say so without
- * borrowing any disclosure wording -- that is the substitution `states.py`'s own
- * module docstring exists to forbid. `PENDING` is not a `cell_state` in the
- * database; it is what a comparison reads as before one is written, and it is
- * here so that value renders as itself rather than falling through.
- */
-export const CELL_STATE_TERMS: Readonly<Record<string, Term>> = {
-  VERIFIED: {
-    label: 'Checked',
-    meaning:
-      'A model response passed every validation check, so this comparison has a result.',
-  },
-  NOT_EVALUATED: {
-    label: 'Not evaluated',
-    meaning:
-      'This comparison did not complete, so no answer exists for it. It is not a finding of any kind.',
-  },
-  VALIDATION_FAILURE: {
-    label: 'Could not be validated',
-    meaning:
-      'A response came back and failed a validation check, so it was kept as a diagnostic and never used as a result.',
-  },
-  PENDING: {
-    label: 'Not checked yet',
-    meaning: 'This comparison has not run.',
-  },
-};
 
-/**
- * Publication-scoped exclusions (`verification/states.py::PublicationExclusion`).
- *
- * Every label says *not examined* and none of them says anything about the
- * publication's content, because an exclusion is a statement about this run's
- * coverage and never a finding about a patent.
- */
-export const EXCLUSION_TERMS: Readonly<Record<string, Term>> = {
-  EXCLUDED_DATE: {
-    label: 'Not examined, outside the date range',
-    meaning:
-      'Its publication date is not before the cutoff for this run. This is arithmetic against the recorded date policy, not a judgement, and it cannot be overridden here.',
-  },
-  EXCLUDED_NO_FULL_TEXT: {
-    label: 'Not examined, no full text available',
-    meaning:
-      'The full-text provider answered and had no eligible text for this exact publication. It cannot be overridden here.',
-  },
-  EXCLUDED_INELIGIBLE: {
-    label: 'Not examined, no citable passage could be built',
-    meaning:
-      'Text exists, but nothing citable could be built from it. Re-adding the publication sends it through the same checks again.',
-  },
-};
 
-/**
- * The report's rendering class (`graph/report.py::_cell_class`, spec section 9.8).
- *
- * A validation failure and an unevaluated comparison keep their own class
- * whether or not they were waived, so the labels never say "resolved".
- */
-export const CELL_CLASS_TERMS: Readonly<Record<string, Term>> = {
-  'machine-generated': {
-    label: 'System result, not reviewed',
-    meaning: 'A person has not recorded a decision on this comparison.',
-  },
-  'human-reviewed': {
-    label: 'Reviewed by a person',
-    meaning: 'A person reviewed this comparison and agreed with the system.',
-  },
-  'human-overridden': {
-    label: 'Changed by a reviewer',
-    meaning:
-      'A person reviewed this comparison and recorded a different answer. The system result is kept beside it, unchanged.',
-  },
-  unresolved: {
-    label: 'Left unresolved',
-    meaning: 'This comparison was left without a resolution.',
-  },
-  'validation-failure': {
-    label: 'Could not be validated',
-    meaning:
-      'The response failed a validation check and was never used as a result.',
-  },
-  unevaluated: {
-    label: 'Not evaluated',
-    meaning: 'This comparison did not complete, so no answer exists for it.',
-  },
-};
 
-/** Review overlay statuses (`review_status` in migration 0006). */
-export const REVIEW_STATUS_TERMS: Readonly<Record<string, Term>> = {
-  PENDING: { label: 'Awaiting your decision', meaning: 'No decision recorded yet.' },
-  APPROVED: {
-    label: 'Agreed with the system',
-    meaning: 'A person reviewed this and recorded the same answer.',
-  },
-  REJECTED: {
-    label: 'Rejected by a reviewer',
-    meaning: 'A person reviewed this and rejected the system result.',
-  },
-  OVERRIDDEN: {
-    label: 'Changed by a reviewer',
-    meaning:
-      'A person recorded a different answer. The system result is kept beside it.',
-  },
-  NEEDS_EXPERT_REVIEW: {
-    label: 'Referred for expert review',
-    meaning: 'A person referred this comparison to someone else.',
-  },
-  WAIVED: {
-    label: 'Waived, with the gap disclosed',
-    meaning:
-      'A person recorded that this is being accepted unresolved. A waiver discloses a gap; it never becomes a result.',
-  },
-};
 
 /**
  * Every table, in one object, so a test can assert totality against the backend
@@ -231,12 +89,21 @@ export const REVIEW_STATUS_TERMS: Readonly<Record<string, Term>> = {
  */
 export const VOCABULARY: Readonly<Record<string, Readonly<Record<string, Term>>>> = {
   status: STATUS_TERMS,
-  outcome: OUTCOME_TERMS,
-  cell_state: CELL_STATE_TERMS,
-  exclusion: EXCLUSION_TERMS,
-  cell_class: CELL_CLASS_TERMS,
-  review_status: REVIEW_STATUS_TERMS,
 };
+
+/*
+ * `outcome`, `cell_state`, `exclusion`, `cell_class` and `review_status` were
+ * REMOVED with the screens that rendered them. Every one of them named part of
+ * the verification matrix -- a cell's state, a disclosure outcome, why a
+ * publication was excluded from citation, a reviewer's status on a cell -- and
+ * feature verification was withdrawn from the product, so nothing renders any of
+ * it. The backend enums behind them are retained (spec section 10.3); a
+ * translation table for words no screen shows is worse than nothing, because it
+ * reads as evidence that some screen still shows them.
+ *
+ * `status` stays: run statuses are still rendered, and a run still moves through
+ * them.
+ */
 
 /**
  * The words for one code, or the code itself.
@@ -257,12 +124,3 @@ export function describe(
 
 /** Convenience readers, so a template does not have to name a table. */
 export const statusTerm = (code: string | null | undefined) => describe(STATUS_TERMS, code);
-export const outcomeTerm = (code: string | null | undefined) => describe(OUTCOME_TERMS, code);
-export const cellStateTerm = (code: string | null | undefined) =>
-  describe(CELL_STATE_TERMS, code);
-export const exclusionTerm = (code: string | null | undefined) =>
-  describe(EXCLUSION_TERMS, code);
-export const cellClassTerm = (code: string | null | undefined) =>
-  describe(CELL_CLASS_TERMS, code);
-export const reviewStatusTerm = (code: string | null | undefined) =>
-  describe(REVIEW_STATUS_TERMS, code);

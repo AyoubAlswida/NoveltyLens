@@ -65,30 +65,12 @@ import sys
 # `sys.argv` is read directly rather than through argparse because argparse runs
 # in `main()`, which is after the imports this has to precede.
 if "--workflow" in sys.argv:
-    # Not invented here: the two policies and their decisions are the values the
-    # owner approved on 2026-08-28 (docs/decisions/2026-08-28-evidence-layer-policies.md),
-    # and the capability deferral is the owner decision of 2026-08-29. A deferral
-    # RECORDS that this runtime is not qualified; it never claims it is, and no
-    # eligible artifact is fabricated.
-    os.environ.setdefault("DATE_SCREENING_POLICY", "publication_lt_cutoff")
-    os.environ.setdefault(
-        "DATE_SCREENING_DECISION",
-        "owner, 2026-08-28, docs/decisions/2026-08-28-evidence-layer-policies.md",
-    )
-    os.environ.setdefault("TEXT_VERSION_POLICY", "provider_publication_date")
-    os.environ.setdefault(
-        "TEXT_VERSION_DECISION",
-        "owner, 2026-08-28, docs/decisions/2026-08-28-evidence-layer-policies.md",
-    )
-    os.environ.setdefault("VERIFIER_CAPABILITY_ENFORCEMENT", "deferred")
-    os.environ.setdefault(
-        "VERIFIER_CAPABILITY_DEFERRAL_DECISION",
-        "mock mode: paid qualification deferred by owner decision 2026-08-29",
-    )
-    # The REAL executor, on a daemon thread in THIS process. That is the
-    # documented `inprocess` mode, and it is what makes the provider patches
-    # below apply to the worker too -- a separate worker process would not see
-    # them, and the mocking would have to be duplicated into it.
+    # **No verifier policy is set here, and none is needed.** This block used to
+    # supply `DATE_SCREENING_POLICY`, `TEXT_VERSION_POLICY` and a capability
+    # deferral, because admission refused a run without them. Advanced Search
+    # screens no dates, selects no text version and runs no verifier, so
+    # admission consults none of it (spec section 10.4) -- setting them would be
+    # configuring a feature the product no longer has.
     os.environ["WORKFLOW_EXECUTOR"] = "inprocess"
     os.environ["WORKFLOW_GRAPH_ADAPTER"] = "graph.adapter:ADAPTER"
 
@@ -100,7 +82,6 @@ from models import PatentRecord
 from search.vector_store import QUERY_INSTRUCTION
 from llm import (
     DECOMPOSITION_PROMPT_MARKER,
-    RELATIONSHIP_PROMPT_MARKER,
     STRATEGY_PROMPT_MARKER,
 )
 from verification.prompt import PROMPT_MARKER as VERIFIER_MARKER
@@ -592,32 +573,6 @@ def _mock_verification(prompt: str) -> str:
     })
 
 
-def _mock_relationships(prompt: str) -> str:
-    """Relationships for whatever elements the prompt actually lists.
-
-    Reads the element ids out of the rendered prompt rather than returning a
-    fixed set, because the whole reason this call exists is that a human just
-    changed the elements. A double that returned `E1`-`E4` regardless would
-    manufacture exactly the dangling reference `workflow/review.py` refuses, and
-    the mock would fail a rule production would pass.
-
-    Two elements or fewer produce one relationship; a single element produces
-    none, which is a real answer rather than an empty stand-in.
-    """
-    ids = re.findall(r"^- (E\d{1,3}):", prompt, flags=re.MULTILINE)
-    if len(ids) < 2:
-        return json.dumps({"relationships": []})
-    return json.dumps({
-        "relationships": [
-            {
-                "relationship_id": "R1",
-                "text": f"{ids[0]} is operatively coupled to {ids[1]}",
-                "order": 1,
-            }
-        ]
-    })
-
-
 def _mock_decomposition() -> str:
     """A **candidate** decomposition, and nothing more.
 
@@ -727,12 +682,11 @@ def _mock_llm_chat(prompt: str, **kwargs: object) -> str:
     if VERIFIER_MARKER in str(kwargs.get("system", "")):
         return _mock_verification(prompt)
 
-    # Checked FIRST: both prompts open with DECOMPOSITION_PROMPT_MARKER, because
-    # they are the same component doing the same job, so matching only on that
-    # would answer a relationship request with a whole decomposition.
-    if RELATIONSHIP_PROMPT_MARKER in prompt:
-        return _mock_relationships(prompt)
-
+    # There is one decomposition prompt now, so the ordering rule that used to
+    # sit here is gone with the relationship prompt it disambiguated: the two
+    # were the same component doing the same job and both opened with this
+    # marker, so matching on it alone answered a relationship request with a
+    # whole decomposition. Nothing builds that prompt any more.
     if DECOMPOSITION_PROMPT_MARKER in prompt:
         return _mock_decomposition()
 
@@ -856,12 +810,13 @@ def main() -> None:
     print(" Postgres and Qdrant are REAL; mock runs are stored in your history.")
     if args.workflow:
         print("")
-        print(" WORKFLOW MODE: the verified branch is served too.")
+        print(" WORKFLOW MODE: Advanced Search is served too.")
         print("   * the durable executor runs in THIS process (inprocess mode)")
         print("   * the real graph, gates, lease, checkpointer and event log")
-        print("   * a run pauses at Workflow Gates A, B, C and D for a human")
-        print("   * the capability qualification is DEFERRED and recorded as")
-        print("     unqualified -- gpt-5.1 remains measured and INELIGIBLE")
+        print("   * a run pauses TWICE for a person, shown as three stages:")
+        print("       1/3 review the understanding   2/3 edit the elements")
+        print("       3/3 edit and approve the searches")
+        print("   * no verifier, no evidence matrix, no numeric score")
     print("=" * 72)
 
     # Patched at each consuming module's import site, not at the origin, because

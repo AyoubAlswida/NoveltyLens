@@ -1,7 +1,7 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { API_BASE_URL } from '../config';
 import { AuthService } from './auth';
-import type { StreamEvent, WorkflowGate } from '../models/report';
+import type { AnalysisReport, StoredGate, StreamEvent, WorkflowGate } from '../models/report';
 
 /**
  * The verified-run API (backend `api/runs.py`, spec §10).
@@ -30,7 +30,7 @@ export type RunStatus =
 export interface RunSummary {
   run_id: string;
   status: RunStatus;
-  current_gate: WorkflowGate | null;
+  current_gate: StoredGate | null;
   description: string;
   created_at: string | null;
   updated_at: string | null;
@@ -122,26 +122,29 @@ export class RunsService {
   }
 
   /**
-   * Admit a verified run.
+   * Admit an Advanced Search run.
    *
-   * `problemSolved` and `noveltyStatement` are the inventor's optional context.
-   * They steer the analysis and are **never** treated as evidence: what an
-   * inventor believes is new is the claim the run exists to test.
+   * **A description and optionally claims: that is the whole body.** The backend
+   * model is strict (`extra="forbid"`), so `problem_solved`,
+   * `inventor_novelty_statement` and `cutoff_date` are not merely ignored -- a
+   * request carrying one is refused with a 422. That is deliberate on both
+   * sides: silently accepting them would drop what the caller sent while
+   * reporting success.
+   *
+   * There is no `capability_qualified` in the response. Advanced Search runs no
+   * verifier, so there is no capability for admission to qualify.
    */
   createRun(
     description: string,
-    context: { problemSolved?: string; noveltyStatement?: string; claims?: string } = {},
+    context: { claims?: string } = {},
   ): Promise<{
     run_id: string;
     status: RunStatus;
     stream_url: string;
-    capability_qualified: boolean;
   }> {
     return this.post('/api/runs', {
       description,
       claims: context.claims ?? '',
-      problem_solved: context.problemSolved ?? '',
-      inventor_novelty_statement: context.noveltyStatement ?? '',
     });
   }
 
@@ -153,132 +156,58 @@ export class RunsService {
     return this.call(`/api/runs/${runId}/gates/STRATEGY`);
   }
 
-  gateB(runId: string): Promise<Record<string, unknown>> {
-    return this.call(`/api/runs/${runId}/gates/B`);
-  }
-
-  gateC(runId: string): Promise<Record<string, unknown>> {
-    return this.call(`/api/runs/${runId}/gates/C`);
-  }
-
-  cell(runId: string, cellId: string): Promise<Record<string, unknown>> {
-    return this.call(`/api/runs/${runId}/cells/${encodeURIComponent(cellId)}`);
-  }
-
-  report(runId: string): Promise<Record<string, unknown>> {
-    return this.call(`/api/runs/${runId}/report`);
+  /**
+   * The completed run's report: the **standard** `AnalysisReport`, not a
+   * verification report.
+   *
+   * The same object the terminal `result` event carries and the same one
+   * `services/history.ts` maps a stored run into, so a durable run, a quick
+   * search and a run reopened from History all render through `ReportScreen`
+   * with no second display path to keep in step.
+   */
+  report(runId: string): Promise<AnalysisReport> {
+    return this.call(`/api/runs/${runId}/report`) as Promise<AnalysisReport>;
   }
 
   // --- mutations -----------------------------------------------------------
 
-  approveGateA(runId: string, decomposition: unknown, key: string) {
+  /**
+   * Approve the invention understanding: stages 1 and 2, one backend approval.
+   *
+   * A summary and a flat list of element **strings**. No version (the server
+   * mints it), no capability objects, no `core`, no relationships and no
+   * per-element ids -- the ids the stage-2 screen keeps are its own bookkeeping
+   * for tracking rows while editing, and are not part of the contract.
+   */
+  approveGateA(runId: string, summary: string, elements: string[], key: string) {
     return this.post(`/api/runs/${runId}/gates/A/approve`, {
-      decomposition,
+      technical_summary: summary,
+      technical_elements: elements,
       idempotency_key: key,
     });
   }
 
   /**
-   * Ask for a fresh analysis of the invention. **202 — the worker does the work.**
+   * Approve the search queries: stage 3, and the approval that releases the run
+   * into the search.
    *
-   * `fromVersion` names the proposal the inventor was looking at, so a request
-   * composed against a version that has since been replaced is refused rather
-   * than silently applied to a different one.
+   * A plain list of strings. Every approved query runs -- enable/disable is gone,
+   * so there is no "sent but not dispatched" state to represent, and nothing
+   * here can claim coverage of an element.
    */
-  regenerateUnderstanding(runId: string, fromVersion: number, feedback: string, key: string) {
-    return this.post(`/api/runs/${runId}/understanding/regenerate`, {
-      from_version: fromVersion,
-      feedback,
-      idempotency_key: key,
-    });
-  }
-
-  /**
-   * Approve the search strategy: the queries, and which of them run.
-   *
-   * `strategy` carries every query the reviewer saw, enabled or not, plus the
-   * version and the approved-analysis version it covers. **Disabled queries are
-   * sent, not filtered out here**: switching one off is a decision about the
-   * search, and the record has to be able to say what was deliberately not
-   * searched for. Only the enabled ones are ever dispatched, and the backend is
-   * what enforces that.
-   */
-  approveGateStrategy(runId: string, strategy: unknown, key: string) {
+  approveGateStrategy(runId: string, queries: string[], key: string) {
     return this.post(`/api/runs/${runId}/gates/STRATEGY/approve`, {
-      strategy,
+      queries,
       idempotency_key: key,
     });
   }
 
-  /**
-   * Ask for fresh search queries. **202 — the worker does the work.**
-   *
-   * `fromVersion` names the strategy the reviewer was looking at, so a request
-   * composed against a version that has since been replaced is refused rather
-   * than silently applied to a different one.
-   */
-  regenerateStrategy(runId: string, fromVersion: number, feedback: string, key: string) {
-    return this.post(`/api/runs/${runId}/strategy/regenerate`, {
-      from_version: fromVersion,
-      feedback,
-      idempotency_key: key,
-    });
-  }
-
-  approveGateB(runId: string, publicationNumbers: string[], version: number, key: string) {
-    return this.post(`/api/runs/${runId}/gates/B/approve`, {
-      publication_numbers: publicationNumbers,
-      version,
-      idempotency_key: key,
-    });
-  }
-
-  addCandidate(runId: string, publicationNumber: string, key: string) {
-    return this.post(`/api/runs/${runId}/candidates`, {
-      publication_number: publicationNumber,
-      idempotency_key: key,
-    });
-  }
-
-  reviewCell(runId: string, cellId: string, overlay: unknown, key: string) {
-    return this.post(`/api/runs/${runId}/cells/${encodeURIComponent(cellId)}/review`, {
-      overlay,
-      idempotency_key: key,
-    });
-  }
-
-  waiveCell(runId: string, cellId: string, waiver: unknown, key: string) {
-    return this.post(`/api/runs/${runId}/cells/${encodeURIComponent(cellId)}/waiver`, {
-      waiver,
-      idempotency_key: key,
-    });
-  }
-
-  rerunCell(
-    runId: string,
-    cellId: string,
-    contextRequests: unknown[],
-    sourceResultVersion: number,
-    key: string,
-  ) {
-    return this.post(`/api/runs/${runId}/cells/${encodeURIComponent(cellId)}/rerun`, {
-      context_requests: contextRequests,
-      source_result_version: sourceResultVersion,
-      idempotency_key: key,
-    });
-  }
-
-  completeGateC(runId: string, key: string) {
-    return this.post(`/api/runs/${runId}/gates/C/complete`, { idempotency_key: key });
-  }
-
-  approveGateD(runId: string, reportVersion: number, key: string, comments?: string) {
-    return this.post(`/api/runs/${runId}/gates/D/approve`, {
-      report_version: reportVersion,
-      comments: comments ?? '',
-      idempotency_key: key,
-    });
-  }
+  // `gateB`, `gateC`, `cell`, `approveGateB`, `addCandidate`, `reviewCell`,
+  // `waiveCell`, `rerunCell`, `completeGateC`, `approveGateD`,
+  // `regenerateUnderstanding` and `regenerateStrategy` were REMOVED with the
+  // routes behind them. Every one of them now answers 404 as an unknown path;
+  // a client method for a route that does not exist is a call site waiting to
+  // fail at runtime rather than at build time.
 
   // --- the stream ----------------------------------------------------------
 

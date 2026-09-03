@@ -18,10 +18,10 @@ knowing the other exists.
 - **It writes nothing.** No `approved_*` field, no event, no status. Only
   `workflow/approvals.py` writes an approval, and only the four authorized event
   writers append an event.
-- **It never enables verification by accident.** `initial_input` sets
-  `verification_requested` from the run row's own existence: every row in
-  `verification_runs` *is* a verified run. A search-only run has no such row and
-  never reaches this adapter at all.
+- **It never enables the guided branch by accident.** `initial_input` sets
+  `advanced_search` from the run row's own existence: every row in
+  `verification_runs` *is* an Advanced Search run. A search-only run has no such
+  row and never reaches this adapter at all.
 
 ## Why `build` compiles per claimed run
 
@@ -37,6 +37,7 @@ from typing import Any, Optional
 
 from graph.pipeline import build_graph_with_checkpointer, build_result_event
 from graph.state import GraphState
+from reports import save_report
 from workflow.executor import GraphAdapter
 from workflow.types import WorkflowGate
 
@@ -63,10 +64,10 @@ def initial_input(run: dict[str, Any]) -> dict[str, Any]:
     return {
         "description": run["description"],
         "claims": run.get("claims") or "",
-        # A row in `verification_runs` IS a verified run. The flag is derived
-        # from that fact rather than passed in beside it, so the two cannot
-        # disagree.
-        "verification_requested": True,
+        # A row in `verification_runs` IS an Advanced Search run. The flag is
+        # derived from that fact rather than passed in beside it, so the two
+        # cannot disagree.
+        "advanced_search": True,
         "run_id": run["run_id"],
         # The owner, so worker-side reads stay ownership-scoped rather than
         # running with an empty actor.
@@ -111,6 +112,44 @@ def result_payload(run: dict[str, Any], final_state: GraphState) -> dict[str, An
     with set equality.
     """
     return build_result_event(final_state)["data"]
+
+
+def persist_result(
+    conn: Any,
+    run: dict[str, Any],
+    final_state: GraphState,
+    result_data: dict[str, Any],
+) -> None:
+    """Store the finished report through the **standard** History data model.
+
+    An Advanced Search run does not execute `run_graph_pipeline`, so it never
+    reaches that module's `persist_run`; without this the run would complete with
+    nothing in History. Both paths call the same `reports.py::save_report`, which
+    stays the only SQL writer for `patents` / `search_runs` /
+    `search_run_matches` -- so a durable run and a quick search land in the same
+    tables, in the same shape, and open in the same report screen. There is no
+    second row and no parallel table.
+
+    **This runs inside the executor's outer transaction** (see
+    `workflow/executor.py::_succeed`): the connection is passed in rather than
+    opened here, and `save_report`'s own transaction block becomes a savepoint.
+    Nothing is caught -- a database that cannot store the report fails the run
+    instead of completing it with the report dropped.
+
+    `result_data` is the exact object the terminal `result` event carries, so the
+    stored report and the streamed one cannot disagree.
+    """
+    comparisons = final_state.get("comparisons") or []
+    save_report(
+        conn,
+        description=run["description"],
+        claims=run.get("claims") or None,
+        concepts=result_data["concepts"],
+        query_count=result_data["query_count"],
+        recommendations=result_data["recommendations"],
+        matches=result_data["patents"],
+        patents=[comparison.patent for comparison in comparisons],
+    )
 
 
 def gate_of(interrupt_value: Any) -> WorkflowGate:
@@ -282,6 +321,7 @@ ADAPTER = GraphAdapter(
     build=build,
     initial_input=initial_input,
     result_payload=result_payload,
+    persist_result=persist_result,
     gate_of=gate_of,
     review_payload=review_payload,
     resume_value=resume_value,
@@ -298,6 +338,7 @@ __all__ = [
     "build",
     "gate_of",
     "initial_input",
+    "persist_result",
     "result_payload",
     "resume_value",
     "review_payload",

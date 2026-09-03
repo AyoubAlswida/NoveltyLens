@@ -1,7 +1,7 @@
 import { Component, ChangeDetectionStrategy, input, output, computed } from '@angular/core';
 import { Icon } from '../shared/icon';
 import { ExportMenu } from '../shared/export-menu';
-import { AnalysisReport, Risk, Verdict } from '../models/report';
+import { AnalysisReport, Risk } from '../models/report';
 
 @Component({
   selector: 'app-report-screen',
@@ -42,22 +42,30 @@ import { AnalysisReport, Risk, Verdict } from '../models/report';
               </div>
             </div>
 
+            <!--
+              The legend is a key to the ratings in the list below it. With no
+              matches there are no ratings to explain, and printing the scale
+              anyway would put "Novelty risk / High / Medium / Low" on screen
+              for a run that rated nothing. Section 5.6.
+            -->
+            @if (data().patents.length) {
             <div class="risk-legend">
-              <p class="risk-legend-title">Match level</p>
+              <p class="risk-legend-title">Novelty risk</p>
               <div class="risk-legend-row">
-                <span class="risk-legend-item risk-high"><i></i>Strong</span>
-                <span class="risk-legend-item risk-medium"><i></i>Partial</span>
-                <span class="risk-legend-item risk-low"><i></i>Limited</span>
+                <span class="risk-legend-item risk-high"><i></i>High</span>
+                <span class="risk-legend-item risk-medium"><i></i>Medium</span>
+                <span class="risk-legend-item risk-low"><i></i>Low</span>
                 <span
                   class="risk-legend-help"
-                  title="How closely a candidate's technology overlaps with your invention, based on embedding similarity. High overlap means it's less likely your idea is novel over that patent."
-                  aria-label="What prior-art similarity means"
+                  title="How closely a candidate's technology overlaps with your invention. High risk means the overlap is large, so it is less likely your idea is novel over that patent."
+                  aria-label="What novelty risk means"
                   tabindex="0"
                 >
                   <app-icon name="Info" [size]="14" />
                 </span>
               </div>
             </div>
+            }
 
             <div class="matches-list">
               @for (patent of data().patents; track patent.num + patent.title) {
@@ -75,15 +83,9 @@ import { AnalysisReport, Risk, Verdict } from '../models/report';
                   <h3 class="patent-title">{{ patent.title }}</h3>
 
                   <div class="patent-similarity">
-                    <div class="patent-similarity-header">
-                      <span class="card-label">Match level</span>
-                      <strong>{{ patent.pct }}%</strong>
-                    </div>
-                    <div class="score-bar {{ riskClass(patent.risk) }}">
-                      <i [style.width.%]="clamp(patent.pct)"></i>
-                    </div>
+                    <span class="card-label">Novelty risk</span>
                     <span class="risk-label {{ riskClass(patent.risk) }}">
-                      <i></i>{{ riskWord(patent.risk) }}
+                      <i></i>{{ patent.risk }}
                     </span>
                   </div>
 
@@ -104,29 +106,6 @@ import { AnalysisReport, Risk, Verdict } from '../models/report';
         <div class="report-col-right">
           <article class="summary-card glass-card">
             <p class="eyebrow">Closest prior-art match</p>
-            <div class="summary-top">
-              <div class="score-ring {{ riskClass(displayRisk()) }}">
-                <svg viewBox="0 0 120 120" aria-hidden="true">
-                  <circle class="score-track" cx="60" cy="60" r="48"></circle>
-                  <circle
-                    class="score-value"
-                    cx="60"
-                    cy="60"
-                    r="48"
-                    pathLength="100"
-                    [attr.stroke-dasharray]="clamp(data().top_score) + ' 100'"
-                  ></circle>
-                </svg>
-                <div>
-                  <strong>{{ data().top_score }}%</strong>
-                </div>
-              </div>
-              @if (topPatent()) {
-                <span class="risk-label {{ riskClass(displayRisk()) }}">
-                  <i></i>{{ riskLabel(displayRisk()) }}
-                </span>
-              }
-            </div>
 
             <div class="summary-copy">
               <h2>{{ topPatent()?.title ?? 'No matching prior art indexed' }}</h2>
@@ -138,6 +117,13 @@ import { AnalysisReport, Risk, Verdict } from '../models/report';
                 }}
               </p>
 
+              <!--
+                Everything below is inside this @if on purpose. With no match
+                there is nothing to rate, and a rating is a claim: printing
+                "Novelty risk: Low" over an empty result set would state a
+                finding the run did not make. The empty case says only that
+                nothing was found.
+              -->
               @if (topPatent(); as top) {
                 @if (top.key_overlap.length) {
                   <p class="card-label">Key overlap</p>
@@ -147,17 +133,15 @@ import { AnalysisReport, Risk, Verdict } from '../models/report';
                     }
                   </div>
                 }
-              }
 
-              <p class="card-label">Novelty risk</p>
-              <div class="verdict-pill {{ verdictClass(data().verdict) }}">
-                <app-icon name="AlertTriangle" [size]="14" />
-                {{ verdictRisk(data().verdict) }}
-              </div>
+                <p class="card-label">Novelty risk</p>
+                <div class="risk-pill {{ riskClass(top.risk) }}">
+                  <app-icon name="AlertTriangle" [size]="14" />
+                  {{ top.risk }}
+                </div>
 
-              @if (topPatent()) {
                 <p class="card-label">Overall assessment</p>
-                <p class="summary-why">{{ topPatent()!.rationale }}</p>
+                <p class="summary-why">{{ top.rationale }}</p>
               }
             </div>
           </article>
@@ -208,57 +192,17 @@ export class ReportScreen {
   readonly data = input.required<AnalysisReport>();
   readonly back = output<void>();
 
+  /**
+   * The strongest match, or `undefined` when nothing was found.
+   *
+   * `patents` arrives already ordered strongest-first -- by the backend for a
+   * live run, by `search_run_matches.rank` for one reopened from History -- so
+   * index 0 is the closest match without this screen re-sorting anything. It
+   * could not re-sort even if it wanted to: no similarity number is published.
+   */
   readonly topPatent = computed(() => this.data().patents[0]);
-
-  readonly displayRisk = computed<Risk>(() => {
-    const score = this.data().top_score;
-    return score >= 75 ? 'High' : score >= 25 ? 'Medium' : 'Low';
-  });
-
-  clamp(value: number) {
-    return Math.max(0, Math.min(100, value));
-  }
 
   riskClass(risk: Risk) {
     return `risk-${risk.toLowerCase()}`;
-  }
-
-  private readonly riskLabels: Record<Risk, string> = {
-    High: 'Strong match',
-    Medium: 'Partial match',
-    Low: 'Limited match',
-  };
-
-  /** Used in the summary card, standalone with no preceding section label. */
-  riskLabel(risk: Risk) {
-    return this.riskLabels[risk];
-  }
-
-  private readonly riskWords: Record<Risk, string> = {
-    High: 'Strong',
-    Medium: 'Partial',
-    Low: 'Limited',
-  };
-
-  /** Used inline on each patent card, directly under the "Match level"
-   * label, so the bare word already has context. */
-  riskWord(risk: Risk) {
-    return this.riskWords[risk];
-  }
-
-  verdictClass(verdict: string) {
-    return `verdict-${verdict.toLowerCase()}`;
-  }
-
-  private readonly verdictRiskWords: Record<Verdict, string> = {
-    Strong: 'Low',
-    Moderate: 'Medium',
-    Weak: 'High',
-  };
-
-  /** The backend's verdict is framed as novelty strength (Strong/Moderate/Weak);
-   * the UI frames the same fact as risk (Low/Medium/High) for the reader. */
-  verdictRisk(verdict: Verdict) {
-    return this.verdictRiskWords[verdict];
   }
 }

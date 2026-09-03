@@ -14,7 +14,6 @@ import { RunApiError } from '../services/runs';
  * - `review` — parked, and it is this person's turn.
  * - `validating` — a decision is in flight; controls lock.
  * - `waiting` — the run is not at this gate yet.
- * - `paused` — parked at a gate, shown from the running screen.
  * - `resuming` — a decision committed; the executor has not picked it up yet.
  * - `blocked` — the gate refused, and **every** blocking condition is listed.
  * - `stale` — the artifact moved under the reviewer. Never resubmitted.
@@ -24,6 +23,14 @@ import { RunApiError } from '../services/runs';
  * - `failed` — the run itself failed, with the backend's sanitized detail shown
  *   verbatim.
  * - `completed` — terminal success.
+ *
+ * `paused` was REMOVED, by proof rather than by guess: it meant "parked at a
+ * gate, shown from the running screen", and no surviving screen ever sets it --
+ * `grep` finds the SSE `paused` EVENT type, which is a different thing that the
+ * running screen handles itself. The other twelve all survive and **none were
+ * collapsed into another**: each distinction exists because reporting one
+ * situation as another is the defect this project forbids, so `loading` still
+ * is not `empty`, and `reconnecting` still is not `failed`.
  */
 export type GateState =
   | 'loading'
@@ -31,7 +38,6 @@ export type GateState =
   | 'review'
   | 'validating'
   | 'waiting'
-  | 'paused'
   | 'resuming'
   | 'blocked'
   | 'stale'

@@ -63,13 +63,17 @@ CORPUS = [
 
 RESULT_KEYS = {
     "title", "date", "concepts", "patents",
-    "top_score", "verdict", "query_count", "recommendations",
+    "query_count", "recommendations",
 }
-"""Every key ``graph/pipeline.py``'s ``_result_envelope`` promises the frontend."""
+"""Every key ``graph/pipeline.py``'s ``_result_envelope`` promises the frontend.
 
-CORE_PATENT_FIELDS = {"num", "title", "pct", "risk", "rationale", "key_overlap", "source", "url"}
+No ``top_score`` and no ``verdict``: the product publishes no numeric similarity
+and states no overall novelty conclusion. See ``tests/test_scores_are_not_published.py``.
+"""
+
+CORE_PATENT_FIELDS = {"num", "title", "risk", "rationale", "key_overlap", "source", "url"}
 """What the frontend actually reads off each patents[] entry (app.ts's
-result-mapping code)."""
+result-mapping code). ``pct`` is gone; ``risk`` is the only judgement published."""
 
 
 def _fake_llm_chat(prompt: str, **kwargs: object) -> str:
@@ -248,7 +252,10 @@ def test_empty_corpus_returns_an_honest_empty_report():
     assert result["type"] == "result"
     assert data["recommendations"] == [], "fabricated advice reintroduced"
     assert data["patents"] == []
-    assert data["top_score"] == 0
+    # Nothing was scored, so nothing is rated: the payload carries no rating at
+    # all rather than a neutral-looking one. Section 5.6.
+    assert "top_score" not in data
+    assert "verdict" not in data
     # Real values -- the LLM did run, so these are measured, not invented.
     assert data["concepts"] == CONCEPTS
     assert data["query_count"] == len(QUERIES)
@@ -280,7 +287,13 @@ def test_llm_failure_raises_rather_than_degrading():
 
 
 def test_zero_similarity_is_reported_honestly(deterministic):
-    """A patent with no lexical overlap must show 0, not a floor."""
+    """A patent with no overlap is rated Low -- not hidden, not lifted.
+
+    This used to assert an honest ``pct`` of 0. With no number published, the
+    equivalent claim is about the rating: a genuinely dissimilar patent still
+    appears in the results and carries the bottom rating, rather than being
+    dropped from the list or nudged up to Medium to look like a finding.
+    """
     unrelated = (("Google Patents", _provider("unrelated", [
         PatentRecord(id="US9999999A", title="Tractor gearbox",
                      abstract="A mechanical gearbox assembly for tractor power take-off.",
@@ -288,5 +301,7 @@ def test_zero_similarity_is_reported_honestly(deterministic):
     ])),)
     with patch("search.search.SOURCES", unrelated):
         result = _drain()[-1]
-    scores = [p["pct"] for p in result["data"]["patents"]]
-    assert min(scores) == 0, f"expected an honest zero, got {scores}"
+
+    patents = result["data"]["patents"]
+    assert [p["num"] for p in patents] == ["US9999999A"], "the match was dropped"
+    assert patents[0]["risk"] == "Low", f"expected an honest Low, got {patents[0]['risk']}"

@@ -1,6 +1,6 @@
 import { Component, ChangeDetectionStrategy, input, output } from '@angular/core';
 import { Icon } from '../shared/icon';
-import { HistoryEntry, Verdict } from '../models/report';
+import { HistoryEntry, Risk } from '../models/report';
 
 /**
  * Past runs, newest first, straight from `GET /api/history`.
@@ -65,12 +65,16 @@ import { HistoryEntry, Verdict } from '../models/report';
                       {{ entry.patents.length === 1 ? 'match' : 'matches' }}
                     </span>
                   </span>
-                  <span class="history-verdict {{ verdictClass(entry.verdict) }}">
-                    {{ entry.verdict }}
-                  </span>
-                  <span class="history-score {{ riskClass(entry.top_score) }}">
-                    {{ entry.top_score }}%
-                  </span>
+                  <!--
+                    The stored percentage and verdict are gone, so a row shows
+                    the novelty risk of its closest match and nothing else. A
+                    run that found nothing shows no rating: there is nothing to
+                    rate, and a blank is honest where "Low" would be a finding
+                    the run never made.
+                  -->
+                  @if (topRisk(entry); as risk) {
+                    <span class="history-risk {{ riskClass(risk) }}">{{ risk }}</span>
+                  }
                 </button>
               </li>
             }
@@ -97,13 +101,20 @@ export class HistoryScreen {
     });
   }
 
-  /** The same thresholds `ReportScreen.displayRisk` uses, so a row and the
-   * report it opens can never disagree about severity. */
-  riskClass(topScore: number) {
-    return `risk-${topScore >= 75 ? 'high' : topScore >= 25 ? 'medium' : 'low'}`;
+  /**
+   * The rating of the run's closest match, or `undefined` if it found nothing.
+   *
+   * Read straight off the stored match rather than recomputed from a score, so
+   * a row and the report it opens cannot disagree: both render the one rating
+   * the backend published, and neither has a number to re-derive it from.
+   * `patents` is ordered by `search_run_matches.rank`, so index 0 is the
+   * closest match.
+   */
+  topRisk(entry: HistoryEntry): Risk | undefined {
+    return entry.patents[0]?.risk;
   }
 
-  verdictClass(verdict: Verdict) {
-    return `verdict-${verdict.toLowerCase()}`;
+  riskClass(risk: Risk) {
+    return `risk-${risk.toLowerCase()}`;
   }
 }

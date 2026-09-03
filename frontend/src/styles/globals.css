@@ -1071,73 +1071,12 @@ button {
   gap: 4px;
 }
 
-.summary-top {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  margin-bottom: 6px;
-}
-
-.score-ring {
-  position: relative;
-  width: 128px;
-  height: 128px;
-  flex: 0 0 128px;
-}
-
-.score-ring svg {
-  width: 100%;
-  height: 100%;
-  transform: rotate(-90deg);
-}
-
-.score-ring circle {
-  fill: none;
-  stroke-width: 11;
-}
-
-.score-track {
-  stroke: #e5edf2;
-}
-
-.score-value {
-  stroke-linecap: round;
-  stroke: var(--green);
-}
-
-.score-ring > div {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-}
-
-.score-ring strong {
-  color: var(--green-dark);
-  font-family: var(--font-mono);
-  font-size: 24px;
-}
-
-.score-ring span {
-  color: #75869b;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-}
-
-.score-ring.risk-high .score-value { stroke: #cb3c49; }
-.score-ring.risk-high strong { color: #bd3442; }
-.score-ring.risk-medium .score-value { stroke: #bd7a15; }
-.score-ring.risk-medium strong { color: #a96b11; }
-.score-ring.risk-low .score-value { stroke: var(--green); }
-.score-ring.risk-low strong { color: var(--green-dark); }
-
-.score-bar.risk-high i { background: #cb3c49; }
-.score-bar.risk-medium i { background: #bd7a15; }
-.score-bar.risk-low i { background: var(--green); }
+/* `.summary-top`, `.score-ring` (with `.score-track` / `.score-value`) and
+   `.score-bar` were removed here along with the percentage they drew. The
+   product publishes no numeric similarity, so there is no magnitude left for a
+   ring or a bar to encode -- a bar filled from a category would be inventing
+   the precision the number used to carry. The summary card now leads with its
+   copy, and the rating rides on `.risk-pill` / `.risk-label` below. */
 
 .risk-legend {
   padding: 4px 24px 18px;
@@ -1261,7 +1200,17 @@ button {
   font-size: 13px;
 }
 
-.verdict-pill {
+/* Was `.verdict-pill` with `.verdict-strong/-moderate/-weak`. Renamed rather
+   than re-pointed: the pill now carries the closest match's High/Medium/Low
+   novelty risk, so it takes the `risk-*` classes every other rating on this
+   screen uses and the inverted verdict vocabulary (Strong novelty = Low risk)
+   is gone from the stylesheet with it.
+
+   The colours are carried over one-for-one from the verdict rules, which means
+   green still marks the low-risk end. That is semantic, not decorative -- it is
+   the same scale as `.risk-label` and `.risk-legend-item`, and recolouring it
+   to brand teal would destroy the one thing the colour communicates. */
+.risk-pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1272,9 +1221,9 @@ button {
   text-transform: capitalize;
 }
 
-.verdict-strong { color: var(--green-dark); background: rgba(8, 168, 115, 0.09); }
-.verdict-moderate { color: #9a6514; background: rgba(189, 122, 21, 0.1); }
-.verdict-weak { color: #b73643; background: rgba(203, 60, 73, 0.09); }
+.risk-pill.risk-low { color: var(--green-dark); background: rgba(8, 168, 115, 0.09); }
+.risk-pill.risk-medium { color: #9a6514; background: rgba(189, 122, 21, 0.1); }
+.risk-pill.risk-high { color: #b73643; background: rgba(203, 60, 73, 0.09); }
 
 .concept-card {
   padding: 26px;
@@ -1386,27 +1335,15 @@ button {
   overflow: hidden;
 }
 
+/* One row: the "Novelty risk" label on the left, the rating on the right.
+   Replaces the old header/bar/label stack -- `.patent-similarity-header` and
+   its mono `strong` held the percentage and went with it. */
 .patent-similarity {
-  margin-bottom: 16px;
-}
-
-.patent-similarity-header {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  margin-bottom: 7px;
-}
-
-.patent-similarity-header strong {
-  color: var(--navy);
-  font-family: var(--font-mono);
-  font-size: 16px;
-}
-
-.patent-similarity .risk-label {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 7px;
+  gap: 12px;
+  margin-bottom: 16px;
 }
 
 .overlap-tags {
@@ -1442,19 +1379,6 @@ button {
   font-size: 12px;
   font-weight: 700;
   text-align: right;
-}
-
-.score-bar {
-  height: 5px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: #e9eff3;
-}
-
-.score-bar i {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
 }
 
 .recommendations-card {
@@ -1690,26 +1614,14 @@ button {
     text-align: center;
   }
 
-  .score-ring {
-    margin: 0 auto;
-  }
-
-  .patent-score {
-    width: 100%;
-    flex-basis: auto;
-  }
-
-  .patent-score > div:first-child {
-    justify-content: flex-start;
-  }
-
-  .patent-score .risk-label {
-    justify-content: flex-start;
-  }
+  /* `.score-ring` went with the percentage. `.patent-score` was already an
+     orphan before that -- no template has carried the class since the card
+     redesign -- and is removed here rather than left pointing at nothing. */
 }
 
 /* Failed-run screen. Mirrors the running screen's header treatment, with the
-   red already used by .verdict-weak / .risk-high rather than a new colour. */
+   red already used by .risk-pill.risk-high / .risk-label.risk-high rather than
+   a new colour. */
 .error-intro {
   padding-top: 4px;
 }
@@ -2073,7 +1985,11 @@ button {
   font-size: 11px;
 }
 
-.history-verdict {
+/* One rating chip per row, replacing the `.history-verdict` pill and the
+   `.history-score` percentage that used to sit beside it. A run that found
+   nothing renders no chip at all, so this class must not carry a background or
+   border that would leave a visible empty slot when it is absent. */
+.history-risk {
   flex: none;
   padding: 6px 10px;
   border-radius: var(--btn-radius);
@@ -2082,18 +1998,9 @@ button {
   font-weight: 700;
 }
 
-.history-score {
-  flex: none;
-  min-width: 58px;
-  text-align: right;
-  font-family: var(--font-mono);
-  font-size: 16px;
-  font-weight: 700;
-}
-
-.history-score.risk-high { color: #b73643; }
-.history-score.risk-medium { color: #a96b11; }
-.history-score.risk-low { color: var(--green-dark); }
+.history-risk.risk-high { color: #b73643; background: rgba(203, 60, 73, 0.09); }
+.history-risk.risk-medium { color: #a96b11; background: rgba(189, 122, 21, 0.1); }
+.history-risk.risk-low { color: var(--green-dark); background: rgba(8, 168, 115, 0.09); }
 
 .history-error {
   padding: 20px 24px;
@@ -2295,8 +2202,8 @@ button {
 }
 
 /* Clear-all and its confirm. The reds lift to the dark-mode value used by
-   .verdict-weak and the error screen; #cb3c49 and #8f2b36 are near-unreadable
-   on black. */
+   .risk-pill.risk-high and the error screen; #cb3c49 and #8f2b36 are
+   near-unreadable on black. */
 :root[data-theme="dark"] .rail-clear {
   color: #8d99a8;
 }
@@ -2466,10 +2373,6 @@ button {
 }
 
 /* Report surfaces */
-:root[data-theme="dark"] .score-track {
-  stroke: #333b45;
-}
-
 :root[data-theme="dark"] .section-heading {
   border-bottom-color: rgba(255, 255, 255, 0.08);
 }
@@ -2507,10 +2410,6 @@ button {
   color: #a7b3c1;
 }
 
-:root[data-theme="dark"] .score-bar {
-  background: rgba(255, 255, 255, 0.1);
-}
-
 /* The green-tinted card is gone: dark mode has one card colour now. The green
    heading icon and the numbered list still mark this as the guidance block. */
 :root[data-theme="dark"] .recommendations-card {
@@ -2531,31 +2430,29 @@ button {
   background: rgba(38, 168, 171, 0.2);
 }
 
-/* Split from .result-count: the count is an accent and went teal, the verdict
-   is semantic (Strong/Moderate/Weak) and stays on the green scale. */
-:root[data-theme="dark"] .verdict-strong {
+/* Split from .result-count: the count is an accent and went teal, the rating is
+   semantic (High/Medium/Low novelty risk) and stays on the red/amber/green
+   scale. Was .verdict-strong/-moderate/-weak; the pill now takes risk classes. */
+:root[data-theme="dark"] .risk-pill.risk-low {
   background: rgba(22, 201, 141, 0.16);
 }
 
-:root[data-theme="dark"] .verdict-moderate {
+:root[data-theme="dark"] .risk-pill.risk-medium {
   background: rgba(214, 148, 36, 0.18);
 }
 
-:root[data-theme="dark"] .verdict-weak {
+:root[data-theme="dark"] .risk-pill.risk-high {
   background: rgba(226, 82, 96, 0.18);
 }
 
-/* Risk accents need lifting to stay legible on dark. */
-:root[data-theme="dark"] .verdict-weak,
-:root[data-theme="dark"] .score-ring.risk-high strong,
-:root[data-theme="dark"] .patent-score.risk-high strong,
+/* Risk accents need lifting to stay legible on dark. The `.score-ring` selectors
+   that used to ride along here went with the ring itself. */
+:root[data-theme="dark"] .risk-pill.risk-high,
 :root[data-theme="dark"] .risk-label.risk-high {
   color: #ef7683;
 }
 
-:root[data-theme="dark"] .verdict-moderate,
-:root[data-theme="dark"] .score-ring.risk-medium strong,
-:root[data-theme="dark"] .patent-score.risk-medium strong,
+:root[data-theme="dark"] .risk-pill.risk-medium,
 :root[data-theme="dark"] .risk-label.risk-medium {
   color: #e0a63c;
 }
@@ -2672,7 +2569,7 @@ button {
    (0,3,2), which beats the light block's `.field-title label .required-star` at
    (0,2,1) and greys the star out. Repeating .required-star here takes this to
    (0,4,1), which wins on the class count. The red is the lifted dark-mode value
-   used by .verdict-weak and the risk-high accents, not the light #cb3c49 --
+   used by the risk-high accents, not the light #cb3c49 --
    that one drops to roughly 3:1 against #353535. */
 :root[data-theme="dark"] .field-title label .required-star {
   color: #ef7683;
@@ -2703,17 +2600,24 @@ button {
    specificity as well as order -- but they exist for the reason the .error-pip
    and .phase-icon comments above give: a state class with no dark counterpart
    renders identically to its neutral, and nothing errors when it happens. The
-   accents are the same lifted values the risk rules use on .patent-score. */
-:root[data-theme="dark"] .history-score.risk-high {
+   accents are the same lifted values the risk rules use on .risk-label.
+
+   Renamed from .history-score with the class it styles. Renaming a class means
+   grepping this dark block for the old name -- an orphaned dark rule pointing at
+   a class no template uses any more is the other half of the same trap. */
+:root[data-theme="dark"] .history-risk.risk-high {
   color: #ef7683;
+  background: rgba(226, 82, 96, 0.18);
 }
 
-:root[data-theme="dark"] .history-score.risk-medium {
+:root[data-theme="dark"] .history-risk.risk-medium {
   color: #e0a63c;
+  background: rgba(214, 148, 36, 0.18);
 }
 
-:root[data-theme="dark"] .history-score.risk-low {
+:root[data-theme="dark"] .history-risk.risk-low {
   color: var(--green-dark);
+  background: rgba(22, 201, 141, 0.16);
 }
 
 /* --- Human-in-the-Loop review screen (Implementation Gate D/E) ----------- */

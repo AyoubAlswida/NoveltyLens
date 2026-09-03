@@ -46,7 +46,7 @@ def _state(**overrides):
     """A state that would verify successfully, minus whatever a test removes."""
     base = {
         "run_id": "run-1",
-        "verification_requested": True,
+        "advanced_search": True,
         "approved_decomposition": {
             "decomposition_id": "dec-1",
             "version": 1,

@@ -126,13 +126,22 @@ class GraphState(TypedDict, total=False):
     """The durable run this graph execution belongs to. Empty for a search-only
     run, which has no `verification_runs` row."""
 
-    verification_requested: bool
-    """Whether this run goes through the verification branch at all.
+    advanced_search: bool
+    """Whether this run goes through the Advanced Search branch at all.
+
+    Advanced Search is a standard prior-art search preceded by guided editing:
+    the run pauses twice for a person (the understanding, then the search
+    queries) and then executes the ordinary search pipeline. It performs no
+    evidence verification and reaches no legal conclusion.
 
     A search-only run must traverse exactly the nodes it does today and emit
     exactly today's phases -- `tests/test_verification_integration.py` asserts
     both, because the existing SSE contract is live production behaviour and this
-    gate must not perturb it."""
+    branch must not perturb it.
+
+    Renamed from `verification_requested` when feature verification was withdrawn
+    from the product. Deliberately no alias and no dual-read period: this is an
+    internal contract with one repository consumer (spec section 10.5)."""
 
     problem_solved: str
     """Optional Stage 1 input, as the inventor typed it. Context for the

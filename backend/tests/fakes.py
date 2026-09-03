@@ -242,8 +242,6 @@ class FakeReportStore:
                 "created_at": run["created_at"].isoformat(),
                 "concepts": run["concepts"],
                 "query_count": run["query_count"],
-                "top_score": run["top_score"],
-                "verdict": run["verdict"],
                 "recommendations": run["recommendations"],
                 "patents": [
                     {

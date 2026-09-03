@@ -25,33 +25,40 @@ from workflow.types import UnapprovedArtifactError
 OWNER = "testnovelty@gmail.com"
 
 
-# --- the graph shape: a loop, not a bypass ---------------------------------
+# --- the graph shape: neither consumer is in the graph any more -------------
+#
+# Three tests were REMOVED here, and each named a guarantee that no longer has
+# anything to protect:
+#
+# * `test_a_manual_candidate_routes_back_into_the_real_pipeline` (case T) --
+#   asserted `gate_b -> absorb_manual_candidates -> normalize_publications`;
+# * `test_the_manual_candidate_loop_returns_to_gate_b_for_approval` -- asserted a
+#   widened candidate set was approved again before reaching the verifier;
+# * `test_a_rerun_returns_to_the_reviewer_rather_than_marching_past_them`
+#   (case U) -- asserted `gate_c -> rerun_cells -> gate_c`.
+#
+# All three describe loops through Gate B, Gate C and the evidence layer. Feature
+# verification was withdrawn from the product: there is no candidate set to widen,
+# no matrix cell to rerun and no reviewer to return to. The guarantees did not
+# weaken -- the steps they sequenced are gone from the topology.
+#
+# `graph/work_requests.py` itself is RETAINED as legacy (spec section 10.3), with
+# the focused unit tests below, and the test that follows now asserts the thing
+# that replaced those three: it is unreachable from the compiled product graph.
 
 
-def test_a_manual_candidate_routes_back_into_the_real_pipeline():
-    """**Case T, literally.** A manually added publication passes normalization,
-    date screening, enrichment and eligibility *identically* to a discovered one,
-    so the edge goes back to `normalize_publications` -- the real nodes, not a
-    second implementation of their rules."""
-    edges = {(edge.source, edge.target) for edge in build_graph().get_graph().edges}
-    assert ("gate_b", "absorb_manual_candidates") in edges
-    assert ("absorb_manual_candidates", "normalize_publications") in edges
+def test_neither_work_request_consumer_is_in_the_compiled_graph():
+    """The replacement guarantee: retained module, no path to it.
 
-
-def test_the_manual_candidate_loop_returns_to_gate_b_for_approval():
-    """A widened candidate set must be approved again. If the loop rejoined after
-    Gate B, a publication nobody approved would reach the verifier."""
-    edges = {(edge.source, edge.target) for edge in build_graph().get_graph().edges}
-    assert ("rank_and_reduce", "gate_b") in edges
-    assert ("absorb_manual_candidates", "verify_features") not in edges
-
-
-def test_a_rerun_returns_to_the_reviewer_rather_than_marching_past_them():
-    """Case U. The reviewer asked a question; continuing to the draft would walk
-    past the answer."""
-    edges = {(edge.source, edge.target) for edge in build_graph().get_graph().edges}
-    assert ("gate_c", "rerun_cells") in edges
-    assert ("rerun_cells", "gate_c") in edges
+    Section 10.3 keeps `graph/work_requests.py` for historical reference; what
+    must stay true is that no compiled graph reaches it, so the nodes cannot run
+    against a product that has no UI or API for them.
+    """
+    graph = build_graph().get_graph()
+    edges = {(edge.source, edge.target) for edge in graph.edges}
+    for node in ("absorb_manual_candidates", "rerun_cells"):
+        assert node not in set(graph.nodes)
+        assert not any(node in (source, target) for source, target in edges)
 
 
 def test_neither_consumer_is_reachable_on_a_search_only_run():

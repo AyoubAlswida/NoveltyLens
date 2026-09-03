@@ -236,14 +236,14 @@ async def open_page(chrome: Chrome):
 
 def child_env() -> dict:
     env = dict(os.environ)
-    env["DATE_SCREENING_POLICY"] = "publication_lt_cutoff"
-    env["DATE_SCREENING_DECISION"] = "owner, 2026-08-28, evidence-layer-policies"
-    env["TEXT_VERSION_POLICY"] = "provider_publication_date"
-    env["TEXT_VERSION_DECISION"] = "owner, 2026-08-28, evidence-layer-policies"
+
+
+
+
     # No provider, no credential. A paid call is structurally impossible.
     env["DEPLOYMENT_PROFILE"] = "test"
-    env["VERIFIER_CAPABILITY_ENFORCEMENT"] = "deferred"
-    env["VERIFIER_CAPABILITY_DEFERRAL_DECISION"] = "acceptance run, owner decision 2026-08-29"
+
+
     env["WORKFLOW_EXECUTOR"] = "worker"
     env["SERVER_PORT"] = str(API_PORT)
     env["SERVER_HOST"] = "127.0.0.1"

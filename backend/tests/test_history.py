@@ -39,18 +39,26 @@ def test_a_completed_run_is_stored(deterministic, report_store):
     stored = report_store.runs[0]
     assert stored["description"] == DESCRIPTION
     assert stored["claims"] == CLAIMS
-    assert stored["top_score"] == result["top_score"]
-    assert stored["verdict"] == result["verdict"]
     assert stored["concepts"] == result["concepts"]
     assert stored["query_count"] == result["query_count"]
     assert stored["recommendations"] == result["recommendations"]
     assert stored["matches"] == result["patents"]
 
 
-def test_matches_are_stored_in_displayed_rank_order(deterministic, report_store):
-    list(run_graph_pipeline(DESCRIPTION, CLAIMS))
-    stored = [match["pct"] for match in report_store.runs[0]["matches"]]
-    assert stored == sorted(stored, reverse=True)
+def test_matches_are_stored_in_the_order_they_were_displayed(deterministic, report_store):
+    """`rank` is the only surviving record of the order.
+
+    The score that produced it is discarded before persistence, so there is
+    nothing to re-derive the ordering from on read -- this asserts the stored
+    sequence is the displayed sequence, element for element, rather than
+    asserting a numeric column is descending as it used to.
+    """
+    events = list(run_graph_pipeline(DESCRIPTION, CLAIMS))
+    displayed = [match["num"] for match in events[-1]["data"]["patents"]]
+    stored = [match["num"] for match in report_store.runs[0]["matches"]]
+
+    assert stored == displayed
+    assert len(stored) > 1, "a single match would make the order assertion vacuous"
 
 
 def test_the_result_event_is_not_sent_when_the_run_cannot_be_stored(deterministic):
@@ -69,10 +77,15 @@ def test_a_run_that_found_nothing_is_still_stored(report_store):
          patch("search.search.SOURCES", empty_source):
         events = list(run_graph_pipeline(DESCRIPTION, CLAIMS))
 
-    assert events[-1]["data"]["patents"] == []
+    data = events[-1]["data"]
+    assert data["patents"] == []
     assert len(report_store.runs) == 1
     assert report_store.runs[0]["matches"] == []
-    assert report_store.runs[0]["top_score"] == 0
+    # Nothing was scored, so nothing is rated. The payload carries no rating
+    # field at all rather than a neutral-looking one: "Novelty risk: Low" over
+    # an empty result set states a finding the run did not make.
+    assert "top_score" not in data
+    assert "verdict" not in data
 
 
 def test_history_returns_stored_runs_newest_first(deterministic, report_store):

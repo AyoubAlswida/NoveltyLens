@@ -31,46 +31,45 @@ PHASES: tuple[str, ...] = (
     "validate",
     "compare",
     "analyze",
-    # --- Verification workflow (Implementation Gate C) ---
+    # --- Advanced Search ---
     #
-    # Emitted ONLY on a run with `verification_requested`. A search-only run
-    # traverses exactly the nodes it did before and emits exactly the ten phases
-    # above -- these names existing in the vocabulary does not put them in a
-    # search-only stream.
+    # Emitted ONLY on a run with `advanced_search`. A search-only run traverses
+    # exactly the nodes it did before and emits exactly the ten phases above --
+    # these names existing in the vocabulary does not put them in a search-only
+    # stream.
+    #
+    # The phases of the withdrawn evidence layer and its gates (`normalize`,
+    # `screen_dates`, `enrich_epo`, `build_passages`, `confirm_eligibility`,
+    # `rank_candidates`, `verify`, `gate_b`, `gate_c`, `draft_report`, `gate_d`)
+    # were removed with their nodes. Unlike `semantic_search`/`fuse` below, those
+    # nodes are not coming back, so keeping their names in the vocabulary would
+    # describe a checklist the product can no longer produce.
     "decompose",
     # The SEARCH STRATEGY stage. Emitted between the approved understanding and
     # the search that uses it: `strategy` while the queries are being proposed,
-    # `gate_strategy` (below, with the other gate phases) while the run waits for
-    # a person to approve them.
+    # `gate_strategy` (below) while the run waits for a person to approve them.
     "strategy",
-    "normalize",
-    "screen_dates",
-    "enrich_epo",
-    "build_passages",
-    "confirm_eligibility",
-    "rank_candidates",
-    "verify",
-    # --- Human-in-the-Loop gates (Implementation Gate D) ---
+    # --- Human-in-the-Loop gates ---
     #
     # A gate phase is emitted immediately BEFORE the node calls `interrupt()`, so
     # the checklist shows what the run is waiting for rather than going quiet.
     # The pause itself is carried by the `review_required` and `paused` SSE event
-    # types, not by a phase -- a phase says "this step is running", and every
-    # one of these steps is running: it is waiting for a person.
+    # types, not by a phase -- a phase says "this step is running", and both of
+    # these steps are running: they are waiting for a person.
     "gate_a",
     "gate_strategy",
-    "gate_b",
-    "gate_c",
-    "draft_report",
-    "gate_d",
 )
 """The complete progress vocabulary, in checklist order.
 
 This tuple must stay identical to the frontend's ``PHASE_ORDER`` array
-(``frontend/src/app/App.tsx``), which as of ticket P3.7 drives the real progress
-checklist off this stream rather than a simulated timer.  **Changing this tuple
+(``frontend/src/app/models/report.ts``), which drives the real progress
+checklist off this stream rather than a simulated timer, **minus exactly
+`semantic_search` and `fuse`** whose nodes are disabled.  **Changing this tuple
 means changing both files in the same commit** - there is no longer a grace
-period where the backend can extend the vocabulary on its own.
+period where the backend can extend the vocabulary on its own.  The agreement is
+asserted in both directions: a phase the frontend lists that the backend cannot
+emit stalls the checklist, and one the backend emits that the frontend omits
+hides real work.
 
 ``semantic_search``/``fuse``/``validate`` correspond to the three Phase 3 agents
 that sit between Keyword Search and Ranking; ``enrich`` covers the full-text

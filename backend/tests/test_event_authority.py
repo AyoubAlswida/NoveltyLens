@@ -460,7 +460,7 @@ def test_finalize_success_writes_one_result_and_completes(pg, make_run):
         run_id=run_id,
         owner_id=OWNER,
         fence_token=token,
-        payload={"type": "result", "data": {"top_score": 0}},
+        payload={"type": "result", "data": {"query_count": 0}},
     )
     assert _event_types(pg, run_id) == ["progress", "result"]
     assert pg.execute(

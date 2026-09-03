@@ -4,8 +4,17 @@ import { AnalysisReport } from '../models/report';
 /**
  * PDF / Word / JSON export. Ported from the React build -- this logic was
  * already plain TypeScript with no framework surface, so only the wrapper
- * changed. buildReportHtml's template literal is byte-identical to the React
- * version, so exported documents are unchanged.
+ * changed.
+ *
+ * **buildReportHtml is no longer byte-identical to the React version, and the
+ * standing promise that it would be is deliberately withdrawn.** Exports lost
+ * their Similarity column, their "Top similarity" figure and their "Novelty
+ * verdict" figure when the product stopped publishing a numeric score and an
+ * overall verdict; keeping the exports byte-stable would have meant keeping
+ * exactly the numbers the rest of the change removes. The export tests are
+ * re-pinned against the current output. Everything else about the template is
+ * still ported verbatim, and the .doc/.json output should stay stable from
+ * here -- if you change it again, re-pin those tests in the same commit.
  *
  * The exported document is deliberately always light-themed: it is a separate
  * document that does not inherit the app's data-theme, and a dark-background
@@ -49,7 +58,6 @@ export class ExportService {
         <tr>
           <td class="mono">${this.escapeHtml(patent.num)}</td>
           <td>${this.escapeHtml(patent.title)}<div class="rationale">${this.escapeHtml(patent.rationale)}</div></td>
-          <td class="center">${patent.pct}%</td>
           <td class="center risk-${patent.risk.toLowerCase()}">${this.escapeHtml(patent.risk)}</td>
         </tr>`,
     )
@@ -61,6 +69,12 @@ export class ExportService {
     const concepts = data.concepts
     .map((concept) => `<span class="chip">${this.escapeHtml(concept)}</span>`)
     .join("");
+
+    // The rating of the closest match, or undefined when the run found nothing.
+    // The summary block below is omitted entirely in that case rather than
+    // printing a rating over an empty table -- an exported document outlives the
+    // screen it came from, so a fabricated "Low" there is the more durable lie.
+    const topRisk = data.patents[0]?.risk;
 
     return `<!doctype html>
 <html${forWord ? ' xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"' : ""}>
@@ -107,16 +121,15 @@ ${forWord ? "  @page WordSection1 { size: A4; margin: 2cm; }\n  div.WordSection1
 ${forWord ? '<div class="WordSection1">' : ""}
   <h1>${this.escapeHtml(data.title)}</h1>
   <div class="meta">Novelty Lens &middot; Submitted ${this.escapeHtml(data.date)} &middot; ${data.patents.length} patents scanned</div>
-  <div class="summary">
-    <div><div class="label">Top similarity</div><div class="big">${data.top_score}%</div></div>
-    <div><div class="label">Novelty verdict</div><div class="big">${this.escapeHtml(data.verdict)}</div></div>
-  </div>
+${topRisk ? `  <div class="summary">
+    <div><div class="label">Novelty risk</div><div class="big">${this.escapeHtml(topRisk)}</div></div>
+  </div>` : ""}
   <div class="label">Key concepts</div>
   <div style="margin:8px 0">${concepts || "<span class='rationale'>None extracted</span>"}</div>
   <h2>Prior-art matches</h2>
   <table>
-    <thead><tr><th>Number</th><th>Title</th><th class="center">Match</th><th class="center">Risk</th></tr></thead>
-    <tbody>${rows || "<tr><td colspan='4' class='rationale'>No matches found.</td></tr>"}</tbody>
+    <thead><tr><th>Number</th><th>Title</th><th class="center">Novelty risk</th></tr></thead>
+    <tbody>${rows || "<tr><td colspan='3' class='rationale'>No matches found.</td></tr>"}</tbody>
   </table>
   <h2>Recommendations</h2>
   <ol>${recommendations || "<li class='rationale'>None.</li>"}</ol>

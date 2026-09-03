@@ -198,13 +198,20 @@ def test_an_unresolved_unclear_requirement_blocks_gate_c(pg, make_run):
 # --- row 132: no final report before the required gates complete --------------
 
 
-def test_no_path_to_the_end_of_the_graph_skips_gate_d():
+def test_no_path_to_the_end_of_the_graph_skips_the_two_approvals():
     """A `result` cannot be produced while a mandatory gate is outstanding.
 
     Asserted on the topology rather than by running a graph: the property is
     "there is no such path", and a passing execution only shows that one path did
-    not take it. `END` is reachable from exactly one node, and that node is Gate
-    D.
+    not take it.
+
+    This used to read `into_end == {"gate_d"}`. With feature verification
+    withdrawn, `END` is reached from `explain` -- the ordinary end of the search
+    pipeline -- for both kinds of run. The gate that guarded the exit is gone, so
+    the property is re-expressed where it still bites: on an Advanced Search run
+    the only route into the search half of the graph passes both approvals, so no
+    terminal result exists that skipped them. `explain` reaching END is not a
+    bypass; it is the pipeline finishing.
     """
     from langgraph.graph import END
 
@@ -212,10 +219,27 @@ def test_no_path_to_the_end_of_the_graph_skips_gate_d():
 
     builder = _assemble()
     into_end = {source for source, target in builder.edges if target == END}
-    assert into_end == {"gate_d"}, (
-        "these nodes reach END without passing Gate D: "
-        + str(sorted(into_end - {"gate_d"}))
+    assert into_end == {"explain"}, (
+        "something other than the end of the pipeline reaches END: "
+        + str(sorted(into_end - {"explain"}))
     )
+
+    # The approvals still fence the search: `search_orchestrator` -- the first
+    # node that can reach a provider, and therefore the first that can produce
+    # anything a result is built from -- is entered either by the search-only
+    # branch or through both gates, and by no third route.
+    #
+    # Read off the COMPILED graph, not `builder.edges`: the search-only arm is a
+    # conditional edge, and an uncompiled builder does not list those, so the
+    # same check against `builder` would silently see one incoming edge instead
+    # of two and assert a topology that is not the one that runs.
+    from graph.pipeline import build_graph
+
+    compiled = {(edge.source, edge.target) for edge in build_graph().get_graph().edges}
+    assert {s for s, t in compiled if t == "search_orchestrator"} == {
+        "expand_queries",
+        "gate_strategy",
+    }
 
 
 def test_the_draft_must_exist_before_it_can_be_approved(pg, make_run):
@@ -250,6 +274,10 @@ def _stub_adapter():
         build=unreachable,
         initial_input=unreachable,
         result_payload=unreachable,
+        # `unreachable` like the rest, not a no-op: this adapter asserts nothing
+        # runs during an outage, and a silent no-op here would let a persistence
+        # call slip through unnoticed.
+        persist_result=unreachable,
         gate_of=unreachable,
         review_payload=unreachable,
         resume_value=unreachable,

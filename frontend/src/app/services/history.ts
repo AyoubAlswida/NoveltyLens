@@ -63,8 +63,6 @@ export function reportFromHistory(entry: HistoryEntry): AnalysisReport {
       key_overlap: patent.key_overlap ?? [],
       url: patent.url ?? '',
     })),
-    top_score: entry.top_score ?? 0,
-    verdict: entry.verdict,
     recommendations: entry.recommendations ?? [],
     query_count: entry.query_count ?? 0,
   };

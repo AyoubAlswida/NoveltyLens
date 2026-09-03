@@ -1,0 +1,174 @@
+"""The similarity score is transient: it orders and it rates, then it is gone.
+
+Spec section 5. The percentage and the overall verdict were removed from every
+output the product has - the SSE ``result`` event, the stored row, the History
+response and the JSON export the frontend builds from that same object.
+
+These tests **walk the serialized structure** rather than checking named keys.
+A named-key assertion only catches the field coming back under the name it left
+under; the failure mode worth guarding is the one section 12 names -- "do not
+let a removed percentage come back as a nearby number wearing a different name"
+-- so the walk looks for a *value* that is a similarity number in a place a
+rating belongs, whatever it is called.
+"""
+
+import json
+from unittest.mock import patch
+
+import pytest
+
+import server
+from auth import issue_token
+from fastapi.testclient import TestClient
+from graph.pipeline import run_graph_pipeline
+from graph.ranking import format_matches
+from models import ComparisonResult, PatentRecord
+from tests.test_pipeline_contract import (
+    CLAIMS,
+    DESCRIPTION,
+    FAKE_SOURCES,
+    _fake_llm_chat,
+)
+
+AUTH = {"Authorization": f"Bearer {issue_token('testnovelty@gmail.com')}"}
+
+BANNED_KEYS = {"pct", "top_score", "verdict", "score", "similarity", "percent", "match_level"}
+"""Names a reintroduced score would plausibly arrive under."""
+
+
+@pytest.fixture
+def deterministic():
+    with patch("llm._llm_chat", side_effect=_fake_llm_chat), \
+         patch("search.search.SOURCES", FAKE_SOURCES):
+        yield
+
+
+def _walk(node, path="$"):
+    """Yield every ``(path, key, value)`` scalar entry in a nested structure."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield path, key, value
+            yield from _walk(value, f"{path}.{key}")
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            yield from _walk(value, f"{path}[{index}]")
+
+
+def _offending(payload):
+    """Every entry whose *name* suggests a published similarity figure."""
+    return [
+        (path, key, value)
+        for path, key, value in _walk(payload)
+        if key.lower() in BANNED_KEYS
+    ]
+
+
+def _numeric_ratings(payload):
+    """Every 0-100 number sitting where a rating belongs.
+
+    Catches a percentage returning under an innocent name. ``query_count`` is
+    excluded by name because it is a genuine count, not a rating.
+    """
+    allowed_numeric_keys = {"query_count", "rank"}
+    return [
+        (path, key, value)
+        for path, key, value in _walk(payload)
+        if isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and key.lower() not in allowed_numeric_keys
+    ]
+
+
+def test_the_result_event_publishes_no_score_or_verdict(deterministic):
+    events = list(run_graph_pipeline(DESCRIPTION, CLAIMS))
+    data = events[-1]["data"]
+
+    assert data["patents"], "a run with no matches would make this vacuous"
+    assert _offending(data) == []
+    assert _numeric_ratings(data) == []
+
+
+def test_the_stored_run_publishes_no_score_or_verdict(deterministic, report_store):
+    list(run_graph_pipeline(DESCRIPTION, CLAIMS))
+
+    stored = report_store.runs[0]
+    assert stored["matches"], "a run with no matches would make this vacuous"
+    assert _offending(stored) == []
+
+
+def test_the_history_response_publishes_no_score_or_verdict(deterministic, report_store):
+    list(run_graph_pipeline(DESCRIPTION, CLAIMS))
+
+    entries = TestClient(server.app, headers=AUTH).get("/api/history").json()
+    assert entries and entries[0]["patents"], "a bare response would make this vacuous"
+    assert _offending(entries) == []
+
+
+def test_the_json_export_payload_publishes_no_score_or_verdict(deterministic):
+    """`services/export.ts` serializes the report object verbatim.
+
+    ``downloadReportJson`` is ``JSON.stringify(data)`` over exactly the object
+    asserted here, so pinning this payload pins the export without needing a
+    browser.
+    """
+    events = list(run_graph_pipeline(DESCRIPTION, CLAIMS))
+    round_tripped = json.loads(json.dumps(events[-1]["data"]))
+
+    assert _offending(round_tripped) == []
+    assert _numeric_ratings(round_tripped) == []
+
+
+def _match_with_score(similarity: float) -> dict:
+    comparison = ComparisonResult(
+        patent=PatentRecord(id="US1A", title="A patent", abstract="", source="Google Patents"),
+        similarity_score=similarity,
+    )
+    return format_matches([comparison], ["a rationale"], [["a tag"]])[0]
+
+
+@pytest.mark.parametrize(
+    "percent, expected",
+    [
+        (75, "High"),
+        (74, "Medium"),
+        (26, "Medium"),
+        (25, "Low"),
+        # The ends, so a future refactor cannot satisfy the boundaries above by
+        # accident while inverting the scale.
+        (100, "High"),
+        (0, "Low"),
+    ],
+)
+def test_the_risk_thresholds_hold_at_their_boundaries(percent, expected):
+    """``>= 75`` High, ``<= 25`` Low, Medium between.
+
+    Pinned at the boundaries because ``<= 25`` reads like a typo for ``< 25``
+    and tidying it moves a real patent from Low to Medium. 75 and 25 are the
+    values that change meaning if anyone does.
+    """
+    assert _match_with_score(percent / 100)["risk"] == expected
+
+
+def test_matches_are_ordered_strongest_first_without_a_published_score():
+    """Ordering survives the score's removal.
+
+    ``format_matches`` receives comparisons in arbitrary order here to prove the
+    sort is real rather than an accident of the input already being sorted.
+    """
+    comparisons = [
+        ComparisonResult(
+            patent=PatentRecord(id=f"US{index}A", title=f"Patent {index}", abstract="", source="x"),
+            similarity_score=similarity,
+        )
+        for index, similarity in enumerate([0.30, 0.90, 0.10, 0.60])
+    ]
+    formatted = format_matches(
+        comparisons,
+        [f"rationale {i}" for i in range(4)],
+        [[f"tag {i}"] for i in range(4)],
+    )
+
+    assert [match["num"] for match in formatted] == ["US1A", "US3A", "US0A", "US2A"]
+    # And the ratings come out grouped as a side effect of that single sort,
+    # which is why section 5.2 forbids grouping first and sorting within groups.
+    assert [match["risk"] for match in formatted] == ["High", "Medium", "Medium", "Low"]

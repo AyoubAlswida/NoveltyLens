@@ -321,6 +321,9 @@ _ADAPTER = GraphAdapter(
     build=_build,
     initial_input=lambda run: {"steps": []},
     result_payload=lambda run, state: {},
+    # Explicit no-op -- executor-only adapter, no report to store. See the
+    # `persist_result` docstring on `GraphAdapter`.
+    persist_result=lambda conn, run, state, data: None,
     gate_of=lambda value: WorkflowGate.A,
     review_payload=lambda run, gate, value: {},
     resume_value=lambda run, resumed: None,

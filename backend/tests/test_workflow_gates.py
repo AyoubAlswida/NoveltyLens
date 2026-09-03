@@ -34,10 +34,32 @@ GATES_SOURCE = BACKEND / "graph" / "gates.py"
 # --- every gate is wired, and the list is derived ---------------------------
 
 
-def test_every_workflow_gate_in_the_enum_has_a_graph_node():
-    """Derived from `WorkflowGate`, not from a hand-kept list: a fifth gate added
-    to the enum and forgotten in the graph fails here rather than never pausing."""
-    assert set(gates.GATE_NODES) == set(WorkflowGate)
+def test_the_live_gates_are_exactly_the_two_advanced_search_pauses():
+    """Advanced Search pauses twice: the understanding, then the search queries.
+
+    Was `set(GATE_NODES) == set(WorkflowGate)`. The enum is deliberately WIDER
+    than the graph now -- `B`/`C`/`D` remain members so a legacy run parked at one
+    of them can still be read back and reported as uncontinuable (spec section
+    6.3) -- so equality against the enum would now assert the withdrawn gates back
+    into the topology. The live set is named explicitly instead, which fails just
+    as loudly if a gate is added and not wired.
+    """
+    assert set(gates.GATE_NODES) == {WorkflowGate.A, WorkflowGate.STRATEGY}
+
+
+def test_the_withdrawn_gates_remain_readable_but_have_no_node():
+    """The other half: B/C/D are still nameable, and reach nothing.
+
+    A legacy `verification_runs.current_gate` of `B` has to parse -- otherwise the
+    "this run cannot be continued" path fails with an enum error instead of the
+    explanation it exists to give.
+    """
+    for withdrawn in (WorkflowGate.B, WorkflowGate.C, WorkflowGate.D):
+        assert WorkflowGate(str(withdrawn)) is withdrawn, "no longer readable"
+        assert withdrawn not in gates.GATE_NODES
+
+    nodes = set(build_graph().get_graph().nodes)
+    assert not ({"gate_b", "gate_c", "gate_d"} & nodes)
 
 
 def test_every_gate_node_is_registered_in_the_compiled_graph():
@@ -49,15 +71,33 @@ def test_every_gate_node_is_registered_in_the_compiled_graph():
         assert node_name in nodes, f"workflow gate {gate} is not in the graph"
 
 
-def test_the_draft_report_node_sits_between_gate_c_and_gate_d():
-    """Case AC: a report cannot be approved into existence. Gate D requires a
-    draft that already exists and was presented, so the draft is assembled
-    *between* the two gates rather than after the approval."""
+def test_an_advanced_search_run_ends_after_explain():
+    """Replaces `test_the_draft_report_node_sits_between_gate_c_and_gate_d`.
+
+    That test guarded case AC -- a report cannot be approved into existence --
+    for the Gate D draft report. Feature verification was withdrawn, so there is
+    no draft, no Gate D and no case AC to guard; the guarantee did not weaken,
+    the feature it protected no longer exists.
+
+    What replaces it is the property that took its place: an Advanced Search run
+    terminates after `explain`, exactly as a search-only run does, and reaches
+    none of the withdrawn evidence nodes. Asserted against the compiled node set
+    rather than a run transcript, so it holds without executing anything.
+    """
     graph = build_graph().get_graph()
     edges = {(edge.source, edge.target) for edge in graph.edges}
-    assert ("gate_c", "draft_report") in edges
-    assert ("draft_report", "gate_d") in edges
-    assert ("gate_d", "__end__") in edges
+    assert ("explain", "__end__") in edges
+
+    withdrawn = {
+        "normalize_publications", "screen_dates", "enrich_epo", "build_passages",
+        "confirm_eligibility", "rank_and_reduce", "gate_b", "verify_features",
+        "gate_c", "draft_report", "gate_d", "absorb_manual_candidates",
+        "rerun_cells", "regenerate_understanding", "regenerate_strategy",
+    }
+    assert not (withdrawn & set(graph.nodes)), "a withdrawn node is back in the graph"
+    assert not any(
+        source in withdrawn or target in withdrawn for source, target in edges
+    ), "a withdrawn node is still referenced by an edge"
 
 
 def test_gate_a_precedes_the_search_that_uses_its_decomposition():
@@ -99,21 +139,31 @@ def test_no_provider_call_is_reachable_before_both_approvals():
     assert into_strategy_gate == {"propose_strategy"}
 
     into_propose = {source for source, target in edges if target == "propose_strategy"}
-    assert into_propose == {"gate_a", "regenerate_strategy"}
+    # `gate_a` alone. This set used to also carry `regenerate_strategy`; with
+    # regeneration removed from the product (spec section 10.2) the chain is
+    # strictly TIGHTER than it was, not looser -- one way in, from the gate.
+    assert into_propose == {"gate_a"}
+
+    into_gate_a = {source for source, target in edges if target == "gate_a"}
+    assert into_gate_a == {"decompose"}
 
 
-def test_gate_b_precedes_the_verifier_that_uses_its_candidate_set():
-    """No publication is verified against that a person did not put in the set."""
-    edges = {(edge.source, edge.target) for edge in build_graph().get_graph().edges}
-    assert ("rank_and_reduce", "gate_b") in edges
-    assert ("gate_b", "verify_features") in edges
-    assert ("rank_and_reduce", "verify_features") not in edges
+# `test_gate_b_precedes_the_verifier_that_uses_its_candidate_set` was REMOVED,
+# not weakened. It guaranteed that no publication was verified against unless a
+# person put it in the approved candidate set. There is no verifier and no
+# candidate set any more -- Gate B, `rank_and_reduce` and `verify_features` are
+# all out of the topology -- so the guarantee has nothing left to protect.
+# `test_an_advanced_search_run_ends_after_explain` asserts those nodes are
+# unreachable, which is the stronger statement: not "the approval comes first"
+# but "the step does not exist".
 
 
 # --- the phase vocabulary is synchronized -----------------------------------
 
 
-GATE_PHASES = ("gate_a", "gate_strategy", "gate_b", "gate_c", "draft_report", "gate_d")
+GATE_PHASES = ("gate_a", "gate_strategy")
+"""The phases the two live gates emit. Was six; `gate_b`, `gate_c`,
+`draft_report` and `gate_d` went with their nodes."""
 
 
 @pytest.mark.parametrize("phase", GATE_PHASES)
@@ -192,9 +242,13 @@ def test_gate_nodes_read_approvals_only_through_the_approved_only_readers():
         for node in ast.walk(_gates_ast())
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
     }
+    # The two live gates' readers. `require_approved_candidate_set` and
+    # `require_approved_report` went with Gates B and D; the readers themselves
+    # are retained in `workflow/approvals.py`, but no gate node calls them, so
+    # asserting a call would assert the withdrawn gates back into this file.
     assert "require_approved_decompositions" in called
-    assert "require_approved_candidate_set" in called
-    assert "require_approved_report" in called
+    assert "require_approved_understanding" in called
+    assert "require_approved_search_strategy" in called
 
 
 def test_no_gate_node_returns_the_resume_value_as_a_decision():
@@ -224,7 +278,7 @@ def test_no_auto_approval_switch_exists_anywhere_in_the_gate_path():
 # --- a gate cannot pause a run it cannot be resumed for --------------------
 
 
-@pytest.mark.parametrize("gate_node", ["gate_a_node", "gate_b_node", "gate_c_node", "gate_d_node"])
+@pytest.mark.parametrize("gate_node", ["gate_a_node", "gate_strategy_node"])
 def test_a_gate_without_a_run_id_refuses_rather_than_pausing(gate_node):
     """A search-only run must never reach a gate. If one somehow did, a pause
     nobody can resume is worse than no pause -- so it raises instead."""
@@ -281,9 +335,11 @@ def test_the_resume_value_carries_no_approval():
         assert forbidden not in rendered
 
 
-def test_the_adapter_derives_verification_from_the_run_row_existing():
-    """Every row in `verification_runs` is a verified run, so the flag is derived
-    from that fact rather than passed in beside it -- the two cannot disagree."""
+def test_the_adapter_derives_advanced_search_from_the_run_row_existing():
+    """Every row in `verification_runs` is an Advanced Search run, so the flag is
+    derived from that fact rather than passed in beside it -- the two cannot
+    disagree. (The flag was `verification_requested`; renamed with no alias and
+    no dual-read period, spec section 10.5.)"""
     graph_input = initial_input(
         {
             "run_id": "r",
@@ -294,7 +350,7 @@ def test_the_adapter_derives_verification_from_the_run_row_existing():
             "text_version_policy": "provider_publication_date",
         }
     )
-    assert graph_input["verification_requested"] is True
+    assert graph_input["advanced_search"] is True
     assert graph_input["run_id"] == "r"
 
 

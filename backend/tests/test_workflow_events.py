@@ -127,11 +127,11 @@ def test_terminal_event_reads_back_the_single_terminal(pg, make_run):
         run_id=run_id,
         owner_id=OWNER,
         fence_token=token,
-        payload={"type": "result", "data": {"top_score": 3}},
+        payload={"type": "result", "data": {"query_count": 3}},
     )
     terminal = events.terminal_event(pg, run_id=run_id)
     assert terminal["event_type"] == "result"
-    assert terminal["payload"]["data"]["top_score"] == 3
+    assert terminal["payload"]["data"]["query_count"] == 3
 
 
 def test_a_rolled_back_transaction_restores_the_sequence_allocator(pg, make_run):

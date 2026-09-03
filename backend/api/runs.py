@@ -1,4 +1,19 @@
-"""The verified-run HTTP surface (spec section 10).
+"""The Advanced Search HTTP surface.
+
+Advanced Search is a standard prior-art search preceded by guided editing: the
+run pauses twice for a person -- once on the invention understanding (presented
+as stages 1 and 2) and once on the search queries (stage 3) -- and then executes
+the ordinary search pipeline. It performs no evidence verification, reaches no
+legal conclusion, and presents no numeric score.
+
+The Gate B/C/D surface that used to live here -- candidate curation, the
+verification matrix and its cells, the draft report and its approval, and both
+regeneration endpoints -- was removed when feature verification was withdrawn
+from the product. The tables, migrations and rows behind it are all retained
+(nothing is deleted to make a change tidy), and so are the modules under
+`backend/verification/`, `backend/evidence/` and `graph/work_requests.py`; there
+is simply no route to any of it. Editing the summary, the elements and the
+queries replaces regeneration.
 
 ## The one rule that shapes every handler in this file
 
@@ -31,10 +46,11 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, ConfigDict
 
 import db
 from api.deps import ApiError, CurrentUser, LastEventId, require_idempotency_key, to_http
-from workflow import approvals, evidence_store, review as review_store, store, stream
+from workflow import approvals, events, review as review_store, store, stream
 from workflow.idempotency import idempotent
 from workflow.types import IllegalStateError, RunNotFoundError, RunStatus, WorkflowGate
 
@@ -133,22 +149,55 @@ def _own(conn, run_id: str, email: str) -> dict:
 # --- admission --------------------------------------------------------------
 
 
+POLICY_NOT_APPLICABLE = "advanced_search_not_applicable"
+"""Written to the legacy `date_policy` / `text_version_policy` columns.
+
+Both are `NOT NULL` (migration 0006) and both were frozen per run so an evidence
+verdict could name the policy it was produced under. Advanced Search screens no
+dates and selects no text version, so there is no policy to freeze -- and reusing
+a real policy name here would record a screening decision no run ever made.
+
+An explicit constant, not `''`: an empty string reads as "nobody filled this in",
+while this says the question does not apply to how this run works. Existing rows
+keep the values they were admitted under (spec section 10.4).
+"""
+
+
+class CreateRunRequest(BaseModel):
+    """The Advanced Search admission body: a description, optionally claims.
+
+    **Strict.** `extra="forbid"` refuses an unknown field rather than ignoring
+    it, which is what makes the removal of `problem_solved`,
+    `inventor_novelty_statement` and `cutoff_date` visible. A client still
+    sending them has not been updated, and silently accepting the request would
+    hide that while quietly dropping what it sent -- the caller would believe
+    context reached the run when nothing did.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    description: str
+    claims: Optional[str] = None
+
+
 @router.post("", status_code=201)
-async def create_run(email: CurrentUser, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
-    """Admit a durable verified run. **Returns immediately**; the worker executes.
+async def create_run(email: CurrentUser, body: CreateRunRequest) -> dict[str, Any]:
+    """Admit a durable Advanced Search run. **Returns immediately**; the worker executes.
 
-    ## Everything is validated before anything is written
+    ## What admission checks
 
-    Spec section 10: the date and text-version policies, their recorded
-    decisions, and the verifier capability decision are all checked **before**
-    the first insert. On failure this returns `422 POLICY_NOT_APPROVED` with
-    `{missing: [...]}` and creates **no run, no lease, no checkpoint, no event and
-    no successful idempotency record** -- there is nothing to clean up because
-    nothing was made.
+    A description, and nothing else. Advanced Search is a standard prior-art
+    search preceded by guided editing: it runs no verifier, screens no dates and
+    selects no text version, so there is no deployment policy it could be
+    inadmissible under.
 
-    That ordering is the whole design. A run admitted and then found
-    unadmissible would sit `QUEUED` forever, or worse, be picked up by a worker
-    and executed under a policy nobody recorded.
+    The verifier-policy gate that used to stand here is **gone** (spec section
+    10.4). It called `evidence/policy.py::validate_admission_policies` and could
+    refuse admission because `VERIFIER_CAPABILITY_ENFORCEMENT`,
+    `DATE_SCREENING_POLICY` or `TEXT_VERSION_POLICY` was unset -- refusing a
+    search over configuration for a feature the product no longer has. The module
+    is retained as standalone legacy tooling; nothing on this path calls it, and
+    no `capability_qualified` field is returned.
 
     ## What admission does not do
 
@@ -159,55 +208,36 @@ async def create_run(email: CurrentUser, body: dict[str, Any] = Body(...)) -> di
     admitted run stays `QUEUED` -- adding API replicas does not help, because the
     API never executes a graph.
     """
-    from evidence.policy import PolicyNotApproved, validate_admission_policies
-
-    description = str(body.get("description") or "").strip()
+    description = body.description.strip()
     if not description:
         raise ApiError(
             422, "INVALID_REQUEST", "A run needs a description of the invention."
         )
 
-    try:
-        policies = validate_admission_policies()
-    except PolicyNotApproved as error:
-        # Structured, safe fields. `missing` names configuration, never a value.
-        raise ApiError(
-            422,
-            "POLICY_NOT_APPROVED",
-            "This deployment cannot admit a verified run yet.",
-            missing=list(getattr(error, "missing", []) or []),
-        ) from error
-    except Exception as error:  # CapabilityNotQualified and anything else
-        raise ApiError(
-            422,
-            "POLICY_NOT_APPROVED",
-            "This deployment cannot admit a verified run yet.",
-            missing=[type(error).__name__],
-        ) from error
-
     with db.connect() as conn:
         try:
             # One transaction: a run never exists without the submission it was
             # created from. `description` is the required source input and is
-            # never rewritten; the two optional fields are context for the
-            # analysis and are never treated as evidence.
+            # never rewritten.
             with conn.transaction():
                 run_id = store.create_run(
                     conn,
                     description=description,
-                    claims=body.get("claims"),
-                    cutoff_date=body.get("cutoff_date"),
-                    date_policy=policies.date_screening_policy,
-                    text_version_policy=policies.text_version_policy,
+                    claims=body.claims,
+                    # Legacy column, kept per constraint 7 and never collected.
+                    cutoff_date=None,
+                    date_policy=POLICY_NOT_APPLICABLE,
+                    text_version_policy=POLICY_NOT_APPLICABLE,
                     created_by=email,
                 )
+                # The two legacy context columns, written empty. Kept as a call
+                # so the run row is still fully initialized in one transaction;
+                # nothing collects or exposes either value any more.
                 store.set_submission_context(
                     conn,
                     run_id=run_id,
-                    problem_solved=str(body.get("problem_solved") or "").strip(),
-                    inventor_novelty_statement=str(
-                        body.get("inventor_novelty_statement") or ""
-                    ).strip(),
+                    problem_solved="",
+                    inventor_novelty_statement="",
                 )
         except Exception as error:
             raise to_http(error) from error
@@ -216,11 +246,6 @@ async def create_run(email: CurrentUser, body: dict[str, Any] = Body(...)) -> di
         "run_id": run_id,
         "status": "QUEUED",
         "stream_url": f"/api/runs/{run_id}/stream",
-        # Stated at admission rather than discovered in the report. A run
-        # admitted under a recorded deferral produces verdicts from a verifier
-        # this runtime has never qualified, and the person starting it is the one
-        # who should know.
-        "capability_qualified": policies.capability_qualified,
     }
 
 
@@ -279,7 +304,7 @@ async def stream_run(
     return StreamingResponse(frames(), media_type="text/event-stream", headers=SSE_HEADERS)
 
 
-# --- Workflow Gate A: the feature decomposition -----------------------------
+# --- Workflow Gate A: the invention understanding (stages 1 and 2) ----------
 
 
 @router.get("/{run_id}/gates/A")
@@ -297,24 +322,13 @@ async def gate_a(run_id: str, email: CurrentUser) -> dict[str, Any]:
     check and this is the courtesy.
     """
     from graph.gates import GATE_A_RULES
-    from graph.limits import (
-        MAX_CAPABILITIES,
-        MAX_ELEMENTS_PER_CAPABILITY,
-        MAX_ELEMENTS_TOTAL,
-    )
+    from graph.limits import MAX_ELEMENTS_TOTAL
     from workflow import gate_state
-    from workflow import understanding as understanding_store
 
     with db.connect() as conn:
         try:
             run = store.get_run(conn, run_id=run_id, actor_email=email)
             version = approvals.latest_approved_decomposition_version(conn, run_id=run_id)
-            proposal = understanding_store.latest_proposal(
-                conn, run_id=run_id, actor_email=email
-            )
-            regenerations = store.list_understanding_regenerations(
-                conn, run_id=run_id, actor_email=email
-            )
         except Exception as error:
             raise to_http(error, run_id=run_id) from error
 
@@ -333,32 +347,82 @@ async def gate_a(run_id: str, email: CurrentUser) -> dict[str, Any]:
         )
 
     return {
+        # --- the editable business payload (spec section 4.2.1) -------------
+        #
+        # Three fields, and nothing that revives a removed concept: no capability
+        # objects, no `core`, no relationships, no per-element ids.
         **gate_state.gate_a_payload(state),
         # The run row is the record of what was submitted and survives a
-        # checkpoint compaction, so it wins over graph state for these three.
+        # checkpoint compaction, so it wins over graph state for the description.
+        # Read-only, and NOT accepted by the approval endpoint: the description is
+        # never rewritten -- not by a proposal, not by an edit, not by an approval.
         "original_description": run["description"],
-        "problem_solved": run.get("problem_solved") or "",
-        "inventor_novelty_statement": run.get("inventor_novelty_statement") or "",
-        # What the machine originally said, kept even after the inventor edits,
-        # so the screen can show the comparison rather than only the result.
-        "proposal": proposal,
-        "regenerations": [
-            {
-                "from_version": item["from_version"],
-                "feedback": item["feedback"],
-                "processed": item["processed"],
-            }
-            for item in regenerations
-        ],
+        # --- generic transport metadata, outside the business payload -------
         "editable": True,
         "approved_version": version,
         "completion_rules": list(GATE_A_RULES),
-        "limits": {
-            "max_capabilities": MAX_CAPABILITIES,
-            "max_elements_per_capability": MAX_ELEMENTS_PER_CAPABILITY,
-            "max_elements_total": MAX_ELEMENTS_TOTAL,
-        },
+        "limits": {"max_elements_total": MAX_ELEMENTS_TOTAL},
     }
+
+
+TECHNICAL_GROUP_ID = "F1"
+"""The single group the flat element list is stored under (spec section 4.2.3).
+
+`feature_decompositions` is keyed per group and `decomposition_requirement_ids`
+enforces uniqueness within one; storing everything under one group is what lets a
+flat list of strings reuse that schema unchanged. The id never reaches a screen
+or a payload -- it exists so the storage layer has a group to key on.
+"""
+
+
+def _one_technical_group(summary: str, elements: list[Any]) -> list[dict[str, Any]]:
+    """The flat public list as the one technical group storage expects.
+
+    **Ids are minted here, never submitted.** The public shape is a list of
+    strings, so `E1..En` are assigned in the order the reviewer left them --
+    which is why duplicate and missing ids are unreachable rather than validated
+    against.
+
+    **Every element is written `core = TRUE`**, and that is the honest encoding
+    rather than a convenient default: `decomposition_elements.core` is NOT NULL
+    with no default, the reviewer no longer marks anything as core, and every
+    element they approved counts. Writing them all core is what makes the
+    internal `NO_CORE_ELEMENT` condition unreachable instead of deleted and
+    hoped for.
+
+    `relationships` is empty and stays empty -- relationships are gone from the
+    product, so `decomposition_relationships` gets no rows.
+    """
+    return [
+        {
+            "feature_id": TECHNICAL_GROUP_ID,
+            "feature_version": "1",
+            "feature_text": summary,
+            "elements": [
+                {
+                    "element_id": f"E{index}",
+                    "text": str(text or ""),
+                    "core": True,
+                    "order": index,
+                }
+                for index, text in enumerate(elements, start=1)
+            ],
+            "relationships": [],
+        }
+    ]
+
+
+def _next_understanding_version(run_id: str, email: str) -> int:
+    """The version this approval writes.
+
+    Supplied by the server rather than by the request. The reviewer edits text,
+    not versions, so `NO_VERSION` and "the approval names a version explicitly"
+    describe a field the public shape no longer has -- and a client-chosen
+    version could silently overwrite an approved one.
+    """
+    with db.connect() as conn:
+        current = approvals.latest_approved_decomposition_version(conn, run_id=run_id)
+    return int(current or 0) + 1
 
 
 @router.post("/{run_id}/gates/A/approve")
@@ -377,10 +441,10 @@ async def approve_gate_a(
     that the human changed anything.
     """
     key = _key(body)
-    decomposition = body.get("decomposition") or {}
-    features = decomposition.get("features") or decomposition.get("decompositions") or []
-    summary = str(decomposition.get("summary") or body.get("summary") or "")
-    version = int(decomposition.get("version") or 0)
+    summary = str(body.get("technical_summary") or "")
+    elements = list(body.get("technical_elements") or ())
+    version = _next_understanding_version(run_id, email)
+    features = _one_technical_group(summary, elements)
 
     from workflow import understanding as understanding_store
 
@@ -460,90 +524,7 @@ async def approve_gate_a(
             raise to_http(error, run_id=run_id) from error
 
 
-@router.post("/{run_id}/understanding/regenerate", status_code=202)
-async def regenerate_understanding(
-    run_id: str, email: CurrentUser, body: dict[str, Any] = Body(...)
-) -> dict[str, Any]:
-    """Ask for a fresh analysis of the invention. **202 -- the worker does it.**
-
-    Records a **request** and does none of the work. Generating here would put an
-    LLM call on a request thread with no lease, no fencing and no recovery; the
-    executor re-enters the proposing node under the run's lease, exactly as it
-    does for a manual candidate or a cell rerun.
-
-    A regeneration produces a **new version** and never edits the version it was
-    asked to improve on. `from_version` must name the version the inventor was
-    looking at, so a request composed against a proposal that has since been
-    replaced is refused rather than silently applied to a different one.
-
-    The run is moved out of `WAITING_FOR_REVIEW` in the same transaction, because
-    a rejection is a decision too: the run has to resume for the worker to act on
-    it. Nothing about this is an approval -- no approved artifact is written, and
-    the gate node re-reads the pending request rather than the resume signal.
-    """
-    key = _key(body)
-    from_version = int(body.get("from_version") or 0)
-    feedback = str(body.get("feedback") or "").strip()
-
-    with db.connect() as conn:
-        try:
-            _own(conn, run_id, email)
-            with idempotent(
-                conn,
-                actor_email=email,
-                scope="understanding_regenerate",
-                resource_id=run_id,
-                idempotency_key=key,
-                request_body=body,
-            ) as slot:
-                if slot.replayed:
-                    return slot.response
-                _own_at_gate(conn, run_id, email, WorkflowGate.A)
-                requested = store.request_understanding_regeneration(
-                    conn,
-                    run_id=run_id,
-                    actor_email=email,
-                    from_version=from_version,
-                    feedback=feedback,
-                )
-                review_store.write_audit(
-                    conn,
-                    run_id=run_id,
-                    actor_email=email,
-                    workflow_stage=str(WorkflowGate.A),
-                    field="understanding_regeneration",
-                    previous_value=str(from_version),
-                    new_value="requested",
-                    reason=feedback or "Re-analysis requested with no feedback.",
-                )
-                store.begin_resume(
-                    conn,
-                    run_id=run_id,
-                    actor_email=email,
-                    gate=WorkflowGate.A,
-                    resume_payload={
-                        "gate": str(WorkflowGate.A),
-                        "status": str(store.RunStatus.RESUMING),
-                        "at": _now(),
-                        "requested_by": email,
-                        # Named so a reader of the event log can tell a rejection
-                        # from an approval without inferring it from what is absent.
-                        "action": "REGENERATE",
-                    },
-                    dedupe_key=f"resumed:A:regenerate:v{from_version}",
-                )
-                response = {
-                    "status": "RESUMING",
-                    "from_version": from_version,
-                    "already_requested": requested["already_requested"],
-                }
-                slot.record(202, response)
-                return response
-        except Exception as error:
-            raise to_http(error, run_id=run_id) from error
-
-
-# --- The SEARCH STRATEGY stage ----------------------------------------------
+# --- Workflow Gate STRATEGY: the search queries (stage 3) -------------------
 
 
 @router.get("/{run_id}/gates/STRATEGY")
@@ -570,12 +551,6 @@ async def gate_strategy(run_id: str, email: CurrentUser) -> dict[str, Any]:
             version = approvals.latest_approved_search_strategy_version(
                 conn, run_id=run_id
             )
-            proposal = strategy_store.latest_proposal(
-                conn, run_id=run_id, actor_email=email
-            )
-            regenerations = store.list_strategy_regenerations(
-                conn, run_id=run_id, actor_email=email
-            )
         except Exception as error:
             raise to_http(error, run_id=run_id) from error
 
@@ -594,23 +569,58 @@ async def gate_strategy(run_id: str, email: CurrentUser) -> dict[str, Any]:
         )
 
     return {
+        # --- the editable business payload (spec section 4.2.2) -------------
+        #
+        # One field, a list of strings. No `enabled`, no `rationale`, no
+        # `covered_element_ids`, no `understanding_version` coverage claim.
         **gate_state.gate_strategy_payload(state),
-        # What the machine originally proposed, kept even after the reviewer
-        # edits, so the screen can show the comparison rather than only the result.
-        "proposal": proposal,
-        "regenerations": [
-            {
-                "from_version": item["from_version"],
-                "feedback": item["feedback"],
-                "processed": item["processed"],
-            }
-            for item in regenerations
-        ],
+        # --- generic transport metadata, outside the business payload -------
         "editable": True,
         "approved_version": version,
         "completion_rules": list(GATE_STRATEGY_RULES),
         "limits": {"max_queries": MAX_STRATEGY_QUERIES},
     }
+
+
+def _numbered_queries(texts: list[Any]) -> list[dict[str, Any]]:
+    """The flat public query list as the rows storage expects.
+
+    **Ids are minted here, never submitted** (`Q1..Qn`, in the reviewer's order),
+    which is why duplicate and missing query ids are unreachable rather than
+    validated against.
+
+    **Every query is written enabled**, because enable/disable is gone from the
+    product: a stored query the reviewer cannot switch off must not pretend to be
+    switchable. `covered_element_ids` is empty -- coverage was removed with the
+    element-to-query mapping, and an empty list is the honest value where a
+    fabricated one would be a coverage claim nobody made.
+    """
+    return [
+        {
+            "query_id": f"Q{index}",
+            "query_text": str(text or ""),
+            "enabled": True,
+            "rationale": "",
+            "covered_element_ids": [],
+        }
+        for index, text in enumerate(texts, start=1)
+    ]
+
+
+def _next_strategy_versions(run_id: str) -> tuple[int, int]:
+    """`(the strategy version this writes, the understanding it was built on)`.
+
+    Both are supplied by the server. The reviewer edits query text, not versions,
+    and the understanding version is read from what was actually approved rather
+    than taken from the request -- a client-supplied one could name a version the
+    run never approved.
+    """
+    with db.connect() as conn:
+        current = approvals.latest_approved_search_strategy_version(conn, run_id=run_id)
+        understanding = approvals.latest_approved_decomposition_version(
+            conn, run_id=run_id
+        )
+    return int(current or 0) + 1, int(understanding or 0)
 
 
 @router.post("/{run_id}/gates/STRATEGY/approve")
@@ -636,10 +646,8 @@ async def approve_gate_strategy(
     the whole audit question.
     """
     key = _key(body)
-    strategy = body.get("strategy") or {}
-    queries = list(strategy.get("queries") or [])
-    version = int(strategy.get("version") or 0)
-    understanding_version = int(strategy.get("understanding_version") or 0)
+    version, understanding_version = _next_strategy_versions(run_id)
+    queries = _numbered_queries(list(body.get("queries") or ()))
 
     from workflow import strategy as strategy_store
 
@@ -722,666 +730,61 @@ async def approve_gate_strategy(
             raise to_http(error, run_id=run_id) from error
 
 
-@router.post("/{run_id}/strategy/regenerate", status_code=202)
-async def regenerate_strategy(
-    run_id: str, email: CurrentUser, body: dict[str, Any] = Body(...)
-) -> dict[str, Any]:
-    """Ask for fresh search queries. **202 -- the worker does it.**
-
-    Records a **request** and does none of the work, for the same reason the
-    understanding stage's regeneration does: generating here would put an LLM call
-    on a request thread with no lease, no fencing and no recovery. The executor
-    re-enters the proposing node under the run's lease.
-
-    A regeneration produces a **new version** and never edits the version it was
-    asked to improve on. `from_version` must name the version the reviewer was
-    looking at, so a request composed against a strategy that has since been
-    replaced is refused rather than silently applied to a different one.
-
-    The run is moved out of `WAITING_FOR_REVIEW` in the same transaction, because
-    a rejection is a decision too. Nothing about it is an approval: no approved
-    artifact is written, and the gate node re-reads the pending request rather
-    than the resume signal.
-    """
-    key = _key(body)
-    from_version = int(body.get("from_version") or 0)
-    feedback = str(body.get("feedback") or "").strip()
-
-    with db.connect() as conn:
-        try:
-            _own(conn, run_id, email)
-            with idempotent(
-                conn,
-                actor_email=email,
-                scope="strategy_regenerate",
-                resource_id=run_id,
-                idempotency_key=key,
-                request_body=body,
-            ) as slot:
-                if slot.replayed:
-                    return slot.response
-                _own_at_gate(conn, run_id, email, WorkflowGate.STRATEGY)
-                requested = store.request_strategy_regeneration(
-                    conn,
-                    run_id=run_id,
-                    actor_email=email,
-                    from_version=from_version,
-                    feedback=feedback,
-                )
-                review_store.write_audit(
-                    conn,
-                    run_id=run_id,
-                    actor_email=email,
-                    workflow_stage=str(WorkflowGate.STRATEGY),
-                    field="strategy_regeneration",
-                    previous_value=str(from_version),
-                    new_value="requested",
-                    reason=feedback or "Fresh queries requested with no feedback.",
-                )
-                store.begin_resume(
-                    conn,
-                    run_id=run_id,
-                    actor_email=email,
-                    gate=WorkflowGate.STRATEGY,
-                    resume_payload={
-                        "gate": str(WorkflowGate.STRATEGY),
-                        "status": str(store.RunStatus.RESUMING),
-                        "at": _now(),
-                        "requested_by": email,
-                        # Named so a reader of the event log can tell a rejection
-                        # from an approval without inferring it from what is absent.
-                        "action": "REGENERATE",
-                    },
-                    dedupe_key=f"resumed:STRATEGY:regenerate:v{from_version}",
-                )
-                response = {
-                    "status": "RESUMING",
-                    "from_version": from_version,
-                    "already_requested": requested["already_requested"],
-                }
-                slot.record(202, response)
-                return response
-        except Exception as error:
-            raise to_http(error, run_id=run_id) from error
-
-
-# --- Workflow Gate B: the candidate set -------------------------------------
-
-
-@router.get("/{run_id}/gates/B")
-async def gate_b(run_id: str, email: CurrentUser) -> dict[str, Any]:
-    from graph.gates import GATE_B_RULES
-    from workflow import gate_state
-
-    with db.connect() as conn:
-        try:
-            store.get_run(conn, run_id=run_id, actor_email=email)
-            version = approvals.latest_approved_candidate_set_version(conn, run_id=run_id)
-            manual = store.list_manual_candidates(conn, run_id=run_id, actor_email=email)
-        except Exception as error:
-            raise to_http(error, run_id=run_id) from error
-
-    state = gate_state.read_state(run_id)
-    if state is None:
-        raise ApiError(
-            503,
-            "CHECKPOINT_UNAVAILABLE",
-            "The run's state could not be read, so the candidate set cannot be "
-            "shown. This is not an empty candidate set.",
-        )
-
-    return {
-        **gate_state.gate_b_payload(state),
-        # Every manual request and whether the worker has carried it out yet, so
-        # a reviewer can see that adding is not approving.
-        "manual_candidates": manual,
-        "approved_version": version,
-        "completion_rules": list(GATE_B_RULES),
-    }
-
-
-@router.post("/{run_id}/gates/B/approve")
-async def approve_gate_b(
-    run_id: str, email: CurrentUser, body: dict[str, Any] = Body(...)
-) -> dict[str, Any]:
-    key = _key(body)
-    numbers = list(body.get("publication_numbers") or [])
-    version = int(body.get("version") or 0)
-
-    with db.connect() as conn:
-        try:
-            _own(conn, run_id, email)
-            with idempotent(
-                conn,
-                actor_email=email,
-                scope="gate_b_approve",
-                resource_id=run_id,
-                idempotency_key=key,
-                request_body=body,
-            ) as slot:
-                if slot.replayed:
-                    return slot.response
-                _own_at_gate(conn, run_id, email, WorkflowGate.B)
-                approved_at = _now()
-                # `publications` is a sequence of `(requested, normalized)`
-                # pairs, not bare strings: the approval records BOTH identities,
-                # because a number quietly corrected into a different real
-                # document would attach that document's text to this candidate.
-                # The client sends normalized numbers, which are their own
-                # requested form here.
-                manual = {
-                    str(row["publication_number"]).strip().upper()
-                    for row in store.list_manual_candidates(
-                        conn, run_id=run_id, actor_email=email
-                    )
-                }
-                pairs = [(str(number), str(number)) for number in numbers]
-                written = approvals.approve_candidate_set_by_owner(
-                    conn,
-                    run_id=run_id,
-                    actor_email=email,
-                    version=version,
-                    publications=pairs,
-                    approved_at=approved_at,
-                    # Recorded so a report never presents a publication nobody's
-                    # search returned as though one did.
-                    manually_added=[n for n, _ in pairs if n.strip().upper() in manual],
-                )
-                review_store.write_audit(
-                    conn,
-                    run_id=run_id,
-                    actor_email=email,
-                    workflow_stage=str(WorkflowGate.B),
-                    field="candidate_set_version",
-                    previous_value="",
-                    new_value=str(written),
-                    reason="Workflow Gate B approval.",
-                )
-                store.begin_resume(
-                    conn,
-                    run_id=run_id,
-                    actor_email=email,
-                    gate=WorkflowGate.B,
-                    resume_payload={
-                        "gate": str(WorkflowGate.B),
-                        "status": str(store.RunStatus.RESUMING),
-                        "at": approved_at,
-                        "approved_by": email,
-                    },
-                    dedupe_key=f"resumed:B:v{written}",
-                )
-                response = {"candidate_set_version": written, "status": "RESUMING"}
-                slot.record(200, response)
-                return response
-        except Exception as error:
-            raise to_http(error, run_id=run_id) from error
-
-
-@router.post("/{run_id}/candidates", status_code=202)
-async def add_candidate(
-    run_id: str, email: CurrentUser, body: dict[str, Any] = Body(...)
-) -> dict[str, Any]:
-    """Add a publication by hand at Workflow Gate B. **202 -- never a bypass.**
-
-    Spec case T: a manually added publication "passes normalization, date
-    screening, enrichment, and full-text eligibility **identically** to a
-    discovered candidate. If it fails any, it is recorded with that state and
-    cannot be approved into the set."
-
-    So this records a **request** and does none of the work. The `202` is the
-    design rather than a courtesy: the API cannot fetch a publication, cannot
-    build a passage, and above all cannot make anything eligible. The executor
-    puts it through the same nodes every discovered candidate goes through, and
-    eligibility is still derived from passages actually built (§3.7).
-
-    Approving it into the candidate set is still a separate human act through
-    `workflow/approvals.py`. Nothing here shortens that path.
-    """
-    key = _key(body)
-    number = str(body.get("publication_number") or "").strip()
-
-    with db.connect() as conn:
-        try:
-            _own(conn, run_id, email)
-            with idempotent(
-                conn,
-                actor_email=email,
-                scope="add_candidate",
-                resource_id=f"{run_id}:{number}",
-                idempotency_key=key,
-                request_body=body,
-            ) as slot:
-                if slot.replayed:
-                    return slot.response
-                recorded = store.request_manual_candidate(
-                    conn,
-                    run_id=run_id,
-                    actor_email=email,
-                    publication_number=number,
-                )
-                review_store.write_audit(
-                    conn,
-                    run_id=run_id,
-                    actor_email=email,
-                    workflow_stage=str(WorkflowGate.B),
-                    field="manual_candidate",
-                    previous_value="",
-                    new_value=recorded["publication_number"],
-                    reason="Publication added by hand at Workflow Gate B.",
-                )
-                response = {
-                    "publication_number": recorded["publication_number"],
-                    "accepted": True,
-                    "already_requested": recorded["already_requested"],
-                    # Stated so nobody reads a 202 as an approval.
-                    "note": (
-                        "Queued for the same normalization, date screening, "
-                        "enrichment and eligibility checks a discovered candidate "
-                        "goes through. It is not in the candidate set and is not "
-                        "approved."
-                    ),
-                }
-                slot.record(202, response)
-                return response
-        except Exception as error:
-            raise to_http(error, run_id=run_id) from error
-
-
-@router.post("/{run_id}/cells/{cell_id}/rerun", status_code=202)
-async def rerun_cell(
-    run_id: str, cell_id: str, email: CurrentUser, body: dict[str, Any] = Body(...)
-) -> dict[str, Any]:
-    """Re-run ONE cell with the context the model asked for. **202.**
-
-    Spec case U: "Only the named surrounding material is fetched; only that cell
-    re-runs; every other cell's result is byte-identical; new result links to the
-    prior one via `source_result_version`."
-
-    **Nothing is edited, replaced or deleted.** The existing machine result stays
-    immutable and retrievable; the rerun produces a *new* `result_version`, and
-    the response returns that next version rather than the current one so a
-    caller cannot mistake one for the other.
-
-    `source_result_version` is required and is checked against what the cell
-    actually holds. A rerun composed against a superseded result is
-    `409 STALE_RESULT_VERSION` -- the same rule §13.4 check 16 applies to a
-    review, and for the same reason: the reviewer was looking at specific
-    evidence, and a decision cannot be silently transplanted onto different
-    evidence.
-    """
-    key = _key(body)
-    context_requests = list(body.get("context_requests") or [])
-    source_version = body.get("source_result_version")
-    if source_version is None:
-        raise ApiError(
-            422,
-            "INVALID_REQUEST",
-            "source_result_version is required: a rerun must name the result the "
-            "reviewer was looking at, so it cannot attach to one that superseded it.",
-        )
-
-    with db.connect() as conn:
-        try:
-            _own(conn, run_id, email)
-            with idempotent(
-                conn,
-                actor_email=email,
-                scope="cell_rerun",
-                resource_id=f"{run_id}:{cell_id}",
-                idempotency_key=key,
-                request_body=body,
-            ) as slot:
-                if slot.replayed:
-                    return slot.response
-                recorded = store.request_cell_rerun(
-                    conn,
-                    run_id=run_id,
-                    cell_id=cell_id,
-                    actor_email=email,
-                    context_requests=context_requests,
-                    source_result_version=int(source_version),
-                )
-                review_store.write_audit(
-                    conn,
-                    run_id=run_id,
-                    actor_email=email,
-                    workflow_stage=str(WorkflowGate.C),
-                    field="cell_rerun",
-                    previous_value=str(recorded["source_result_version"]),
-                    new_value=str(recorded["result_version"]),
-                    reason="Reviewer requested more context and a re-run.",
-                    cell_id=cell_id,
-                    source_result_version=recorded["source_result_version"],
-                )
-                response = {
-                    "cell_id": cell_id,
-                    "result_version": recorded["result_version"],
-                    "source_result_version": recorded["source_result_version"],
-                    "already_requested": recorded["already_requested"],
-                    "note": (
-                        "The existing result is unchanged and still retrievable. "
-                        "Only this cell re-runs, and only the named context is "
-                        "fetched."
-                    ),
-                }
-                slot.record(202, response)
-                return response
-        except ApiError:
-            raise
-        except Exception as error:
-            raise to_http(error, run_id=run_id) from error
-
-
-# --- Workflow Gate C: the evidence matrix -----------------------------------
-
-
-@router.get("/{run_id}/gates/C")
-async def gate_c(run_id: str, email: CurrentUser) -> dict[str, Any]:
-    """The matrix and **every** blocking condition, not just the first.
-
-    A reviewer who fixes one blocker and is refused again for the next has been
-    told half the truth twice.
-    """
-    from graph.gates import GATE_C_RULES
-
-    with db.connect() as conn:
-        try:
-            store.get_run(conn, run_id=run_id, actor_email=email)
-            cells = store.list_cells(conn, run_id=run_id, actor_email=email)
-            blocking = review_store.blocking_conditions(
-                conn, run_id=run_id, gate=WorkflowGate.C
-            )
-        except Exception as error:
-            raise to_http(error, run_id=run_id) from error
-    return {"matrix": cells, "blocking": blocking, "completion_rules": list(GATE_C_RULES)}
-
-
-@router.get("/{run_id}/cells/{cell_id}")
-async def get_cell(run_id: str, cell_id: str, email: CurrentUser) -> dict[str, Any]:
-    """One cell: machine result, passages, review overlay and waiver, kept apart.
-
-    **Machine output and human output are never merged** (constraint 7). They are
-    separate keys here for the same reason they are separate rows in the
-    database: collapsing them presents a model guess and an expert judgment as
-    the same thing.
-    """
-    with db.connect() as conn:
-        try:
-            store.get_run(conn, run_id=run_id, actor_email=email)
-            cells = {
-                cell["cell_id"]: cell
-                for cell in store.list_cells(conn, run_id=run_id, actor_email=email)
-            }
-            cell = cells.get(cell_id)
-            if cell is None:
-                raise ApiError(404, "CELL_NOT_FOUND", f"No cell {cell_id} in this run.")
-            reviews = review_store.list_reviews(conn, run_id=run_id)
-            waivers = review_store.list_waivers(conn, run_id=run_id)
-            # **The passages this result actually cited**, read from the passage
-            # of record rather than from the model's own response. A reviewer's
-            # job at Gate C is to check a quotation against its source, and a
-            # cell that showed a verdict with no citable text made that
-            # impossible -- the endpoint returned no `passages` key at all.
-            #
-            # Filtered to the cited chunk ids, in the order the result cited
-            # them: the publication's other passages were not evidence for this
-            # cell, and showing them would suggest the model had seen more than
-            # it did.
-            everything = evidence_store.list_passages(
-                conn,
-                run_id=run_id,
-                actor_email=email,
-                publication_number=cell.get("publication_number"),
-            )
-            by_chunk = {str(row["chunk_id"]): row for row in everything}
-            cited = [
-                by_chunk[str(chunk_id)]
-                for chunk_id in (cell.get("passage_chunk_ids") or ())
-                if str(chunk_id) in by_chunk
-            ]
-        except ApiError:
-            raise
-        except Exception as error:
-            raise to_http(error, run_id=run_id) from error
-    return {
-        **cell,
-        "passages": cited,
-        "review": reviews.get(cell_id),
-        "waiver": waivers.get(cell_id, []),
-    }
-
-
-@router.post("/{run_id}/cells/{cell_id}/review")
-async def review_cell(
-    run_id: str, cell_id: str, email: CurrentUser, body: dict[str, Any] = Body(...)
-) -> dict[str, Any]:
-    """Save a review overlay, through spec section 13.4's checks 0-18.
-
-    Rejected **wholesale** with the failing check named -- never partially saved.
-    Checks 15-18 are the binding ones here: they compare the overlay's declared
-    cell, result version, feature, feature version and publication against the
-    cell it is being saved into, which is what makes a stale or wrong-cell review
-    a rejection rather than a silent misattachment.
-    """
-    key = _key(body)
-    overlay = body.get("overlay") or {}
-
-    with db.connect() as conn:
-        try:
-            _own(conn, run_id, email)
-            with idempotent(
-                conn,
-                actor_email=email,
-                scope="cell_review",
-                resource_id=f"{run_id}:{cell_id}",
-                idempotency_key=key,
-                request_body=body,
-            ) as slot:
-                if slot.replayed:
-                    return slot.response
-                saved = review_store.save_review(
-                    conn,
-                    run_id=run_id,
-                    cell_id=cell_id,
-                    actor_email=email,
-                    overlay=overlay,
-                )
-                response = {
-                    "status": saved.get("status"),
-                    "reviewed_outcome": saved.get("reviewed_outcome"),
-                }
-                slot.record(200, response)
-                return response
-        except Exception as error:
-            raise to_http(error, run_id=run_id) from error
-
-
-@router.post("/{run_id}/cells/{cell_id}/waiver")
-async def waive_cell(
-    run_id: str, cell_id: str, email: CurrentUser, body: dict[str, Any] = Body(...)
-) -> dict[str, Any]:
-    """Record a waiver. **The cell state is unchanged and the response says so.**
-
-    A waiver is a disclosed gap, never a verdict. A waived `VALIDATION_FAILURE`
-    is still a `VALIDATION_FAILURE`, with its failing check, in the matrix, the
-    draft and the final report (cases AJ and AZ).
-    """
-    key = _key(body)
-    waiver = body.get("waiver") or {}
-
-    with db.connect() as conn:
-        try:
-            _own(conn, run_id, email)
-            with idempotent(
-                conn,
-                actor_email=email,
-                scope="cell_waiver",
-                resource_id=f"{run_id}:{cell_id}",
-                idempotency_key=key,
-                request_body=body,
-            ) as slot:
-                if slot.replayed:
-                    return slot.response
-                saved = review_store.save_waiver(
-                    conn,
-                    run_id=run_id,
-                    cell_id=cell_id,
-                    actor_email=email,
-                    waiver=waiver,
-                )
-                response = {"cell_state": saved.get("cell_state"), "waived": True}
-                slot.record(200, response)
-                return response
-        except Exception as error:
-            raise to_http(error, run_id=run_id) from error
-
-
-@router.post("/{run_id}/gates/C/complete")
-async def complete_gate_c(
-    run_id: str, email: CurrentUser, body: dict[str, Any] = Body(...)
-) -> dict[str, Any]:
-    """Finish Gate C, or refuse with **every** blocking condition named."""
-    key = _key(body)
-    with db.connect() as conn:
-        try:
-            _own(conn, run_id, email)
-            with idempotent(
-                conn,
-                actor_email=email,
-                scope="gate_c_complete",
-                resource_id=run_id,
-                idempotency_key=key,
-                request_body=body,
-            ) as slot:
-                if slot.replayed:
-                    return slot.response
-                # §10.1, and the same order every other mutation uses: own,
-                # replay short-circuit, THEN gate. Completing a gate the run is
-                # not parked at is `409 WRONG_GATE` -- this handler was the one
-                # mutation missing the check, so a completion aimed at a running
-                # or terminal run reached `require_gate_clear` and answered
-                # about blocking cells instead of about the gate.
-                run = _own_at_gate(conn, run_id, email, WorkflowGate.C)
-                review_store.require_gate_clear(conn, run_id=run_id, gate=WorkflowGate.C)
-                at = _now()
-                review_store.write_audit(
-                    conn,
-                    run_id=run_id,
-                    actor_email=email,
-                    workflow_stage=str(WorkflowGate.C),
-                    field="gate_c_completed_at",
-                    previous_value="",
-                    new_value=at,
-                    reason="Workflow Gate C completed after review.",
-                )
-                store.begin_resume(
-                    conn,
-                    run_id=run_id,
-                    actor_email=email,
-                    gate=WorkflowGate.C,
-                    resume_payload={
-                        "gate": str(WorkflowGate.C),
-                        "status": str(store.RunStatus.RESUMING),
-                        "at": at,
-                        "approved_by": email,
-                    },
-                    # **The pause being answered, not the gate.**
-                    #
-                    # Gate C is the one gate a run can legitimately reach more
-                    # than once: completing it with a cell rerun outstanding
-                    # sends the run through `rerun_cells` and straight back to
-                    # `gate_c`. A fixed `"resumed:C"` made the second completion
-                    # collide with the first and answer 409
-                    # IDEMPOTENCY_CONFLICT -- refusing a resume that was not a
-                    # replay at all, and stranding the run at a gate it had
-                    # already satisfied.
-                    #
-                    # While the run is `WAITING_FOR_REVIEW` nothing is appended
-                    # after `paused`, so the run's sequence allocator does not
-                    # move: `next_sequence` is stable for as long as this pause
-                    # lasts (a genuine retry still dedupes to the same key) and
-                    # has advanced by the next one (a second completion is
-                    # correctly a second completion).
-                    dedupe_key=f"resumed:C:s{int(run.get('next_sequence') or 0)}",
-                )
-                response = {"status": "RESUMING"}
-                slot.record(200, response)
-                return response
-        except Exception as error:
-            raise to_http(error, run_id=run_id) from error
-
-
-# --- Workflow Gate D: the report --------------------------------------------
+# --- the completed run's report ---------------------------------------------
 
 
 @router.get("/{run_id}/report")
 async def get_report(run_id: str, email: CurrentUser) -> dict[str, Any]:
-    """The latest report version. A draft carries `DRAFT - NOT APPROVED`."""
+    """The completed run's report: the **standard** `AnalysisReport`.
+
+    Repurposed from the Gate D verification report rather than added beside it,
+    so there is one path to a run's result and it cannot drift from the other
+    two. What comes back is the same object the terminal `result` event carries
+    and the same object `services/history.ts` maps a stored run into, so a
+    durable run, a quick search and a run reopened from History all render
+    through the same `ReportScreen`.
+
+    **Read from the terminal event, not from `search_runs`.** The event is the
+    run's own record of what it produced, it is owner-scoped through the run row
+    resolved above, and `search_runs` has no ownership column at all -- looking
+    the report up there would mean matching on description or timestamp, which is
+    guessing. The two are written in one transaction (`executor._succeed`), so
+    the event existing means the History row exists too.
+
+    Ownership first, always: `get_run` filters `created_by` **in the same query**
+    that fetches the run, so a non-owner and an unknown run are indistinguishable
+    and both answer `404 RUN_NOT_FOUND`.
+    """
     with db.connect() as conn:
         try:
-            store.get_run(conn, run_id=run_id, actor_email=email)
-            latest = review_store.latest_report_version(conn, run_id=run_id)
+            run = store.get_run(conn, run_id=run_id, actor_email=email)
+            terminal = events.terminal_event(conn, run_id=run_id)
         except Exception as error:
             raise to_http(error, run_id=run_id) from error
-    if latest is None:
-        raise ApiError(404, "REPORT_NOT_FOUND", "No draft report exists for this run yet.")
-    return latest
 
+    status = run["status"]
+    if status is not RunStatus.COMPLETED:
+        # Naming the actual status rather than a bare "not ready": a run parked
+        # for review, still queued, or failed are three different situations, and
+        # the caller can act on each of them differently.
+        raise ApiError(
+            409,
+            "RUN_NOT_COMPLETED",
+            f"run {run_id} is {status}, not COMPLETED: it has no report yet.",
+        )
 
-@router.post("/{run_id}/gates/D/approve")
-async def approve_gate_d(
-    run_id: str, email: CurrentUser, body: dict[str, Any] = Body(...)
-) -> dict[str, Any]:
-    """Approve the draft. Case AC: a report cannot be approved into existence."""
-    key = _key(body)
-    version = int(body.get("report_version") or 0)
+    if terminal is None or not isinstance(terminal.get("payload"), dict):
+        # A COMPLETED run without its terminal event should be impossible --
+        # `finalize_run_success` writes the event and the transition in one
+        # transaction. Refusing loudly beats inventing an empty report, which
+        # would render as a search that genuinely found nothing.
+        raise ApiError(
+            500,
+            "REPORT_NOT_FOUND",
+            f"run {run_id} is COMPLETED but has no terminal result to report.",
+        )
 
-    with db.connect() as conn:
-        try:
-            _own(conn, run_id, email)
-            with idempotent(
-                conn,
-                actor_email=email,
-                scope="gate_d_approve",
-                resource_id=run_id,
-                idempotency_key=key,
-                request_body=body,
-            ) as slot:
-                if slot.replayed:
-                    return slot.response
-                _own_at_gate(conn, run_id, email, WorkflowGate.D)
-                at = _now()
-                review_store.approve_report(
-                    conn,
-                    run_id=run_id,
-                    actor_email=email,
-                    version=version,
-                    # `or ""`, not `body.get(...)`: both columns are `TEXT NOT
-                    # NULL DEFAULT ''`, and passing an explicit `None` overrides
-                    # the Python default and sets the column NULL, which the
-                    # constraint refuses. An omitted optional field means "the
-                    # reviewer wrote nothing", which is the empty string.
-                    comments=body.get("comments") or "",
-                    caveats=body.get("caveats") or "",
-                )
-                store.begin_resume(
-                    conn,
-                    run_id=run_id,
-                    actor_email=email,
-                    gate=WorkflowGate.D,
-                    resume_payload={
-                        "gate": str(WorkflowGate.D),
-                        "status": str(store.RunStatus.RESUMING),
-                        "at": at,
-                        "approved_by": email,
-                    },
-                    dedupe_key=f"resumed:D:v{version}",
-                )
-                response = {"status": "RESUMING", "report_version": version}
-                slot.record(200, response)
-                return response
-        except Exception as error:
-            raise to_http(error, run_id=run_id) from error
+    return terminal["payload"].get("data") or {}
 
 
 def _key(body: dict[str, Any]) -> str:

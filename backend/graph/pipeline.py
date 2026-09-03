@@ -37,44 +37,25 @@ import db
 from reports import save_report
 
 # from graph.fusion import fuse_node  # TEMP: disabled - see module docstring above
-from graph.ranking import explain_node, format_matches, rank_node, verdict_for
+from graph.ranking import explain_node, format_matches, rank_node
 from graph.searching import (
     # index_patents_node,  # TEMP: disabled - see module docstring above
     keyword_search_node,
     search_orchestrator_node,
     # semantic_search_node,  # TEMP: disabled - see module docstring above
 )
-from graph.evidence_nodes import (
-    build_passages_node,
-    confirm_eligibility_node,
-    enrich_epo_node,
-    normalize_publications_node,
-    rank_and_reduce_node,
-    screen_dates_node,
-)
 from graph.state import GraphState
 from graph.understanding import expand_queries_node, understand_node
 from graph.validation import validate_node
-from graph.gates import (
-    gate_a_node,
-    gate_b_node,
-    gate_c_node,
-    gate_d_node,
-    gate_strategy_node,
-)
-from graph.report import draft_report_node
+from graph.gates import gate_a_node, gate_strategy_node
 from graph.strategy import propose_strategy_node
-from graph.work_requests import (
-    absorb_manual_candidates_node,
-    regenerate_strategy_node,
-    regenerate_understanding_node,
-    rerun_cells_node,
-    route_after_gate_a,
-    route_after_gate_b,
-    route_after_gate_c,
-    route_after_gate_strategy,
-)
-from graph.verification_nodes import decompose_features_node, verify_features_node
+from graph.verification_nodes import decompose_features_node
+
+# NOT imported, and deliberately: `graph/evidence_nodes.py`,
+# `graph/verification_nodes.py::verify_features_node`, `graph/report.py` and
+# `graph/work_requests.py` are retained as legacy modules (spec section 10.3)
+# but no compiled product graph reaches them. Importing them here is what would
+# put them back in the topology, so the import list is the enforcement point.
 
 
 def _route_after_validate(state: GraphState) -> str:
@@ -98,40 +79,28 @@ def _route_after_understanding(state: GraphState) -> str:
     contract is live production behaviour that a browser depends on, and this
     gate's whole job was to add a branch beside it, not through it.
     """
-    return "decompose" if state.get("verification_requested") else "search_orchestrator"
-
-
-def _route_after_explain(state: GraphState) -> str:
-    """Verified runs continue into the evidence layer; search-only runs end.
-
-    Ranking and explanation run for both, because a verified run's report still
-    shows the similarity scores and rationales a search-only run shows -- the
-    verification matrix is an addition to that report, not a replacement for it.
-    """
-    return "normalize_publications" if state.get("verification_requested") else END
-
-
-def _route_after_eligibility(state: GraphState) -> str:
-    """Nothing citable means no matrix.
-
-    Every publication was excluded -- on date, on missing full text, or on having
-    no producible locator -- and each of those exclusions is recorded with its
-    reason. Running `verify_features` over an empty approved set would produce a
-    matrix of zero cells that reads as "we compared everything and found
-    nothing", which is a claim about patents rather than about coverage.
-    """
-    return "rank_and_reduce" if state.get("candidates") else END
+    return "decompose" if state.get("advanced_search") else "search_orchestrator"
 
 
 def _assemble() -> StateGraph:
     """The topology. **One graph, conditional routing** -- never two pipelines.
 
-    Spec section 3.1. Every node is registered unconditionally and the
-    verification branch, including its Human-in-the-Loop gates, is *reached*
-    only when `verification_requested` is true. A search-only run therefore
-    traverses exactly the nodes it did before any of this existed and emits
-    exactly the same phases, which is what keeps today's SSE stream
-    byte-identical.
+    Spec section 3.1. Every node is registered unconditionally and the Advanced
+    Search branch, including its two Human-in-the-Loop gates, is *reached* only
+    when `advanced_search` is true. A search-only run therefore traverses
+    exactly the nodes it did before any of this existed and emits exactly the
+    same phases, which is what keeps today's SSE stream byte-identical.
+
+    **An Advanced Search run rejoins the ordinary pipeline and ends with it.**
+    After `gate_strategy` it runs `search_orchestrator -> keyword_search ->
+    validate -> rank -> explain` and terminates, exactly as a search-only run
+    does. Gates B, C and D, the evidence layer and the draft report were removed
+    from this topology when feature verification was withdrawn from the product.
+
+    They are **removed, not commented out.** The `# TEMP: disabled` style below
+    is reserved for the semantic-search trio, which is genuinely coming back;
+    leaving the withdrawn nodes commented would invite someone to uncomment a
+    path whose API, screens and tests no longer exist. Git history is the record.
 
     Assembly is separated from compilation because the two callers need different
     compilations and must not be allowed to drift into different *topologies*:
@@ -178,154 +147,56 @@ def _assemble() -> StateGraph:
     )
     builder.add_edge("rank", "explain")
 
-    # --- Verification branch (Implementation Gate C) ---------------------
-    #
-    # Registered unconditionally; REACHED only when `verification_requested` is
-    # true. A search-only run never enters any node below, which is what keeps
-    # today's SSE stream byte-identical.
-    #
-    # The four Human-in-the-Loop gates are wired below (Implementation Gate D).
-    # `verify_features` reads only approved artifacts and REFUSES to run without
-    # them, so there is no auto-approval and no path that reaches the verifier on
-    # machine output alone -- with or without the gates in the graph.
-    builder.add_node("decompose", decompose_features_node)
-    builder.add_node("normalize_publications", normalize_publications_node)
-    builder.add_node("screen_dates", screen_dates_node)
-    builder.add_node("enrich_epo", enrich_epo_node)
-    builder.add_node("build_passages", build_passages_node)
-    builder.add_node("confirm_eligibility", confirm_eligibility_node)
-    builder.add_node("rank_and_reduce", rank_and_reduce_node)
-    builder.add_node("verify_features", verify_features_node)
+    # **The graph ends after `explain`, for both kinds of run.** An Advanced
+    # Search run rejoined the ordinary pipeline at `search_orchestrator` and
+    # finishes with it; there is no evidence layer left to continue into. The
+    # durable executor persists the report and the terminal result atomically
+    # after the graph returns -- see `workflow/executor.py::_succeed`.
+    builder.add_edge("explain", END)
 
-    # --- Human-in-the-Loop gates (Implementation Gate D) -----------------
+    # --- Advanced Search branch ------------------------------------------
     #
-    # Each calls `interrupt()`. LangGraph commits a checkpoint and raises out of
-    # `graph.stream()`; `workflow/executor.py` runs the section 3.3.2 pause
-    # sequence and releases the lease. **No node here decides anything** -- each
-    # re-reads the human decision from the database through the approved-only
-    # readers, because the resume value travels through an HTTP request and a
-    # checkpoint, and if it were the decision then forging it would be approving.
+    # Registered unconditionally; REACHED only when `advanced_search` is true.
+    # A search-only run never enters any node below, which is what keeps today's
+    # SSE stream byte-identical.
+    #
+    # Two Human-in-the-Loop gates, presented to the user as three stages: the
+    # understanding (stages 1 and 2) and the search strategy (stage 3).
+    builder.add_node("decompose", decompose_features_node)
+
+    # Each gate calls `interrupt()`. LangGraph commits a checkpoint and raises
+    # out of `graph.stream()`; `workflow/executor.py` runs the pause sequence and
+    # releases the lease. **Neither node decides anything** -- each re-reads the
+    # human decision from the database through the approved-only readers, because
+    # the resume value travels through an HTTP request and a checkpoint, and if
+    # it were the decision then forging it would be approving.
     builder.add_node("gate_a", gate_a_node)
     builder.add_node("propose_strategy", propose_strategy_node)
     builder.add_node("gate_strategy", gate_strategy_node)
-    builder.add_node("gate_b", gate_b_node)
-    builder.add_node("gate_c", gate_c_node)
-    builder.add_node("draft_report", draft_report_node)
-    builder.add_node("gate_d", gate_d_node)
 
-    # The two human work-request consumers (spec cases T and U). The API records
-    # a request and returns 202; these carry it out, under the lease, in the
-    # graph.
-    builder.add_node("absorb_manual_candidates", absorb_manual_candidates_node)
-    builder.add_node("rerun_cells", rerun_cells_node)
-
-    # Gate A sits between the machine proposing a decomposition and the search
-    # that uses it, so nothing is searched for against requirements nobody
-    # approved.
+    # Gate A sits between the machine proposing an understanding and the search
+    # that uses it, so nothing is searched for against elements nobody approved.
     builder.add_edge("decompose", "gate_a")
 
-    # **A rejected analysis goes back to the analyst, not on to the search.**
-    # If the inventor asked for a re-analysis rather than approving, the graph
-    # returns to `decompose`, which proposes a NEW version and pauses again.
-    # Nothing about the rejected version is edited, and no query is ever built
-    # from an understanding nobody approved.
-    builder.add_node("regenerate_understanding", regenerate_understanding_node)
-    builder.add_conditional_edges(
-        "gate_a",
-        route_after_gate_a,
-        {
-            "regenerate_understanding": "regenerate_understanding",
-            # **Not the search.** The approved understanding now leads to the
-            # SEARCH STRATEGY stage, which proposes the queries and pauses again;
-            # the search is reached only from there. The invariant this edge used
-            # to carry -- nothing is searched for that a person did not approve --
-            # is unchanged and now has two approvals in front of it rather than
-            # one.
-            "propose_strategy": "propose_strategy",
-        },
-    )
-    builder.add_edge("regenerate_understanding", "decompose")
+    # **A plain edge, not a router.** Regeneration was removed from the product:
+    # editing the summary, the elements and the queries replaces it, so a gate
+    # has exactly one way out and there is no rejection branch to route to. The
+    # approved understanding leads to the SEARCH STRATEGY stage, which proposes
+    # the queries and pauses again; the search is reached only from there.
+    builder.add_edge("gate_a", "propose_strategy")
 
     # --- The SEARCH STRATEGY stage ---------------------------------------
     #
     # `propose_strategy` reads the APPROVED understanding and proposes queries;
     # `gate_strategy` pauses for a person and, on resume, writes `queries` from
-    # the approved strategy's ENABLED entries. `search_orchestrator` is reachable
-    # from nowhere else on this branch, which is what makes "no provider call
-    # before both approvals" a property of the graph rather than a convention.
+    # the approved strategy. `search_orchestrator` is reachable from nowhere else
+    # on this branch, which is what makes "no provider call before both
+    # approvals" a property of the graph rather than a convention -- the node has
+    # exactly two incoming edges, `expand_queries` and `gate_strategy`, and
+    # `tests/test_workflow_gates.py` asserts that count by name.
     builder.add_edge("propose_strategy", "gate_strategy")
+    builder.add_edge("gate_strategy", "search_orchestrator")
 
-    # **Rejected queries go back to the planning, not on to the search.** Same
-    # shape as the understanding stage's regeneration and for the same reason: a
-    # rejection is not an approval, so the graph returns to the proposing node,
-    # which produces a NEW version and pauses again.
-    builder.add_node("regenerate_strategy", regenerate_strategy_node)
-    builder.add_conditional_edges(
-        "gate_strategy",
-        route_after_gate_strategy,
-        {
-            "regenerate_strategy": "regenerate_strategy",
-            "search_orchestrator": "search_orchestrator",
-        },
-    )
-    builder.add_edge("regenerate_strategy", "propose_strategy")
-    builder.add_edge("normalize_publications", "screen_dates")
-    builder.add_edge("screen_dates", "enrich_epo")
-    builder.add_edge("enrich_epo", "build_passages")
-    builder.add_edge("build_passages", "confirm_eligibility")
-    builder.add_conditional_edges(
-        "confirm_eligibility",
-        _route_after_eligibility,
-        {"rank_and_reduce": "rank_and_reduce", END: END},
-    )
-    # Gate B sits between the ranked candidate list (machine output) and the
-    # verifier, so no publication is verified against that a person did not put
-    # in the set. `verify_features_node` reads `approved_candidate_set` and has
-    # no code path to `ranked_candidates`.
-    builder.add_edge("rank_and_reduce", "gate_b")
-
-    # **A manually added publication re-enters the pipeline; it does not skip
-    # it.** Case T: it "passes normalization, date screening, enrichment, and
-    # full-text eligibility IDENTICALLY to a discovered candidate", so the loop
-    # goes back to `normalize_publications` -- the real nodes, not a second
-    # implementation of their rules. A manual candidate that fails screening
-    # lands in `publication_exclusions` exactly like a discovered one, and the
-    # tail returns to Gate B so a human approves the widened set. Approving it is
-    # still a separate act; nothing here shortens that path.
-    builder.add_conditional_edges(
-        "gate_b",
-        route_after_gate_b,
-        {
-            "absorb_manual_candidates": "absorb_manual_candidates",
-            "verify_features": "verify_features",
-        },
-    )
-    builder.add_edge("absorb_manual_candidates", "normalize_publications")
-
-    # Gate C reviews the matrix, the draft is assembled from the reviewed matrix,
-    # and Gate D approves that draft. The draft is built BETWEEN the two gates
-    # because case AC forbids approving a report into existence: Gate D requires
-    # a draft that already exists and was presented.
-    builder.add_edge("verify_features", "gate_c")
-
-    # **A rerun returns to the reviewer, not past them.** Case U: only the named
-    # cell re-runs, every other cell's result stays byte-identical, and the new
-    # result links back to the prior version. Continuing to the draft would march
-    # past the answer to the question the reviewer just asked.
-    builder.add_conditional_edges(
-        "gate_c",
-        route_after_gate_c,
-        {"rerun_cells": "rerun_cells", "draft_report": "draft_report"},
-    )
-    builder.add_edge("rerun_cells", "gate_c")
-    builder.add_edge("draft_report", "gate_d")
-    builder.add_edge("gate_d", END)
-
-    builder.add_conditional_edges(
-        "explain",
-        _route_after_explain,
-        {"normalize_publications": "normalize_publications", END: END},
-    )
     return builder
 
 
@@ -367,14 +238,18 @@ def build_graph_with_checkpointer(checkpointer):
 def _result_envelope(
     state: GraphState,
     patents: list[dict[str, object]],
-    top_score: int,
     recommendations: list[str],
 ) -> dict[str, object]:
     """The ``result`` event's shared shape.
 
     Every field here is part of the contract the frontend reads; see
-    ``frontend/src/app/App.tsx``.  ``title`` uses three ASCII periods, not an
-    ellipsis character - the legacy pipeline does, and the two must agree.
+    ``frontend/src/app/models/report.ts``.  ``title`` uses three ASCII periods,
+    not an ellipsis character - the legacy pipeline does, and the two must agree.
+
+    There is no ``top_score`` and no ``verdict``.  The product publishes no
+    numeric similarity and states no overall novelty conclusion; the per-patent
+    ``risk`` rating in ``patents[]`` is the only judgement that ships, and an
+    empty ``patents`` list therefore carries no rating at all.
     """
     description = state["description"]
     return {
@@ -384,8 +259,6 @@ def _result_envelope(
             "date": "Today",
             "concepts": state["analysis"].concepts,
             "patents": patents,
-            "top_score": top_score,
-            "verdict": verdict_for(top_score),
             "query_count": len(state["queries"]),
             "recommendations": recommendations,
         },
@@ -399,23 +272,24 @@ def build_result_event(state: GraphState) -> dict[str, object]:
         # nothing, which is a real answer, so it is reported rather than raised.
         #
         # Every field is either measured or absent. `concepts` and `query_count`
-        # are real - the LLM did run. `top_score` is 0 because nothing was
-        # scored, and `verdict` comes from the same verdict_for() every other
-        # run uses rather than a value invented for this branch.
+        # are real - the LLM did run. Nothing was scored, so nothing is rated:
+        # `patents` is empty and the payload carries no risk rating anywhere.
+        # Reporting "Novelty risk: Low" over an empty result set would state a
+        # finding this run did not make, which is the substitution the
+        # zero-tolerance policy exists to forbid.
         #
         # `recommendations` is EMPTY, and that is the point of this branch.
         # Legacy fills it with a hardcoded sentence of claim-drafting advice -
         # words no model produced, sitting in the slot the user reads as model
         # output. Saying nothing is the honest option when there is nothing to
         # say. A test asserts that literal appears nowhere in this package.
-        return _result_envelope(state, patents=[], top_score=0, recommendations=[])
+        return _result_envelope(state, patents=[], recommendations=[])
 
     match_analysis = state["match_analysis"]
     patents = format_matches(state["comparisons"], match_analysis.rationales, match_analysis.key_overlaps)
     return _result_envelope(
         state,
         patents=patents,
-        top_score=int(patents[0]["pct"]),
         recommendations=match_analysis.recommendations,
     )
 
@@ -441,8 +315,6 @@ def persist_run(state: GraphState, result: dict[str, object]) -> None:
             claims=state.get("claims"),
             concepts=data["concepts"],
             query_count=data["query_count"],
-            top_score=data["top_score"],
-            verdict=data["verdict"],
             recommendations=data["recommendations"],
             matches=data["patents"],
             patents=[comparison.patent for comparison in comparisons],
@@ -467,11 +339,10 @@ def run_graph_pipeline(
     verification branch by accident.
 
     Nothing here manufactures an approval. The approved fields arrive already
-    approved -- from ``workflow/approvals.py`` via the Gate A/B endpoints
-    (Implementation Gate D) or via ``tests/harness.py`` -- and
-    ``verify_features_node`` raises if they are absent. A caller passing
-    ``{"verification_requested": True}`` and nothing else gets a failed run, which
-    is the correct outcome for asking for verification nobody approved.
+    approved -- from ``workflow/approvals.py`` via the two gate endpoints, or via
+    ``tests/harness.py`` -- and each gate node raises if they are absent. A caller
+    passing ``{"advanced_search": True}`` and nothing else gets a failed run,
+    which is the correct outcome for asking for a guided run nobody approved.
     """
     graph = build_graph()
     final_state: GraphState = {}

@@ -73,10 +73,37 @@ def gate_a_payload(state: dict[str, Any]) -> dict[str, Any]:
     """
     return {
         "original_description": state.get("description") or "",
-        "problem_solved": state.get("problem_solved") or "",
-        "inventor_novelty_statement": state.get("inventor_novelty_statement") or "",
-        "candidate_decomposition": state.get("candidate_decomposition"),
+        "technical_summary": _candidate_summary(state),
+        "technical_elements": _candidate_elements(state),
     }
+
+
+def _candidate_summary(state: dict[str, Any]) -> str:
+    """The machine's proposed technical summary, editable by the reviewer."""
+    candidate = state.get("candidate_decomposition") or {}
+    return str(candidate.get("summary") or "")
+
+
+def _candidate_elements(state: dict[str, Any]) -> list[str]:
+    """The proposed technical elements, **flattened to a list of strings**.
+
+    Capability grouping is gone from the product (spec section 3.3), so the
+    groups the proposer still produces internally are concatenated in order and
+    their structure is dropped at this boundary. No ids, no `core`, no
+    relationships: the reviewer edits text, and everything else about an element
+    is minted on write.
+
+    Order is the proposer's order, flattened group by group. That is the only
+    ordering information the flat list can carry, and it is the one the reviewer
+    then edits directly.
+    """
+    candidate = state.get("candidate_decomposition") or {}
+    return [
+        text
+        for feature in candidate.get("features") or ()
+        for element in feature.get("elements") or ()
+        if (text := str(element.get("text") or "").strip())
+    ]
 
 
 def gate_strategy_payload(state: dict[str, Any]) -> dict[str, Any]:
@@ -93,17 +120,23 @@ def gate_strategy_payload(state: dict[str, Any]) -> dict[str, Any]:
     understanding here would edit an artifact that was already approved at its own
     version.
     """
-    strategy = state.get("candidate_search_strategy") or None
-    return {
-        "candidate_search_strategy": strategy,
-        "approved_summary": state.get("approved_summary") or "",
-        "understanding_version": state.get("decomposition_version"),
-        # The approved elements, so the screen can render coverage against real
-        # ids rather than asking the reviewer to hold them in their head. Read
-        # from the approved decomposition in state -- which `gate_a_node` filled
-        # from the approved-only readers -- never from the candidate one.
-        "elements": _approved_elements(state),
-    }
+    strategy = state.get("candidate_search_strategy") or {}
+    return {"queries": _candidate_queries(strategy)}
+
+
+def _candidate_queries(strategy: dict[str, Any]) -> list[str]:
+    """The proposed queries, **flattened to a list of strings**.
+
+    No `enabled`, no `rationale`, no `covered_element_ids` and no query ids: the
+    reviewer edits query text and nothing else (spec section 3.4). Every stored
+    query is enabled, so a disabled proposal would be a control the screen cannot
+    offer -- it is dropped here rather than shown as one the reviewer cannot use.
+    """
+    return [
+        text
+        for query in strategy.get("queries") or ()
+        if (text := str(query.get("query_text") or "").strip())
+    ]
 
 
 def _approved_elements(state: dict[str, Any]) -> list[dict[str, Any]]:

@@ -82,6 +82,18 @@ class GraphAdapter:
         initial_input: ``(run) -> dict`` -- the graph input for a QUEUED run.
         result_payload: ``(run, final_state) -> dict`` -- the terminal `result`
             event's `data` object.
+        persist_result: ``(conn, run, final_state, result_data) -> None`` -- store
+            the finished report through the STANDARD History data model, so a
+            durable run and a quick search land in the same tables and open in
+            the same report screen. **Required, with no default and no optional
+            fallback.** A durable run does not execute
+            ``graph/pipeline.py::run_graph_pipeline``, so it never reaches that
+            module's ``persist_run``; an optional callback would mean a run could
+            silently complete without its report ever being stored. The
+            production adapter implements it by delegating to
+            ``reports.py::save_report`` -- ``reports.py`` stays the only SQL
+            writer for the three search-report tables -- and may never no-op.
+            Executor-only test adapters may pass an explicit no-op.
         gate_of: ``(interrupt_value) -> WorkflowGate`` -- which workflow gate an
             `interrupt()` payload represents.
         review_payload: ``(run, gate, interrupt_value) -> dict`` -- the
@@ -94,6 +106,7 @@ class GraphAdapter:
     build: Callable[[Any], Any]
     initial_input: Callable[[dict[str, Any]], dict[str, Any]]
     result_payload: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
+    persist_result: Callable[[Any, dict[str, Any], dict[str, Any], dict[str, Any]], None]
     gate_of: Callable[[Any], WorkflowGate]
     review_payload: Callable[[dict[str, Any], WorkflowGate, Any], dict[str, Any]]
     resume_value: Callable[[dict[str, Any], Optional[dict[str, Any]]], Any]
@@ -677,29 +690,48 @@ class Executor:
         final_state: dict[str, Any],
         beat: lease.Heartbeat,
     ) -> None:
-        """Write the single terminal `result` and move to COMPLETED, atomically,
-        then release the lease."""
+        """Store the report, write the single terminal `result`, move to
+        COMPLETED and release the lease -- **all three or none**.
+
+        The result data is built ONCE and used for both the History row and the
+        terminal event, so the report a reviewer sees live and the one History
+        replays cannot disagree.
+
+        The three writes share one outer transaction. ``save_report`` keeps its
+        own transaction block; inside this one it is a savepoint, not a separate
+        commit. There is deliberately no ``try`` around ``persist_result``: if
+        standard report persistence fails, the run does **not** become COMPLETED,
+        no terminal `result` is committed, and no partial History row survives --
+        the exception propagates to the normal failure path, which records a
+        sanitized failure. Reporting a successful search whose report was dropped
+        on the floor is exactly the substitution the zero-tolerance policy
+        forbids, and it is worse here than inline because History is the only
+        record a durable run leaves.
+        """
         if beat.fenced:
             raise FencedError(f"run {run['run_id']} was fenced before finalization")
+        result_data = self.adapter.result_payload(run, final_state)
         payload = {
             "type": str(WorkflowEventType.RESULT),
             "run_id": run["run_id"],
-            "data": self.adapter.result_payload(run, final_state),
+            "data": result_data,
         }
         with db.connect() as conn:
-            store.finalize_run_success(
-                conn,
-                run_id=run["run_id"],
-                owner_id=self.owner_id,
-                fence_token=fence_token,
-                payload=payload,
-            )
-            lease.release(
-                conn,
-                run_id=run["run_id"],
-                owner_id=self.owner_id,
-                fence_token=fence_token,
-            )
+            with conn.transaction():
+                self.adapter.persist_result(conn, run, final_state, result_data)
+                store.finalize_run_success(
+                    conn,
+                    run_id=run["run_id"],
+                    owner_id=self.owner_id,
+                    fence_token=fence_token,
+                    payload=payload,
+                )
+                lease.release(
+                    conn,
+                    run_id=run["run_id"],
+                    owner_id=self.owner_id,
+                    fence_token=fence_token,
+                )
         logger.info("run %s completed", run["run_id"])
 
     def _fail(
@@ -889,6 +921,13 @@ MOCK_ADAPTER = GraphAdapter(
         "steps": state.get("steps") or [],
         "approved": state.get("approved"),
     },
+    # **An explicit no-op, and only legitimate because this adapter drives a
+    # three-node toy graph that produces no report.** There is no `patents[]`,
+    # no `concepts` and no comparisons to store, so there is nothing for the
+    # standard History model to hold. `persist_result` has no default precisely
+    # so this stays a decision written down here rather than a field someone
+    # forgot on the production adapter -- which may never no-op.
+    persist_result=lambda conn, run, state, data: None,
     gate_of=lambda value: WorkflowGate((value or {}).get("gate", "A")),
     review_payload=lambda run, gate, value: {
         "summary": {"question": (value or {}).get("question", "")},

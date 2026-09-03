@@ -124,7 +124,7 @@ def _approved_state(*, features=(APPROVED_FEATURE,), publications=("EP4778509",)
     enrichment = {pub: {"result": _enrichment(pub)} for pub in publications}
     return {
         "run_id": "11111111-1111-1111-1111-111111111111",
-        "verification_requested": True,
+        "advanced_search": True,
         "approved_decomposition": {
             "decomposition_id": "dec-1",
             "version": 1,
@@ -188,22 +188,41 @@ def test_a_search_only_run_returns_exactly_the_result_keys_it_did_before(determi
     assert result["data"].keys() == RESULT_KEYS
 
 
-def test_verification_requested_is_absent_by_default(deterministic):
+def test_advanced_search_is_absent_by_default(deterministic):
     """A run that does not ask for verification does not get it. The branch is
     opt-in at the state level, not opt-out."""
     events = list(run_graph_pipeline(DESCRIPTION, CLAIMS))
     assert not any(event.get("phase") == "decompose" for event in events)
 
 
-def test_every_verification_phase_is_in_the_shared_vocabulary():
+def test_every_advanced_search_phase_is_in_the_shared_vocabulary():
     """`emit_progress` raises on an unknown phase, so a node emitting one would
     fail the run rather than stalling a checklist. This asserts the tuple itself
-    covers the branch."""
-    for phase in (
-        "decompose", "normalize", "screen_dates", "enrich_epo",
-        "build_passages", "confirm_eligibility", "rank_candidates", "verify",
-    ):
+    covers the branch.
+
+    The list shrank with the topology: `normalize`, `screen_dates`, `enrich_epo`,
+    `build_passages`, `confirm_eligibility`, `rank_candidates` and `verify` named
+    evidence-layer nodes that were removed, so keeping them here would assert a
+    vocabulary for work the product can no longer do.
+    """
+    for phase in ("decompose", "strategy", "gate_a", "gate_strategy"):
         assert phase in PHASES
+
+
+def test_the_withdrawn_phases_are_gone_from_the_vocabulary():
+    """The other direction: a phase whose node was removed must not linger.
+
+    `emit_progress` validates against `PHASES`, so a name left here would stay
+    emittable -- and the frontend, which mirrors this tuple, would render a
+    checklist step for work nothing performs. Unlike `semantic_search`/`fuse`,
+    whose nodes are disabled but coming back, these are withdrawn for good.
+    """
+    withdrawn = {
+        "normalize", "screen_dates", "enrich_epo", "build_passages",
+        "confirm_eligibility", "rank_candidates", "verify",
+        "gate_b", "gate_c", "draft_report", "gate_d",
+    }
+    assert not (withdrawn & set(PHASES))
 
 
 def test_the_backend_and_frontend_phase_lists_agree():

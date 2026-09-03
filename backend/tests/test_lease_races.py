@@ -166,7 +166,7 @@ def test_a_release_racing_a_finalization_serializes_and_the_terminal_commits(
                 run_id=run_id,
                 owner_id="worker-1",
                 fence_token=token,
-                payload={"type": "result", "data": {"top_score": 0}},
+                payload={"type": "result", "data": {"query_count": 0}},
             )
 
             def release() -> None:
@@ -423,7 +423,7 @@ def test_concurrent_identical_finalizers_return_the_same_sequence(
     """One event, one status, and both callers get the same sequence -- because
     the second is a genuine replay, not a second write."""
     run_id, token = _running_leased(pg, make_run)
-    payload = {"type": "result", "data": {"top_score": 7}}
+    payload = {"type": "result", "data": {"query_count": 7}}
     barrier = threading.Barrier(2)
     sequences: list = []
     lock = threading.Lock()

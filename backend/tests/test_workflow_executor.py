@@ -93,6 +93,11 @@ ADAPTER = GraphAdapter(
         "steps": state.get("steps") or [],
         "approved": state.get("approved"),
     },
+    # Explicit no-op: this is an executor-only adapter over a two-node toy
+    # graph that produces no report, so there is nothing for the standard
+    # History model to store. `persist_result` has no default so that saying so
+    # is a deliberate line rather than an omission.
+    persist_result=lambda conn, run, state, data: None,
     gate_of=lambda value: WorkflowGate((value or {}).get("gate", "A")),
     review_payload=lambda run, gate, value: {"summary": {"question": value.get("question")}},
     resume_value=lambda run, resumed: (resumed or {}).get("payload", {}).get("decision"),

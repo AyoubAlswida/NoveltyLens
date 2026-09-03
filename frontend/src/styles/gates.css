@@ -451,3 +451,129 @@ mark.quote-hit { background: rgba(38, 168, 171, 0.28); padding: 0 0.125rem; }
 :root[data-theme="dark"] .report-comments,
 :root[data-theme="dark"] .unresolved-list li { border-color: var(--border); }
 :root[data-theme="dark"] .machine-code { color: var(--muted); }
+
+/* --- Advanced Search: the three stages -------------------------------------
+ *
+ * Every class below carries an explicit dark counterpart at the end of this
+ * block. The dark rules in this stylesheet are written
+ * `:root[data-theme="dark"] .foo` -- specificity (0,3,0) -- and sit later in the
+ * file, so one added without its pair renders identically to its neutral and
+ * nothing errors. That has bitten this project four times; see globals.css.
+ */
+
+/* Rendered text, not an aria-label. A reviewer needs to see how far along the
+   flow they are, which a screen-reader-only counter does not tell them. */
+.stage-counter {
+  margin: 0 0 1rem;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  letter-spacing: 0.04em;
+}
+
+.stage-pane { display: flex; flex-direction: column; gap: 0.875rem; }
+.stage-pane h2 { margin: 0; font-size: 1.125rem; }
+.stage-pane h3 {
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* Side by side is the point of stage 1: the inventor compares what they wrote
+   with how it was understood. Stacked below 720px, description first -- the
+   thing being checked against has to come before the thing being checked. */
+.stage-side-by-side {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+}
+
+@media (max-width: 720px) {
+  .stage-side-by-side { grid-template-columns: 1fr; }
+}
+
+/* Read-only, and it looks read-only. Never an input: the original description is
+   never rewritten, and a box that accepts a caret invites the belief that it
+   could be. */
+.original-description {
+  margin: 0;
+  padding: 0.75rem;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.03);
+  color: var(--ink);
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.draft-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+
+.draft-row { display: flex; align-items: center; gap: 0.5rem; }
+
+.draft-input {
+  flex: 1;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 0.9375rem;
+}
+
+.draft-input:focus {
+  outline: none;
+  border-color: var(--teal);
+  box-shadow: 0 0 0 4px rgba(38, 168, 171, 0.16);
+}
+
+.draft-remove {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.draft-remove:hover { color: #b73643; border-color: #b73643; }
+
+.stage-violations {
+  margin: 1rem 0 0;
+  padding: 0.75rem 0.75rem 0.75rem 1.75rem;
+  border-radius: 8px;
+  background: rgba(189, 122, 21, 0.1);
+  color: #9a6514;
+  font-size: 0.875rem;
+}
+
+/* --- dark counterparts, written in the same change ----------------------- */
+
+:root[data-theme="dark"] .original-description {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+:root[data-theme="dark"] .draft-input {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: #2b2b2b;
+}
+
+:root[data-theme="dark"] .draft-remove {
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+:root[data-theme="dark"] .draft-remove:hover {
+  color: #ef7683;
+  border-color: #ef7683;
+}
+
+:root[data-theme="dark"] .stage-violations {
+  background: rgba(214, 148, 36, 0.18);
+  color: #e0a63c;
+}

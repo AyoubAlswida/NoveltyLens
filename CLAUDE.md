@@ -22,6 +22,29 @@ external APIs, ranks them by similarity, and returns an LLM-written rationale pe
 plus drafting recommendations. There are two independent processes — a FastAPI backend
 and an Angular frontend — with no shared tooling; each is run and developed separately.
 
+**Two ways to run a search.**
+
+- **Quick Search** (`POST /api/analyze[/stream]`) — the description goes straight to the
+  pipeline. Inline execution driven by the HTTP request: no run row, no lease, no event log.
+- **Advanced Search** (`POST /api/runs`) — the same search, preceded by guided editing. The
+  system proposes a technical summary and a flat list of technical elements; a person edits
+  and approves them; the system proposes search queries; the person edits and approves those;
+  the approved queries are then executed by the *same* pipeline and the *same* report is
+  displayed. Durable: a run row, a lease, an event log and a separate worker process.
+
+**What the product does not do**, as of 2026-09-01
+(`docs/decisions/2026-09-01-advanced-search-three-stages.md`):
+
+- **No feature-disclosure verification.** The five-gate reviewed workflow — the candidate
+  set, the feature × publication matrix, its cells, the evidence passages and the drafted
+  report — was withdrawn. Its code, tables, migrations and rows are all retained and
+  unreachable; see "Advanced Search: the guided branch" below.
+- **No numeric similarity score, and no overall novelty verdict.** `pct`, `top_score` and
+  `verdict` are gone from the API, the database, the UI and every export. Cosine similarity
+  is still computed — it is how ranking works — and is used for exactly two things before
+  being discarded: it orders the matches, and it selects a per-patent High/Medium/Low
+  **novelty risk** rating. A report with no matches carries **no rating at all**.
+
 ## Commands
 
 **Backend** (from `backend/`):
@@ -144,7 +167,7 @@ USPTO note below.
 
 ## Architecture
 
-### Backend: two pipelines, selected by the `PIPELINE` flag
+### Backend: one pipeline, two branches
 
 `psycopg[binary]` and `yoyo-migrations` are back in `backend/requirements.txt` and are
 **live**: `db.py`/`reports.py` and `migrate.py` respectively. `rank_bm25` is gone along
@@ -184,8 +207,8 @@ wiring-up. Every event has a
 `backend/graph/events.py`'s `PHASES` tuple (ten now — see below, and see below for which of
 those ten the frontend's `PHASE_ORDER` currently omits). The stream must end with
 exactly one `result` event (data shape:
-`patents[].{num,title,pct,risk,rationale,key_overlap,url,source}` plus `title`, `date`,
-`concepts`, `top_score`, `verdict`, `recommendations`, `query_count`) or a client reading
+`patents[].{num,title,risk,rationale,key_overlap,url,source}` plus `title`, `date`,
+`concepts`, `recommendations`, `query_count`) or a client reading
 the stream would throw.
 
 **Adding a field to `patents[]` is a three-place change, not one.** It has to be produced
@@ -263,7 +286,7 @@ enabled* — accurate as design intent, not as what a request currently exercise
   TF-IDF fallback — see `compare.py` below) and `analyze_all_matches` with no `except`. The
   displayed score is the real one, truncated and clamped to 0–100 and nothing else — a
   dissimilar patent shows an honest `0`. Also holds `format_matches` and `verdict_for`,
-  which build the `patents[]` entries and the novelty verdict. Split into two node
+  which builds the `patents[]` entries. Split into two node
   functions, `rank_node` (phase `compare`) and `explain_node` (phase `analyze`).
 
 - `pipeline.py` — graph assembly (`build_graph`), the terminal `result` event, and
@@ -280,234 +303,111 @@ Zero results is **not** an error — reaching every provider and finding nothing
 genuine answer, and so is validation filtering the candidate set down to nothing. The graph
 skips ranking and explanation in either case (running them would emit
 `Scoring 0 candidates…`, describing work that is not happening) and the report goes out
-with real `concepts` and `query_count`, a measured `top_score` of 0, and an **empty**
-recommendation list.
+with real `concepts` and `query_count`, an **empty** recommendation list, and **no rating
+at all** — nothing was scored, so nothing is rated, and printing "Novelty risk: Low" over an
+empty result set would state a finding the run did not make.
 
-### The verification branch: `verification_requested`, and the approval boundary
+### Advanced Search: the guided branch, and the approval boundary
+
+**Feature-disclosure verification was withdrawn from the product on 2026-09-01**
+(`docs/decisions/2026-09-01-advanced-search-three-stages.md`). What replaced it is
+**Advanced Search**: a standard prior-art search preceded by guided editing. The system
+proposes a technical summary and a flat list of technical elements; a person edits and
+approves them; the system proposes search queries; the person edits and approves those;
+the approved queries are then executed by the ordinary search pipeline and the ordinary
+report is displayed. It performs **no** evidence verification, makes **no** legal
+conclusion, and presents **no** numeric score.
 
 **One conditional edge separates two pipelines.** `_route_after_understanding` sends a run
-with `verification_requested` to `decompose` and everything else straight to
-`search_orchestrator`; `_route_after_explain` sends a verified run on into the evidence
-layer and ends a search-only one. **A search-only run therefore traverses exactly the nodes
-it did before Gate C and emits exactly the same phases** — `tests/test_verification_integration.py`
-asserts both, because the SSE contract is live production behaviour a browser depends on.
-`run_graph_pipeline` gained a keyword-only `verification=` seed; `server.py`'s existing
-two-argument call is unchanged.
+with `advanced_search` to `decompose` and everything else straight to `search_orchestrator`.
+**A search-only run traverses exactly the nodes it did before any of this existed and emits
+exactly the same phases** — `tests/test_verification_integration.py` asserts both, because
+the SSE contract is live production behaviour a browser depends on.
 
-The verified branch, in `graph/evidence_nodes.py` and `graph/verification_nodes.py`:
+The flag is `advanced_search`, renamed from `verification_requested` with **no alias and no
+dual-read period**: it is an internal contract with one repository consumer.
 
 ```
-decompose -> search_orchestrator -> … -> explain
-          -> normalize_publications -> screen_dates -> enrich_epo
-          -> build_passages -> confirm_eligibility -> rank_and_reduce -> verify_features
+understand -> expand_queries -> decompose -> gate_a
+           -> propose_strategy -> gate_strategy -> search_orchestrator
+           -> keyword_search -> validate -> rank -> explain -> END
 ```
 
-`graph/evidence_nodes.py` wraps Gate B's pure modules and holds **no logic of its own** —
-`tests/test_verification_integration.py` asserts each node's output equals what the pure
-function returns for the same input, because behaviour reachable only through a compiled
-graph is behaviour that is hard to pin. Each node narrows `candidates` and appends to
-`publication_exclusions`; **an exclusion never becomes a cell**, and no code path here could
-make one.
+**An Advanced Search run ends after `explain`, exactly as a search-only run does.** The
+durable executor then persists the report and the terminal result atomically; see
+"Machine evidence is persisted" below.
 
-**The approval boundary is the point of this branch, and it is asymmetric on purpose.**
-`decompose_features_node` writes `candidate_decomposition`; `rank_and_reduce_node` writes
-`ranked_candidates`. Both are **machine output and never sufficient to verify against**.
-`verify_features_node` reads `approved_decomposition` and `approved_candidate_set` and
-nothing else — no flag, no keyword argument and no environment variable makes it read the
-candidate fields, and `tests/test_approval_boundary.py` asserts that at the AST level rather
-than by substring, so the docstrings that *name* the candidate fields in order to say they
-are never read do not mask a real read.
+**Removed from the topology, not commented out:** `normalize_publications`, `screen_dates`,
+`enrich_epo`, `build_passages`, `confirm_eligibility`, `rank_and_reduce`, `gate_b`,
+`verify_features`, `gate_c`, `draft_report`, `gate_d`, `absorb_manual_candidates`,
+`rerun_cells`, `regenerate_understanding`, `regenerate_strategy`, and the routers
+`_route_after_explain` and `_route_after_eligibility`. The `# TEMP: disabled` style in
+`_assemble` is reserved for the semantic-search trio, which is genuinely coming back; these
+are not, and leaving them commented would invite someone to uncomment a path whose API,
+screens and tests no longer exist. Git history is the record.
 
-**`backend/workflow/approvals.py` is the only module that writes an approved artifact.** A
-row in `feature_decompositions` or `candidate_sets` exists because a named human, at a
-recorded time, said it should. The schema's CHECK keeps `is_approved`/`approved_by`/
-`approved_at` consistent with each other, but nothing in a database can tell whether an
-email belongs to somebody who approved anything — so the write lives in one place and a grep
-test enforces it. `approved_by=""` is refused before the CHECK ever sees it, because it
-satisfies `IS NOT NULL` while naming nobody. Reads filter `is_approved` **in SQL**: an
-unapproved row is not fetched and then rejected, it is not fetched.
+**The approval boundary survives unchanged, and is the point of the branch.**
+`backend/workflow/approvals.py` is still the **only** module that writes an approved
+artifact, and `tests/test_approval_boundary.py` enforces that at the AST level. A row in
+`feature_decompositions` or `approved_search_strategies` exists because a named human, at a
+recorded time, said it should. Reads filter `is_approved` **in SQL**: an unapproved row is
+not fetched and then rejected, it is not fetched.
 
-**There is no auto-approval anywhere, and a production verified run cannot complete.**
-Workflow Gates A and B build the approval endpoints in Implementation Gate D. Until then the
-approved artifacts come from `backend/tests/harness.py`, which calls the same
-`workflow/approvals.py` functions under the same lease and **requires an approver on every
-call** — friction, not a shortcut. `verify_features_node` raises `UnapprovedArtifactError`
-**before any LLM call** when an approval is missing, unapproved or version-mismatched, so an
-unapproved run spends no quota and produces no cell. Nothing in `server.py`, `graph/` or
-`workflow/` imports the harness, and a test asserts that too.
+**The resume value is a signal, never a decision.** Each gate node discards `interrupt()`'s
+return value and re-reads the approved artifact through those readers. It travels through an
+HTTP request, an event row and a checkpoint; if it carried the approval, forging it at any of
+those three points would be approving. `tests/test_workflow_gates.py` asserts at the AST
+level that no gate node captures the return value and that none calls an approval writer.
 
-**Four reviewed constants. Three were APPROVED on 2026-08-28 by the repository owner**
-(`MATRIX_CELL_CAP = 75`, `MATRIX_CONCURRENCY = 1`, `RETRIEVAL_FLOOR = None`), and each is
-pinned by value *and* by behaviour in `tests/test_verification_integration.py` — a value-only
-test would pass against an implementation that truncated at 75 instead of raising.
+**`search_orchestrator` has exactly two incoming edges** — `expand_queries` (the search-only
+branch, which has no gates at all) and `gate_strategy`. That is what makes "no provider call
+before both approvals" a property of the graph rather than a convention, and
+`test_no_provider_call_is_reachable_before_both_approvals` asserts the count by name. The
+chain into it is now *tighter* than it was: `propose_strategy` is reachable only from
+`gate_a`, and `gate_a` only from `decompose`, because regeneration is gone.
 
-- `MAX_APPROVED_CANDIDATES = 15` — what a human can curate in one sitting; bounds the matrix.
-- `MATRIX_CELL_CAP = 75` — **more than 75 cells fails clearly and the matrix is never
-  truncated.** 76 cells raise **before any LLM call**, so an over-cap run spends nothing and
-  leaves no cell rows; a silently shortened matrix would present partial coverage as complete.
-- `MATRIX_CONCURRENCY = 1` — **verifier calls stay sequential until gateway concurrency is
-  measured** (spec §16 decision 5). Lens's trial tier already forced a global request lock
-  here once. A test observes actual call overlap rather than reading the constant, and an AST
-  test refuses a thread pool, because a pool sized 1 would satisfy the first and make a later
-  bump a one-character change.
-- `RETRIEVAL_FLOOR = None` — §16 decision 6 blocks the floor on the Qdrant/Qwen3-Embedding-4B
-  recalibration this file flags as outstanding, so the `NO_PASSAGE_OVER_FLOOR` reason is
-  unreachable, which is the honest state until somebody measures it. It is passed
-  **explicitly** at the call site rather than defaulted, and an AST test refuses any numeric
-  literal anywhere in the backend. **Do not invent a threshold.**
+**What the two gates approve, and how it is stored.** The public payloads are flat
+(spec §4.2): gate `A` carries `original_description`, `technical_summary` and
+`technical_elements` (a list of **strings**); gate `STRATEGY` carries `queries` (a list of
+**strings**). No capability objects, no `core`, no relationships, no per-element or per-query
+ids, no enable/disable, no coverage claim. `api/runs.py` translates that into storage:
 
-**`PassageSetIneligible` is caught at the matrix level only.** It excludes that publication,
-removes it from the matrix, creates no cells, and does not fail the run — an exclusion means
-no comparison was attempted, which is exactly what happened. `VerifierCapabilityError`,
-`UnapprovedArtifactError` and everything else propagate and fail the run. `NOT_EVALUATED`
-and `VALIDATION_FAILURE` are **cell** states and always appear in the matrix as themselves.
+- one `feature_decompositions` row (one technical group, `F1`), one `decomposition_elements`
+  row per element, ids minted **on write** as `E1..En`;
+- **`core = TRUE` for every element.** The column is `NOT NULL` with no default and a
+  reviewer no longer marks anything core, so every approved element counts. That is what
+  makes the internal `NO_CORE_ELEMENT` condition **unreachable** rather than deleted and
+  hoped for;
+- `decomposition_relationships` gets **no rows**. Relationships are gone from the product,
+  and `llm.regenerate_relationships`, `RELATIONSHIP_PROMPT_MARKER` and the
+  `DANGLING_RELATIONSHIP_REFERENCE` check went with them;
+- one `approved_strategy_queries` row per query, ids minted `Q1..Qn`, **every one enabled**.
 
-**Implementation Gate C's code is complete; Gate C's ACCEPTANCE is BLOCKED. Implementation
-Gates D and E are now built** (see the Human-in-the-Loop and SSE sections above), and they
-are built **behind** that block rather than around it: a verified run still cannot be
-admitted with `VERIFIER_CAPABILITY_ENFORCEMENT=required` and no eligible artifact, and no
-artifact was fabricated to make one possible. Spec §14.2.1 is implementation-blocking, and
-acceptance requires a real capability result recorded against the configured model and
-adapter revisions. **`NOT RUN` does not satisfy it, and neither does `eligible: false`.**
-The selected runtime is `gpt-5.4-mini-2026-03-17` at `reasoning_effort=medium` (owner
-decision 2026-08-31, `docs/decisions/2026-08-31-verifier-model-selection-gpt-5-4-mini.md`)
-and it is **MEASURED INELIGIBLE** by the 2026-08-31 targeted diagnostic: case E passed
-0/5, case I passed 1/3, and adversarial case G passed 3/3. The full 39-call gate was not
-run. The previous selection, `gpt-5.1-2025-11-13` at `high`, remains measured ineligible.
-There is no eligible artifact on disk and no code path that admits a verified run without
-one; admission was verified failing closed under the new configuration.
+Core semantics are **never exposed**: no API response, no screen and no export mentions
+core, and `tests/test_flat_public_payloads.py` greps the two payload builders and fails on
+a hit.
 
-**Four runtimes have now been measured against the real OpenAI API and none has qualified.
-The blocker is a measured model behaviour** — not a credential, not a network, and not
-structured output, which every model since `gpt-4o` has handled correctly. Full status in
-`docs/measurements/structured-output-capability-STATUS.md`; run it with
-`python -m verification.capability_test` (**39 paid calls** — six probes plus eleven §15.1
-cases at three runs each; exit 0 eligible, 1 measured and ineligible, 2 not run). A
-cost-bounded, structurally non-qualifying diagnostic runs individual cases:
-`python -m verification.diagnose E:5 I:3 G:3` writes one `diagnostic-case-*.json` per case,
-a filename namespace `capability.load_artifacts` does not read. A pass there is permission
-to spend the full gate, never a substitute for it.
+**Exactly three blocking rules, and nothing else blocks** (spec §3.5):
 
-The diagnostic's repetition count is a **hard provider-call ceiling**. Each repetition
-disables transport retries, the malformed-output re-ask, and the outer operational retry;
-production verification keeps all three bounded policies unchanged. This was added after
-a missing local `openai` package expanded eight requested diagnostic runs into 24 local
-attempts (zero provider calls and zero token usage). The successful 2026-08-31 rerun made
-exactly 11 provider calls and used 37,553 prompt plus 9,807 completion tokens, approximately
-USD 0.0723 at the published GPT-5.4 Mini token prices.
+1. the technical summary must not be empty after trimming;
+2. at least one non-empty technical element;
+3. at least one non-empty search query.
 
-- **2026-08-31, `gpt-5.4-mini-2026-03-17` at `reasoning_effort=medium`, targeted
-  diagnostic, 4 of 11, exit 1.** Case E passed **0/5**: three runs returned the wrong
-  conservative-ambiguity outcome and two failed consistency check 15. Case I passed
-  **1/3**: two runs omitted the required quoted link across the claim and its dependent.
-  Adversarial case G passed **3/3**. There were no operational failures and no retries.
-  Records: `diagnostic-case-E-2026-08-31-111023.json`,
-  `diagnostic-case-I-2026-08-31-111037.json`, and
-  `diagnostic-case-G-2026-08-31-111047.json`.
+`workflow/review.py` is the binding check; the reviewer's on-screen list pairs one-to-one
+and in the same order with `GATE_A_RULES` / `GATE_STRATEGY_RULES`, and
+`tests/test_frontend_review_contract.py` compares the counts. **Both sides shrink
+together** — a check with no rule beside it refuses an approval for a reason the screen
+never showed.
 
-- **2026-08-29, `gpt-5.1-2025-11-13` at `reasoning_effort=high`, targeted diagnostic, 8 of
-  11, exit 1.** Owner decision selected this model after `gpt-5-mini` failed at both effort
-  settings. Eleven calls — case E ×5, case I ×3, case G ×3 — through the production payload
-  builder, with **zero** operational, canonical-validation and consistency failures. **Case G
-  passed 3/3**: the prompt injection was ignored and every status matched §15.1 exactly.
-  **Case E failed 0/5, and it failed *stably*** — five identical runs calling E3 `NOT_FOUND`
-  where §15.1 says `UNCLEAR`, treating an unresolvable reference to an unsupplied figure as
-  absence. That shape would have *passed* runner v4, which gated on stability alone. Higher
-  reasoning effort is not the lever: this model spent **900-2626** reasoning tokens on case E
-  against `gpt-5-mini`'s 4096-7872 at the same setting, reasoning less and being wrong more
-  consistently, and the 16000 allowance was never approached. **Case I failed 0/3** with the
-  right outcome and every status correct — `combination_basis` never quoted the linking text
-  §15.1 I requires, which check 14 alone cannot catch because it demands a justification only
-  when a requirement cites more than one chunk. **The full 39-call qualification was NOT
-  run**, and Gate D was not started.
-- **2026-08-28, runner v2, exit 1.** OpenAI strict Structured Outputs rejected the §10 schema
-  with a deterministic HTTP 400 — `verification_scope` carries a `const` with no `type` — so
-  every verifier call failed before the model was reached. Fixed by the canonical/wire split
-  below.
-- **2026-08-29, runner v4, `gpt-5-mini-2025-08-07`, exit 1.** Owner decision selected this model
-  after `gpt-4o` failed. Probes 1-6 pass. Probe 7 ran the **full** §15.1 suite — eleven cases, three
-  runs each, 33 calls — with **zero** operational, canonical-validation or consistency failures,
-  and ten of eleven cases stable and matching their expectation. Case C, which disqualified
-  `gpt-4o`, is now correct. **Case E is not**: `UNCLEAR`, `PARTIALLY`, `PARTIALLY`.
-- **2026-08-29, `OPENAI_REASONING_EFFORT=high`, case-E diagnostic, 0 of 5.** An owner
-  quality-over-cost amendment, probed with `python -m verification.diagnose E` (five calls,
-  structurally non-qualifying) rather than by re-spending the 39-call gate. It did not improve; it
-  changed shape. Four of five judged E3 `NOT_FOUND` rather than `UNCLEAR` — treating an
-  unresolvable reference to an unsupplied figure as absence — and the one run with the **correct**
-  statuses failed **§9 check 14**, citing two chunks with no `combination_basis` justifying the
-  link. Reasoning tokens ran 4096-7872 against the 9940 ceiling, so the +8000 allowance is
-  confirmed sufficient. **The full qualification was not run**, per the rule that a failing
-  diagnostic stops before it.
-- **2026-08-29, runner v3, `gpt-4o-2024-08-06`, exit 1.** **Probes 1-6 pass**: strict structured output is exposed,
-  the wire schema is accepted, required fields, closed enums and `additionalProperties: false`
-  are all honoured, and the full verifier output was accepted *and* passed canonical
-  validation. **Probe 7 fails**: 3 of 12 stability calls rejected at §9 **check 15**, all on
-  §15.1 case C, stably — the model returns correct per-requirement statuses
-  (`FOUND`/`NOT_FOUND`/`NOT_FOUND`) and then contradicts them with
-  `NO_DISCLOSURE_FOUND_IN_SUPPLIED_PASSAGES` where §6 rule 5 derives
-  `PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES`. Measured malformed-response rate **0.25**.
+**The coverage rule is gone, and that is a real reduction worth stating.** It guaranteed
+every core element was searched for, so "no prior art found" could not rest on a search
+nobody performed for part of the invention. Advanced Search makes no such guarantee and
+states no such conclusion: it shows the queries to a person and asks them to approve them.
 
-**Probe 7 gates on correctness as well as stability, since runner v5** (owner decision
-2026-08-29). Every run is compared against §15.1's own Expected column — the outcome, the
-per-requirement statuses that section *names*, and the `combination_basis` link it requires
-quoted verbatim for cases A and I. Under v4 a model returning the **same wrong answer three
-times** was stable and therefore passed; `expected_outcome` was recorded and never gated on,
-and `gpt-5-mini` failed case E only because its wrong answers happened to disagree with each
-other. The expectations are **transcribed** from §15.1 and never reasoned to: case E carries
-`E3 -> UNCLEAR` and stops there, because `outcome == UNCLEAR` under §6 rule 4 already forces
-the rest. `tests/test_stability_coverage.py` pins it with a stably-wrong response that v4
-would have passed. This is a strengthening — no check was relaxed and no expectation moved.
-
-**That check-15 failure is not a defect here, and the fix for it is not available to an
-implementer.** §6's derivation is correct and pinned against the spec, and the §3 system
-prompt deliberately carries *no* outcome-derivation instruction — §6 makes the model's own
-`outcome` "a consistency check on the model's own reasoning, never the source of truth", so
-teaching it the rule would make check 15 tautological. Do not weaken check 15, do not edit the
-prompt to make the model agree, and do not relax the zero-malformed eligibility rule. §14.2.2
-point 5 makes selecting another model an explicit recorded owner decision.
-
-**Two schema layers since the 2026-08-29 amendment**
-(`docs/decisions/2026-08-29-canonical-and-wire-schemas.md`, spec §10.2/§14.2.3/§14.2.4).
-`RESPONSE_JSON_SCHEMA` stays §10 verbatim and stays the authority; `verification/wire.py`
-renders it into the subset OpenAI strict mode accepts, and that rendering is what
-`provider_response_format` sends. The wire copy drops `minLength`, `minItems`, `maxItems` and
-`uniqueItems` (plus the `$schema`/`title` metadata) and adds an explicit `type` beside every
-`const`/`enum`. **Every dropped keyword is enforced locally instead** — pydantic for the first
-three, `UNIQUE_ITEM_FIELDS` in `checks.parse_response` for the fourth — and
-`tests/test_wire_schema.py` proves each one by constructing a response that violates it.
-**This is a compatibility adaptation, not a weakening**: §14.1 stands, validation strictness
-does not vary by provider, and provider acceptance of the wire schema is necessary and never
-sufficient. The transformation is pure, deterministic, versioned, never mutates the canonical
-object, and **fails closed** on any construct it has not been taught to render. `maxLength`
-stays in the wire copy because OpenAI accepts it, and is enforced canonically regardless.
-
-**Four ways this runner has been wrong, all now pinned offline by
-`backend/tests/test_capability_runner.py`:** a DNS failure classified as a provider rejection
-(for probes 3-5 a rejection used to be a *pass*, so an offline run "qualified" five of seven
-probes against a gateway it never contacted); a *missing credential* classified the same way,
-which wrote an eligible-looking artifact on a machine with no key; an **HTTP 429** classified
-the same way, alongside a stability probe that scored its own twelve HTTP 400s as
-`malformed_response_rate: 0.0` and `all_cases_stable: true`; and a record written when nothing
-was measured, where `"eligible": false` is indistinguishable from *tested and failed*.
-
-Runner v3 splits the vocabulary in two and that split is the whole fix. **Semantic** —
-`PARSED`, `UNPARSEABLE`, `MODEL_REFUSED`, `TOKEN_CEILING` — the model answered.
-**Operational** — `SCHEMA_REJECTED`, `BAD_REQUEST`, `RATE_LIMITED`, `AUTH_FAILED`,
-`PROVIDER_ERROR`, `UNREACHABLE` — it did not. **No operational outcome can satisfy a probe or
-contribute a passing term, and one anywhere abandons the whole record** (exit 2, nothing
-written), so an artifact existing means something was measured. **A rejection is no longer a
-pass for probes 3-5**: under strict Structured Outputs the provider *prevents* the violation,
-so the success condition is a genuine response that conforms despite being told to violate the
-schema. `malformed_response_rate` is `null`, never `0.0`, when no valid response was received,
-and a case with an operational failure is never `stable`. Transient failures get bounded retry
-— `Retry-After` honoured, capped in attempts *and* total wait, injectable sleeper so no test
-ever sleeps — and deterministic 4xx, schema rejections, auth failures, token ceilings and
-refusals are never retried.
-
-`llm.decompose_features` is the component §16 decision 8 leaves unassigned, named explicitly
-in `llm.DECOMPOSITION_COMPONENT` so it *can* be assigned. Requirement quality caps evidence
-quality; whether an instruct model is the right thing to propose decompositions is an owner
-decision, recorded as open rather than settled by default.
+**The inventor's description is never rewritten.** Not by a proposal, not by an edit, not by
+an approval. `verification_runs.description` is the source input; the approved summary is
+stored **beside** it. A test asserts the description is byte-identical after an approval,
+and the stage-1 screen renders it as a `<p>`, never as a form control.
 
 ### Persistence: PostgreSQL stores completed runs and the durable-workflow schema
 
@@ -842,233 +742,139 @@ secret field needs the same declaration — `tests/test_secrets_do_not_leak.py` 
 the dataclass, not on today's values, because an empty field would pass a value check while
 still leaking wherever it is set.
 
-### Gate F: the review screens, and a real frontend test runner
+### The three stages, and a real frontend test runner
 
-`frontend/src/app/screens/` holds one screen per workflow gate --
-`understanding-review` (A), `strategy-review` (STRATEGY), `candidate-review` (B),
-`evidence-review` (C),
-`draft-review` (D) -- plus `gate-shell` (the shared frame, the **thirteen**
-states, `STAGE_LABELS`, and `classify`) and `verification-report` (the rendered
-report, used by both the Gate D draft and the approved view). One generic editor
-was tried first and replaced: the gates enforce different completion rules, and a
-single screen could not implement any of them faithfully.
+`frontend/src/app/screens/advanced-search-stages.ts` is **one component owning all three
+stages**, plus `gate-shell.ts` (the shared frame, the **twelve** states, `STAGE_LABELS` and
+`classify`). It replaced `understanding-review.ts` and `strategy-review.ts`, which replaced
+one generic editor before them.
 
-`decomposition-review.ts` is **deleted**, not renamed: the screen that replaced it
-asks a different question of a different artifact. `classify` moved out of it into
-`gate-shell.ts` when it went -- it is shared by every gate screen and belongs with
-the shared frame rather than in one screen the others imported from.
+**Why one component for three stages.** Stages 1 and 2 are a single backend approval (the
+understanding) and stage 3 is a second one (the strategy) — two approvals, three screens —
+but the three screens are one flow a person walks forward and back through, so the drafts
+live in one place. Splitting them would put the drafts behind a router or a shared store
+purely so that pressing Back could find them again.
 
-**Thirteen states, and collapsing any two would report one situation as
-another** -- the backend's zero-tolerance policy, moved into the UI: `loading`
-(not `empty`), `empty` (a real result, not a failed fetch), `review`,
-`validating`, `waiting`, `paused`, `resuming` (the executor has *not* picked it
-up yet), `blocked` (**every** condition listed), `stale` (never resubmitted),
-`forbidden` (`RUN_NOT_FOUND`, and the screen does not guess which kind),
-`reconnecting` (**a client problem, never a run failure**), `failed`,
-`completed`.
+- **Stage 1** — the inventor's description read-only beside an editable technical summary.
+- **Stage 2** — a flat, editable list of technical element strings: add, edit, delete.
+- **Stage 3** — a plain, editable list of search query strings.
+- Each renders `1 / 3`, `2 / 3`, `3 / 3` as **rendered text**, not an aria-label.
 
-**There is now a real frontend test runner.** `npm test` runs Vitest through
-`@angular/build:unit-test` against the actual components -- **86** specs covering
-the API client, the SSE reader, the cursor, account-namespaced run persistence,
-every gate screen, and the final report. Spec Gate F said not to invent one *in
-that gate* and that adding one is its own proposal; the owner made that proposal
-on 2026-08-30. `vitest.config.ts` pins `pool: 'threads'` because the default
-`forks` pool never starts a worker on this machine.
+**Navigation preserves every edit and never touches the server.** Only two transitions
+mutate anything: leaving stage 2 the first time, and leaving stage 3. `1 -> 2` calls no
+approval endpoint, which is asserted rather than assumed — a stage that quietly approved on
+its way past would make "Next" an approval the reviewer never recognised as one.
 
-`backend/tests/test_frontend_review_contract.py` remains as a **second** layer for
-what a component test cannot see: the dark-mode pairing for every state class, and
-the backend/frontend vocabulary agreement.
+**After the understanding approval the component polls for the proposed queries itself** and
+walks the reviewer on to stage 3, rather than emitting `resumed` and being remounted. A
+remount would drop the stage 1 and 2 drafts, and re-reading what you just approved is an
+ordinary thing to want to do. It hands back to the shell only after the strategy approval.
+`understandingApproved` then makes `2 -> 3` plain navigation, so walking back and forward
+cannot attempt a second approval — which would be a `WRONG_GATE` conflict for a reviewer who
+did nothing wrong.
 
-### Results and evidence, and the final report, in words an inventor reads
+**Twelve states, and collapsing any two would report one situation as another** — the
+backend's zero-tolerance policy, moved into the UI: `loading` (not `empty`), `empty` (a real
+result, not a failed fetch), `review`, `validating`, `waiting`, `resuming` (the executor has
+*not* picked it up yet), `blocked` (**every** condition listed), `stale` (never resubmitted),
+`forbidden` (`RUN_NOT_FOUND`, and the screen does not guess which kind), `reconnecting`
+(**a client problem, never a run failure**), `failed`, `completed`.
 
-The stages after the search strategy were rebuilt the way the understanding and
-strategy stages were: same mechanism, same approval boundary, different
-experience. `STAGE_LABELS` already mapped `B` and `C` to **"Results and
-evidence"** and `D` to **"Final report"**; the screens now match, and the internal
-gate letters appear nowhere on any of them.
+`paused` was removed **by proof, not by guess**: it meant "parked at a gate, shown from the
+running screen", and no surviving screen sets it — the SSE `paused` *event* is a different
+thing the running screen handles itself. None of the other twelve were collapsed.
 
-**`frontend/src/app/models/vocabulary.ts` is the one place a machine code becomes
-words**, and it is a *translation*, never a shortening. Every label for a scoped
-code keeps its scope -- `NOT_FOUND_IN_SUPPLIED_PASSAGES` renders as "Not found in
-the passages examined", never "not disclosed", which CLAUDE.md already called the
-same class of defect the zero-tolerance policy forbids. The label is longer than
-the code because the code is a symbol and the label is what the symbol meant.
+**A run parked at a withdrawn gate fails honestly.** A run left at `B`, `C` or `D` before the
+withdrawal still holds that value in `verification_runs.current_gate`, and the backend still
+returns it. `WorkflowGate` is narrowed to `'A' | 'STRATEGY'` — what the app renders — while
+the wire field is typed `StoredGate`, which is wider. That split is what forces the
+`@default` arm in `app.ts` that says "This run cannot be continued" rather than rendering a
+blank review screen. The run's data is retained; there is simply no way to carry it forward.
 
-Three properties are load-bearing and each is pinned:
+**`npm test` runs Vitest through `@angular/build:unit-test`** — **49** specs covering the API
+client, the SSE reader, the cursor, account-namespaced run persistence, the three stages and
+the report. `vitest.config.ts` pins `pool: 'threads'` because the default `forks` pool never
+starts a worker on this machine. `@types/node` is a declared devDependency: `tsconfig.spec.json`
+requires the `node` type library, and without it the specs do not compile after a clean install.
 
-- **The code is never thrown away.** Every screen renders the sentence *and* the
-  code beside it (`.machine-code`), because a report showing only prose is
-  unusable as an audit document and one showing only codes is what this work
-  replaced. The `<select>` a reviewer picks a status from carries the **enum** as
-  its value; only the text is translated.
-- **`describe()` never guesses.** A code with no entry renders as itself, so a
-  backend enum that gains a member surfaces as a raw value rather than as the
-  nearest neighbour in the table. A test asserts the tables are total against
-  `Status`, `Outcome`, `CellState` and `PublicationExclusion` *read from the
-  Python enums*, so that fallback stays a guard rather than the normal path.
-- **No two codes in a table share a label.** Collapsing two would let a reader
-  confuse "we looked and found nothing" with "we never looked".
+`backend/tests/test_frontend_review_contract.py` remains as a **second** layer for what a
+component test cannot see: the dark-mode pairing for every state class, and the
+backend/frontend vocabulary agreement.
 
-**Gate C's reviewed-outcome mirror disagreed with `derive_outcome`, in the one
-direction that matters.** It tested "any unclear and nothing not-found?" first, so
-a capability with nothing found, something not found and something unclear
-(`found = 0`, `notFound > 0`, `unclear > 0`) rendered as
-`PARTIALLY_DISCLOSED_IN_SUPPLIED_PASSAGES` -- a disclosure claim the application
-does not make, on the one screen whose job is to let a reviewer check exactly
-that. `verification/outcome.py` derives `UNCLEAR` there and says why: the
-ambiguity might have resolved in favour of disclosure, so it must not be rounded.
-The mirror is now written in `derive_outcome`'s own rule order so the two can be
-compared line by line, and a spec drives all seven cases.
+**`frontend/src/app/models/vocabulary.ts` is the one place a machine code becomes words.**
+It now holds `STATUS_TERMS` only. `OUTCOME_TERMS`, `CELL_STATE_TERMS`, `EXCLUSION_TERMS`,
+`CELL_CLASS_TERMS` and `REVIEW_STATUS_TERMS` were removed with the screens that rendered
+them — each named part of the verification matrix, and a translation table for words no
+screen shows reads as evidence that some screen still shows them. The Python enums behind
+them are retained.
 
-**Four sections of the final report read a shape `graph/report.py` does not
-produce, and every one failed as a plausible true negative.** That is what makes
-this class worth naming: "Gaps accepted without being resolved (0), None" reads
-exactly like a run with nothing to disclose.
+### The three-stage mock, and how an Advanced Search run is exercised for free
 
-- **Waivers were read from a top-level key the draft builder never writes.** It
-  attaches each waiver to its own matrix entry, so a report with waivers showed
-  none -- in the one section whose entire purpose is disclosing a gap a reviewer
-  chose not to close.
-- **`unresolved` is a list of entries and was read as a dict of counts**, so every
-  report showed three zeroes. The list also carries the failing check, which a
-  count cannot and which §9.1 requires be printed beside the comparison.
-- **`machine_outcome` was read as `outcome`**, so the system's own result was
-  blank on every row.
-- **An excluded publication was read under the wrong key** -- and the fix had to
-  go in the **backend**, because `build_draft` read `publication_number` from an
-  exclusion payload that has never carried it (`_exclusion_payload` writes
-  `requested_number`/`normalized_number`). **Every draft ever built stored
-  `null`**, so the report listed a count of publications it could not name. On a
-  product whose measured EPO coverage is 17.6%, the exclusion list is where a
-  reader learns what the run could not reach, and a reason attached to no
-  identifier discharges neither half of "visible and reasoned". `_excluded_entry`
-  now emits both keys plus `sections_retrieved`/`passages_built`, which are what
-  make a derived exclusion auditable.
-
-The report also now prints the reviewer's **comments and caveats** (typed at Gate
-D, stored by `approve_report`, and previously never rendered anywhere) and the
-draft's own stored `coverage_statement`, so an approved report carries the
-sentence that was approved rather than whatever the component would say today.
-
-`backend/tests/test_draft_report.py` is new and covers `build_draft` directly --
-it is pure, so none of it needs a graph, a database or a run.
-
-**The gate rules a reviewer reads are the server's, said in plain words**, paired
-one-to-one and in the same order with `GATE_B_RULES`/`GATE_C_RULES`. Only the
-counts can be compared, which is deliberately weak and the strongest check
-available: the two lists say the same thing in different words. What it catches is
-the failure that happens -- a rule added on the server with no gloss here, leaving
-a reviewer held to a condition the screen never states.
-
-**An `sr-only` caption is rendered text.** The terminology check reads captions
-along with everything else and strips only HTML comments and binding expressions
-(the first never reach the DOM, the second are TypeScript). It immediately caught
-a caption reading "Verification cells" -- shown to the reader with the least other
-context for it.
-
-### The two human work requests, carried out by the worker
-
-`POST /api/runs/{id}/candidates` and `POST /api/runs/{id}/cells/{id}/rerun` record
-a request and return `202`; `graph/work_requests.py` is where the **worker**
-carries it out, under the lease, inside the graph.
-
-**A manually added publication re-enters the pipeline; it does not skip it.**
-`gate_b` routes to `absorb_manual_candidates`, which adds the number to
-`candidates` and sends the graph **back to `normalize_publications`** -- the real
-nodes, not a second implementation of their rules. Case T means that literally: a
-manual candidate that fails screening lands in `publication_exclusions` exactly
-like a discovered one, and the loop returns to Gate B so a human approves the
-widened set.
-
-**A rerun supersedes; it never edits.** `gate_c` routes to `rerun_cells`, which
-re-verifies only the named cells with only the named context and writes a **new**
-`result_version` carrying `source_result_version` back to the one it came from.
-Every other cell is untouched, the prior version stays immutable, and the graph
-returns to Gate C so the reviewer sees the answer to the question they asked.
-
-Both are idempotent **in the database**, not through a flag in state: each request
-row is claimed by stamping `processed_at` under the lease, so the at-least-once
-execution the lease provides (§3.3.1) cannot process one twice. Claimed rows are
-**kept, not deleted** -- the row is the evidence that a person asked and the worker
-acted, and the report's audit appendix needs it.
-
-### The four-gate mock, and how a verified run is exercised for free
-
-**`python run_mock.py --workflow` is the deterministic four-gate mock**, and it is
-the thing that makes every claim below checkable at zero cost. It serves the real
-application with the real graph, the real executor, the real lease, the real event
-log and the real database, and stubs only the metered boundaries: discovery, EPO
-enrichment, and the LLM — including the verifier. A verified run admitted against
-it pauses at Workflow Gate A, the search strategy stage, and Gates B, C and D, and
-completes with an approved report.
+**`python run_mock.py --workflow` is the deterministic three-stage mock**, and it is what
+makes every claim above checkable at zero cost. It serves the real application with the real
+graph, the real executor, the real lease, the real event log and the real database, and stubs
+only the metered boundaries: discovery, EPO enrichment, and the LLM. A run admitted against
+it pauses at Workflow Gate A (stages 1 and 2) and at the search strategy stage (stage 3), and
+completes with the standard report.
 
 Three things about it are load-bearing:
 
-- **It hosts the executor in-process** (`WORKFLOW_EXECUTOR=inprocess`), and that is
-  forced rather than chosen. The provider stubs are applied inside `run_mock.py`'s
-  own process; a separate `python -m workflow.worker` would not inherit them and
-  would make live calls. It is the same `Executor` class running the same
-  claim/lease/reconcile/finalize loop on a daemon thread. The **separate-process**
-  worker is exercised by `acceptance/real_process_acceptance.py`, which kills and
-  restarts it.
+- **It hosts the executor in-process** (`WORKFLOW_EXECUTOR=inprocess`), and that is forced
+  rather than chosen. The provider stubs are applied inside `run_mock.py`'s own process; a
+  separate `python -m workflow.worker` would not inherit them and would make live calls. It
+  is the same `Executor` class running the same claim/lease/reconcile/finalize loop on a
+  daemon thread. The **separate-process** worker is exercised by
+  `acceptance/real_process_acceptance.py`, which kills and restarts it.
 - **The env vars are set at import time**, before `config` is imported, because
-  `DEPLOYMENT_PROFILE`, the two evidence policies and `WORKFLOW_GRAPH_ADAPTER` are
-  all read at import and have no defaults.
-- **Patches are applied at each consuming module's import site.** `verification/
-  verify.py` does `from llm import _llm_chat`, which binds a local name, so
-  patching `llm._llm_chat` never reaches it — the verifier called the real
-  provider and the run failed with `MissingCredential`. Loudly, which was right,
-  but for a boundary that was supposed to be stubbed.
+  `DEPLOYMENT_PROFILE` and `WORKFLOW_GRAPH_ADAPTER` are read at import and have no defaults.
+  **No verifier policy is set any more**: this block used to supply `DATE_SCREENING_POLICY`,
+  `TEXT_VERSION_POLICY` and a capability deferral because admission refused a run without
+  them, and admission now consults none of it.
+- **Patches are applied at each consuming module's import site.** `from llm import _llm_chat`
+  binds a local name, so patching `llm._llm_chat` never reaches such a caller.
 
-`python acceptance/four_gate_acceptance.py` drives it end to end over HTTP:
-admission, every gate (the filename predates the search strategy stage and is kept
-so the transcript path stays stable), ownership 404s, idempotent replay, **a
-strategy approval that is refused while a core element would go unsearched**, **a
-manual candidate carried out by the worker and looped back to Gate B for
-re-approval**, **a cell rerun carried out by the worker producing
-`result_version=2` with `source_result_version=1`**, the terminal `result`, the
-approved report, and SSE replay from a cursor. `acceptance/browser_acceptance.py` drives the same workflow
-through **real Chrome**, clicking each gate's own button by its rendered label.
+`python acceptance/advanced_search_acceptance.py` drives it end to end over HTTP: admission,
+both approvals, an edited element and a replaced query, the search, the standard report,
+ownership 404s, idempotent replay, one History row carrying the same matches, and every
+withdrawn route answering 404. **53 checks, zero paid calls**, transcript at
+`docs/acceptance/advanced-search-transcript.txt`. It **replaces** `four_gate_acceptance.py`
+and `journey_acceptance.py`, which are deleted along with their transcripts — a transcript
+path that keeps working while the thing it describes has been withdrawn is how an acceptance
+claim quietly stops meaning anything. `acceptance/browser_acceptance.py` drives the same
+workflow through **real Chrome**.
 
-### Machine evidence is persisted, and the lease travels in the config
+### The durable report is persisted, and the lease travels in the config
 
-`graph/durable.py` is the seam. `verify_features_node` writes the matrix
-(`verification_cells` / `verification_results`), `build_passages_node` writes the
-passage of record (`evidence_passages`), and `rerun_cells_node` writes the new
-version. Until this existed the matrix and the passages lived **only in the
-LangGraph checkpoint**: Gate C rendered zero cells against a draft reporting
-seven, and every locator in an approved report would have become unresolvable the
-moment the checkpoint was compacted.
+**A durable run does not execute `run_graph_pipeline`**, so it never reaches that module's
+`persist_run`. `workflow/executor.py::GraphAdapter` therefore carries a **required**
+`persist_result(conn, run, final_state, result_data)` callback — no default and no optional
+fallback, because an optional one would let a run complete silently with its report never
+stored. The production adapter implements it by delegating to `reports.py::save_report`;
+`reports.py` stays the only SQL writer for `patents` / `search_runs` / `search_run_matches`.
+Executor-only test adapters may pass an **explicit** no-op; the production adapter may never.
 
-**The lease comes from `config["configurable"]`, never from `GraphState`.** The
-executor puts `owner_id` and `fence_token` there on every acquisition. A
-checkpointed fence token is stale the moment a different worker resumes the run,
-so the first write after any recovery would fence itself against a token it had
-merely remembered. Note LangGraph injects the config **by annotation type** — a
-parameter named `config` annotated `Optional[dict]` is silently not passed, and
-the node saw `None`; it must be annotated `RunnableConfig`.
+**`_succeed` opens one outer transaction** and, in order: `persist_result`, then
+`finalize_run_success` with the terminal `result` event, then the lease release. **All three
+or none.** `save_report` keeps its own transaction block, which becomes a savepoint inside
+this one. There is deliberately no `try`: if report persistence fails the run does **not**
+become `COMPLETED`, no terminal `result` is committed, and no partial History row survives.
+A run that reported success while its report was dropped is the substitution the
+zero-tolerance policy forbids, and here it would be *silent* — a client reading the stream
+would see a completed run and only discover the gap when History was next opened.
+`tests/test_run_report.py` injects a `reports.py` failure and asserts all three rolled back.
 
-**A dependent result going stale is now enforced, not merely detectable.**
-`stale_passage_citations` computed exactly the section 6 rows 10/15/17 condition
-and had **no caller**, and `save_cell_result` never wrote `passage_text_hashes`
-at all — the column whose own SQL comment says it "is what makes a changed source
-text detectable". So a citation could be checked for existence and never for
-having changed. Both halves are wired: a cell citing text that has moved is a
-`STALE_EVIDENCE` blocking condition at Gate C, resolvable by a rerun or a waiver
-and by nothing else.
+The result data is built **once** and used for both the History row and the terminal event,
+so the report a reviewer sees live and the one History replays cannot disagree.
 
-### Section 6 traceability is a test, not a table
+**The lease comes from `config["configurable"]`, never from `GraphState`.** The executor puts
+`owner_id` and `fence_token` there on every acquisition. A checkpointed fence token is stale
+the moment a different worker resumes the run, so the first write after any recovery would
+fence itself against a token it had merely remembered. Note LangGraph injects the config **by
+annotation type** — a parameter named `config` annotated `Optional[dict]` is silently not
+passed; it must be annotated `RunnableConfig`.
 
-`tests/test_matrix_traceability.py` parses section 6 out of the specification,
-maps all 164 rows to the named tests that assert them, and **resolves every name
-against the real suite** — so a row added to the spec, or a test renamed or
-deleted, fails the suite rather than leaving a coverage claim quietly wrong.
-`docs/acceptance/matrix-traceability.md` is generated from that mapping
-(`python -m acceptance.matrix_traceability`) and the test asserts the file on disk
-still matches. Exactly two rows (35 and 135) are covered only by an acceptance
-script, that set is pinned, and script evidence is labelled differently in the
-table on purpose: evidence somebody has to run by hand is weaker than evidence
-that runs with the suite.
+`graph/durable.py` and `workflow/evidence_store.py` are **retained and unreachable**: they
+wrote the verification matrix and the passages of record, and no compiled graph calls them.
 
 ### Real-process acceptance evidence
 
@@ -1093,52 +899,6 @@ already publishes 8001 here and runs an older image — it answered `/healthz` a
 then 404'd `/api/runs`, which is how a stale listener produces a baffling
 acceptance failure. The script refuses to start if its port is already in use, so
 it can never test a process it did not start.
-
-### The journey acceptance: rejection, editing, and the two loops
-
-`python acceptance/journey_acceptance.py` (from `backend/`) drives the same four
-stages `four_gate_acceptance.py` does, and adds the branches that one never
-touches. It binds **8096**, refuses to start if that port is busy, writes
-`docs/acceptance/journey-transcript.txt`, and deletes its run and its two
-throwaway accounts in `finally`. **87 checks, zero paid calls.**
-
-What it covers that nothing else did:
-
-- **Rejection.** `POST /api/runs/{id}/understanding/regenerate` and
-  `.../strategy/regenerate` had never been driven end to end by any acceptance
-  run. Each returns **202**, the *worker* re-enters the proposing node, the
-  result is a **new version**, the rejected proposal is left untouched, and
-  **nothing is approved** — a rejection is a decision, not an approval. A
-  rejection naming a superseded version is refused rather than applied to the
-  proposal that replaced it.
-- **Editing, and the rules that refuse a bad edit.** `NO_SUMMARY`,
-  `NO_CORE_ELEMENT`, `NO_ENABLED_QUERY`/`UNCOVERED_CORE_ELEMENT` and
-  `STALE_UNDERSTANDING_VERSION` are each asserted against the real endpoint,
-  because they are what a reviewer actually meets.
-- **A switched-off search is stored, not dropped** — checked in
-  `approved_strategy_queries`, along with the edited query text, because "we
-  deliberately did not search for this" is part of what was approved.
-
-**The ordering rule both loops share is the thing to know, and it is what this
-script got wrong twice before it got it right.** Adding a manual candidate and
-requesting a cell re-run each record a request and return `202`. Neither resumes
-the run: it is parked waiting for a person, and **the human action that releases
-it is what hands the request to the worker** — *approving* at Results and
-evidence for a manual candidate, *completing* the stage for a re-run. The graph
-then does the work and returns to the same stage, so a second decision is
-required. A script that waits for the request to be carried out *before* taking
-that action waits for something that cannot happen, and times out against a
-perfectly healthy run. Both loops are driven to their real end here, and the
-waits are on the stored result rather than on the gate — waiting on a gate the
-run has not left yet returns instantly and proves nothing.
-
-It also pins what the finished report must say: it names the approved
-understanding and candidate-set versions it was built from and the date and
-text-version rules it screened by, it carries the coverage statement, and **every
-excluded publication is named** and stated NOT EVALUATED. That last one is live
-cover for the `_excluded_entry` fix — the manually added publication is screened,
-excluded, and appears in the approved report by number, where every draft built
-before that fix stored `null`.
 
 ### Docker: the frontend container needs `USER 101:0`
 
@@ -1185,7 +945,7 @@ the schema underneath one reproduces the deadlock with none of the explanation.
 which the Compose setup does not provide; this makes the shared one behave correctly and
 says so.
 
-### The Invention Understanding stage (what Workflow Gate A now is)
+### The Invention Understanding stage (Workflow Gate A: stages 1 and 2)
 
 **Workflow Gate A is unchanged as a mechanism and rebuilt as an experience.** It is the
 same `interrupt()` node at the same place in the graph, with the same approval boundary and
@@ -1241,8 +1001,9 @@ a backend that would refuse one.
 **Four limits, and only one of them is derived.** `backend/graph/limits.py`:
 
 - `MAX_CAPABILITIES` = `MATRIX_CELL_CAP // MAX_APPROVED_CANDIDATES` = **5**. Derived, never
-  written as a literal: a reviewer raising `MATRIX_CELL_CAP` deliberately should not have to
-  remember a second file.
+  written as a literal. **Now inert**: capability grouping was removed with feature
+  verification, the approval writer stores every element under one technical group, and no
+  blocking rule reads this. `MATRIX_CELL_CAP` gates no live path either.
 - `MAX_ELEMENTS_PER_CAPABILITY` = **8** and `MAX_ELEMENTS_TOTAL` = **25**. **Chosen** (owner
   decision, 2026-08-30) and explicitly *not* matrix-derived — elements do not multiply cells.
   One cell asks about one capability and all its elements at once, so an element lengthens a
@@ -1402,48 +1163,44 @@ the screen. `covered()` is a **method, not a `computed()`**, for exactly the rea
 `violations()` is one on the understanding screen: it reads a signal *and* plain nested
 objects, so a computed would not invalidate when a query is switched off.
 
-### Human-in-the-Loop: the gates, and who may resume a run
+### Human-in-the-Loop: the two gates, and who may resume a run
 
-**Implementation Gates D and E, plus the search strategy stage.** A verified run pauses
-**five** times and a person decides whether it continues. `graph/gates.py` holds the five
-`interrupt()` nodes and they are wired into `graph/pipeline.py`:
+An Advanced Search run pauses **twice** and a person decides whether it continues.
+`graph/gates.py` holds the two `interrupt()` nodes and they are wired into
+`graph/pipeline.py`:
 
 ```
-decompose -> gate_a -> propose_strategy -> gate_strategy -> search_orchestrator -> … ->
-rank_and_reduce -> gate_b -> verify_features -> gate_c -> draft_report -> gate_d -> END
-        ^          |                  ^              |
-        +----------+                  +--------------+
-   regenerate_understanding      regenerate_strategy, when the reviewer rejects the queries
+decompose -> gate_a -> propose_strategy -> gate_strategy -> search_orchestrator -> … -> explain -> END
 ```
 
-Gate A sits **before** the strategy that is built from the decomposition, the strategy gate
-**before** the search that dispatches its queries, and Gate B **before** the verifier that
-uses the candidate set — so nothing is searched for or verified against that a person did
-not approve. `tests/test_workflow_gates.py::test_no_provider_call_is_reachable_before_both_approvals`
-asserts that `search_orchestrator` has exactly two incoming edges: `expand_queries` (the
-search-only branch, which has no gates at all) and `gate_strategy`. `draft_report` sits **between** C and D because case AC forbids
-approving a report into existence: Gate D requires a draft that already exists.
+Gate A sits **before** the strategy that is built from the understanding, and the strategy
+gate **before** the search that dispatches its queries — so nothing is searched for that a
+person did not approve. `gates.GATE_NODES` maps the **live** gates only (`A`, `STRATEGY`).
+
+**`WorkflowGate` still has `B`, `C` and `D`, and that is deliberate.** Runs parked at those
+gates before the withdrawal hold them in `verification_runs.current_gate`; removing the
+members would turn a legacy row into an enum error at exactly the moment the product is
+supposed to explain that the run cannot be continued.
 
 **One graph, two compilations.** `graph/pipeline.py::_assemble` is the single topology;
 `build_graph()` compiles it without a checkpointer for the inline search path, and
 `build_graph_with_checkpointer()` compiles the identical builder for the executor.
-`interrupt()` needs a checkpointer, and the only nodes that call it are the gates —
-which a search-only run never reaches.
+`interrupt()` needs a checkpointer, and the only nodes that call it are the gates — which a
+search-only run never reaches.
 
 **No endpoint resumes the graph.** An approval commits five things in one transaction — the
 human decision, the audit row, the idempotency record, the `resumed` event, and
-`WAITING_FOR_REVIEW -> RESUMING` — and returns. The **executor** picks the run up on its
-next poll and issues `Command(resume=…)`. That separation is what makes a duplicate
-approval harmless and a crash mid-approval recoverable, and
+`WAITING_FOR_REVIEW -> RESUMING` — and returns. The **executor** picks the run up on its next
+poll and issues `Command(resume=…)`. That separation is what makes a duplicate approval
+harmless and a crash mid-approval recoverable, and
 `tests/test_workflow_api.py::test_an_approval_never_builds_or_calls_the_graph` patches the
 graph and proves it was never invoked.
 
-**The resume value is a signal, never a decision.** It travels through an HTTP request, an
-event row and a checkpoint; if it carried the approval, forging it at any of those three
-points would be approving. Every gate node discards it and re-reads the approved artifact
-through `workflow/approvals.py`'s readers, which filter `is_approved` **in SQL**.
-`tests/test_workflow_gates.py` asserts at the AST level that no gate node captures
-`interrupt()`'s return value and that none of them calls an approval writer.
+**Regeneration is gone** (spec §10.2). Both `*/regenerate` endpoints, their frontend client
+methods and affordances, their graph registrations and their routers were removed; editing
+the summary, the elements and the queries replaces asking the model for another attempt. The
+two `*_regeneration_requests` tables, their migrations and any existing rows are **kept** —
+nothing is deleted to tidy the product.
 
 **Three checks, in one order, on every mutating endpoint** (`api/runs.py`):
 
@@ -1454,24 +1211,21 @@ through `workflow/approvals.py`'s readers, which filter `is_approved` **in SQL**
 3. **the gate precondition** — before the mutation, so approving the wrong gate is a
    `409 WRONG_GATE` rather than a unique-constraint violation surfacing as a `500`.
 
-`graph/adapter.py` is the production `GraphAdapter` (`WORKFLOW_GRAPH_ADAPTER=graph.adapter:ADAPTER`).
-It decides nothing: it names which gate an interrupt represents, builds the
-`review_required` body from **counts and a URL** rather than the artifact, and derives
-`verification_requested` from the run row existing.
+`graph/adapter.py` is the production `GraphAdapter`
+(`WORKFLOW_GRAPH_ADAPTER=graph.adapter:ADAPTER`). It decides nothing: it names which gate an
+interrupt represents, builds the `review_required` body from **counts and a URL** rather than
+the artifact, derives `advanced_search` from the run row existing, and persists the finished
+report through `reports.py`.
 
-**Capability qualification can be deferred, and a deferral is not a bypass.**
-`VERIFIER_CAPABILITY_ENFORCEMENT` is `required` (the default, and the specification's
-position) or `deferred`. `deferred` additionally requires
-`VERIFIER_CAPABILITY_DEFERRAL_DECISION` to be non-empty — the same recorded-decision shape
-as the date and text-version policies. The difference from a bypass is the whole point: a
-bypass proceeds *as though qualified*, while a deferral proceeds **recording that this
-runtime is not qualified**, returns `capability_qualified: false` from admission, and still
-runs all eighteen §9 checks on every response. **No eligible artifact is fabricated**, and
-an incompatible model response still fails the cell with its failing check named while the
-run keeps its state. An unknown value refuses rather than defaulting to the permissive
-reading.
+**Verifier capability qualification is not consulted at all.** `VERIFIER_CAPABILITY_ENFORCEMENT`,
+`VERIFIER_CAPABILITY_DEFERRAL_DECISION`, `DATE_SCREENING_POLICY` and `TEXT_VERSION_POLICY` are
+no longer read on the Advanced Search path (spec §10.4), and admission returns no
+`capability_qualified` field. Advanced Search runs no verifier and screens no dates, so
+refusing a search over that configuration would block a feature on settings for a feature
+that no longer exists. The qualification runner and its artifacts are retained as standalone
+legacy tooling.
 
-### The verified-run SSE contract and API (Implementation Gate E)
+### The Advanced Search SSE contract and API
 
 `backend/api/` is the HTTP surface and `backend/workflow/stream.py` is the reader.
 **Nothing in `api/` may reach a `_system_*` store function** — those skip ownership because
@@ -1525,7 +1279,7 @@ boundary where a provider body or a URL bearing a key would reach a browser.
 exists so a connection is not held open across a review that may take days. A
 `paused` event the run has already moved past is history, and stopping on it would
 cost a catching-up client one reconnect per historical pause — four for a
-four-gate run, never reaching the terminal on the first attempt.
+multi-stage run, never reaching the terminal on the first attempt.
 
 Errors carry `{code, detail}` **at the top level** (`api/deps.py` maps §10.2, and
 `server.py` installs the handler that stops FastAPI nesting it under `detail`). A run the
@@ -2005,18 +1759,24 @@ them degrade gracefully, by design: an exhausted quota fails the request.
 Check before any benchmarking or repeated live runs; it is very easy to spend a month's
 allowance in an afternoon of testing.
 
-### `backend/verification/` — feature-disclosure verification, built but not wired in
+### `backend/verification/` — feature-disclosure verification, WITHDRAWN and retained
 
-Implements `docs/prompts/feature-disclosure-verification.md`. **Nothing in the running
-application calls it** — not `server.py`, not `graph/`, not the executor, not the frontend.
-(`server.py` does now host the durable executor in `inprocess` mode, but that host runs the
-graph it is configured with and there is no verification graph yet; the connection between
-this package and a run is what Gate C builds.) That gap is deliberate rather than
-unfinished: the specification puts this component inside a
-four-gate reviewed workflow (§11.1) whose prerequisites are still open decisions in that
-document's §16 — per-user identity for a real audit trail, a fourth SSE event type for a
-paused run, and a LangGraph checkpointer for resumable ones. Wiring it in before those are
-settled would change the SSE contract this file describes as load-bearing.
+**WITHDRAWN FROM THE PRODUCT on 2026-09-01, and retained in full.** Implements
+`docs/prompts/feature-disclosure-verification.md`. Nothing in the running application calls
+it — not `server.py`, not `graph/`, not the executor, not the API, not the frontend — and no
+compiled graph, route or acceptance journey reaches it.
+
+That gap used to be *deliberate but temporary*: the component was built ahead of the four-gate
+workflow that would host it. It is now **permanent**. Feature verification was withdrawn
+because no runtime ever qualified against §14.2.1 — four were measured and all four failed —
+so the reviewed workflow's central act could not be performed. See
+`docs/decisions/2026-09-01-advanced-search-three-stages.md`.
+
+The package, its tests, the standalone qualification runner
+(`python -m verification.capability_test`) and every measurement artifact are kept for
+historical reference and possible future work. **Do not partially delete this subsystem**,
+and do not read anything below as describing live product behaviour: it describes what the
+component does when something calls it, and nothing does.
 
 What it does: answers whether **1–5 supplied passages** from **one publication** state each
 element and relationship of **one human-approved feature**. It is not a novelty judgment and
@@ -2112,7 +1872,7 @@ flags as outstanding.
 ### Mock mode: `python run_mock.py`, for looking at the app without paying for it
 
 **`--workflow` additionally serves the verified reviewed workflow** — see "The
-four-gate mock" section above for what that stubs and why the executor has to be
+three-stage mock" section above for what that stubs and why the executor has to be
 in-process for it. Without the flag, `run_mock.py` is exactly what it always was:
 the search pipeline, no run row, no gates.
 
@@ -2126,7 +1886,7 @@ Faked: `llm._llm_chat` (including the feature-disclosure verifier — see that s
 `compare.embed_texts`, `search.vector_store.embed_texts`,
 `search.search.SOURCES`, and both `graph.searching.enrich_*` functions. **Everything else
 is real** — the FastAPI app, the auth gate, the graph and its routing, the SSE framing,
-prompt construction, JSON parsing, dedup, chunking, cosine scoring, verdict thresholds,
+prompt construction, JSON parsing, dedup, chunking, cosine scoring, the risk thresholds,
 Postgres persistence, and `GET /api/history`. It is a stub at the network boundary, not a
 mock of the pipeline, which is what makes it worth trusting for UI work.
 
@@ -2166,25 +1926,23 @@ understanding, so the elements a strategy is asked to cover are whatever they ap
 a fixed list would either miss a core element (failing the coverage rule for the wrong
 reason) or claim coverage of ids the run does not have.
 
-### The review screen was one component; it is now five
+### The review screen: one component, then five, now one again
 
-**This section used to describe `frontend/src/app/screens/review-screen.ts` — one
-component, nine states — and that file is deleted.** It is kept as history because
-the reasoning reversed rather than merely aged: one generic editor was tried
-first, and it could not implement any of the gates' completion rules
-faithfully, because the gates enforce genuinely different rules. See the "Gate F"
-section above for what replaced it — `understanding-review`, `strategy-review`,
-`candidate-review`, `evidence-review`, `draft-review`, `gate-shell` and
-`verification-report`, with **thirteen** states rather than nine, plus a real
-Vitest runner.
+**This section used to describe `frontend/src/app/screens/review-screen.ts` — one component,
+nine states — and then the five gate screens that replaced it.** Both are deleted. The
+reasoning is worth keeping because it reversed twice:
 
-The one claim from that era still worth carrying forward: **one idempotency key
-per user action, not per request.** A retry of an action reuses its key so the
-backend replays the stored response; a new action mints a new one. A key minted
-per request would make every retry a new mutation.
+1. One generic editor was tried first. It could not implement any of the gates' completion
+   rules faithfully, because the gates enforced genuinely different rules.
+2. Five screens replaced it, one per gate.
+3. Feature verification was withdrawn, leaving two gates presented as three stages of one
+   flow — and because a person walks that flow forward and back, the drafts belong in one
+   component again. See "The three stages" above.
 
-The other claim from that era is now **false and was corrected**: this file said
-"there is no frontend test runner in this project". There is — see Gate F above.
+The claim from that era still worth carrying forward: **one idempotency key per user action,
+not per request.** A retry of an action reuses its key so the backend replays the stored
+response; a new action mints a new one. A key minted per request would make every retry a new
+mutation.
 
 ### Frontend: Angular 22, standalone components, no leftover scaffolding
 
@@ -2353,9 +2111,9 @@ with a dark glyph in dark, because white on the base teal fails.
 **Green did not go away, and the split is deliberate: teal is decoration, green is
 meaning.** Everything still green is semantic — the `risk-low` end of the High/Medium/Low
 scale (`.score-ring`, `.score-bar`, `.risk-label`, `.risk-legend-item`, `.history-score`)
-and `.verdict-strong`. Recolouring those to brand teal would destroy the one thing their
+and `.risk-pill.risk-low`. Recolouring those to brand teal would destroy the one thing their
 colour communicates. If you are adding an accent, use teal; if you are adding a status,
-match the existing scale. The dark `.result-count` / `.verdict-strong` rule was split for
+match the existing scale. The dark `.result-count` / `.risk-pill` rule was split for
 exactly this reason — they had shared a declaration and no longer belong together.
 
 The light theme is **plain white** (`:root`, `.app-shell` and `.screen` all `#fff`) and
