@@ -28,7 +28,7 @@ export type StageNumber = 1 | 2 | 3;
  * after the run finishes. Naming a step for the thing that happens next would
  * promise a stage this flow does not have.
  */
-export const STAGE_NAMES = ['Summary', 'Elements', 'Searches'];
+export const STAGE_NAMES = ['Summary', 'Elements', 'Queries'];
 
 export const TOTAL_STAGES = STAGE_NAMES.length;
 
@@ -171,7 +171,7 @@ export const TOTAL_STAGES = STAGE_NAMES.length;
                     (click)="removeRow(elements, row.key)"
                     [attr.aria-label]="'Remove technical element ' + (i + 1)"
                   >
-                    <app-icon name="Trash2" [size]="16" />
+                    <app-icon name="X" [size]="16" />
                   </button>
                 </li>
               } @empty {
@@ -191,7 +191,7 @@ export const TOTAL_STAGES = STAGE_NAMES.length;
               @for (row of queries(); track row.key; let i = $index) {
                 <li class="draft-row">
                   <label class="sr-only" [attr.for]="'query-' + row.key">
-                    Search {{ i + 1 }}
+                    Search query {{ i + 1 }}
                   </label>
                   <input
                     class="draft-input"
@@ -203,18 +203,18 @@ export const TOTAL_STAGES = STAGE_NAMES.length;
                     class="draft-remove"
                     type="button"
                     (click)="removeRow(queries, row.key)"
-                    [attr.aria-label]="'Remove search ' + (i + 1)"
+                    [attr.aria-label]="'Remove search query ' + (i + 1)"
                   >
-                    <app-icon name="Trash2" [size]="16" />
+                    <app-icon name="X" [size]="16" />
                   </button>
                 </li>
               } @empty {
-                <li class="empty-state">No searches yet. Add the first one.</li>
+                <li class="empty-state">No search queries yet. Add the first one.</li>
               }
             </ul>
 
             <button class="secondary-button" type="button" (click)="addRow(queries, 'Q')">
-              <app-icon name="Plus" [size]="16" /> Add search
+              <app-icon name="Plus" [size]="16" /> Add query
             </button>
           </section>
         }
@@ -332,7 +332,7 @@ export class AdvancedSearchStages {
       case 2:
         return 'Review technical elements';
       default:
-        return 'Review search terms';
+        return 'Review search queries';
     }
   }
 
@@ -344,7 +344,7 @@ export class AdvancedSearchStages {
       case 2:
         return 'Edit the technical elements to be searched. Add anything missing, remove anything not being claimed.';
       default:
-        return 'These are the searches that will run. Approving them starts the search.';
+        return 'These are the search queries that will run. Approving them starts the search.';
     }
   }
 
@@ -395,7 +395,7 @@ export class AdvancedSearchStages {
       problems.push('At least one technical element is needed.');
     }
     if (this.stage() === 3 && !this.nonEmpty(this.queries()).length) {
-      problems.push('At least one search is needed.');
+      problems.push('At least one search query is needed.');
     }
     return problems;
   }

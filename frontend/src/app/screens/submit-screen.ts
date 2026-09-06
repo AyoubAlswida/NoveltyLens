@@ -39,40 +39,55 @@ const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.pdf', '.docx'];
             (input)="descriptionChange.emit($any($event.target).value)"
             maxlength="2000"
             rows="6"
-            placeholder="Describe your invention in plain language: what it does, how it works, and what makes it different from what already exists… or upload a file below."
+            placeholder="Describe your invention in plain language: what it does, how it works, and what makes it different from what already exists…"
           ></textarea>
           <!-- The "n / 2000" counter was removed. maxlength stays: it is the
                actual limit, and dropping it would let the field accept text the
                browser then silently truncates. -->
-        </div>
 
-        <div class="upload-row">
-          <input
-            #fileInput
-            type="file"
-            accept=".txt,.md,.pdf,.docx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            class="visually-hidden"
-            (change)="onFileInputChange($event)"
-          />
-          <button type="button" class="secondary-button upload-button" (click)="fileInput.click()">
-            <app-icon name="Upload" [size]="16" />
-            <span>Upload a file instead (optional)</span>
-          </button>
+          <!--
+            Attach lives INSIDE the box, bottom-left, the way a composer does.
+            It was a full-width outlined button underneath, which gave the form
+            three stacked rows of controls and made attaching look like a step
+            of equal weight to running the search. It is an option on the
+            description, so it sits on the description.
 
-          @if (uploadedFileName(); as name) {
-            <span class="upload-chip">
-              <app-icon name="FileText" [size]="14" />
-              {{ name }}
-              <button
-                type="button"
-                class="upload-chip-remove"
-                (click)="clearUpload()"
-                aria-label="Remove uploaded file"
-              >
-                <app-icon name="X" [size]="12" />
-              </button>
-            </span>
-          }
+            The drop target is still the whole wrap, so dragging a file anywhere
+            over the box works exactly as before.
+          -->
+          <div class="composer-tools">
+            <input
+              #fileInput
+              type="file"
+              accept=".txt,.md,.pdf,.docx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              class="visually-hidden"
+              (change)="onFileInputChange($event)"
+            />
+            <button
+              type="button"
+              class="composer-attach"
+              (click)="fileInput.click()"
+              title="Attach a .txt, .md, .pdf or .docx file, or drag one onto the box"
+            >
+              <app-icon name="Upload" [size]="15" />
+              <span>Attach a file</span>
+            </button>
+
+            @if (uploadedFileName(); as name) {
+              <span class="upload-chip">
+                <app-icon name="FileText" [size]="14" />
+                {{ name }}
+                <button
+                  type="button"
+                  class="upload-chip-remove"
+                  (click)="clearUpload()"
+                  aria-label="Remove uploaded file"
+                >
+                  <app-icon name="X" [size]="12" />
+                </button>
+              </span>
+            }
+          </div>
         </div>
 
         @if (uploadError(); as message) {
@@ -81,26 +96,37 @@ const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.pdf', '.docx'];
 
         <div class="form-actions">
           <button class="primary-action" (click)="run.emit()" [disabled]="!description().trim()">
-            <app-icon name="Sparkles" [size]="20" fill="currentColor" />
+            <app-icon name="Sparkles" [size]="18" fill="currentColor" />
             <span>Run Novelty Lens</span>
-            <span aria-hidden="true">&rarr;</span>
           </button>
-          <button
-            class="secondary-button verify-action"
-            type="button"
-            (click)="verify.emit()"
-            [disabled]="!description().trim()"
-          >
-            <app-icon name="ShieldCheck" [size]="20" />
-            <span>Advanced Search</span>
-          </button>
+
+          <span class="action-with-hint">
+            <button
+              class="secondary-button verify-action"
+              type="button"
+              (click)="verify.emit()"
+              [disabled]="!description().trim()"
+            >
+              <span>Advanced Search</span>
+            </button>
+
+            <!--
+              The explanation was a paragraph under the buttons. It is a hint
+              about ONE of them, so it hangs off that one: the same
+              title-attribute pattern the report screen's risk legend uses.
+              Focusable, so it is reachable without a mouse, and the text is
+              unchanged -- what it says still has to be true.
+            -->
+            <span
+              class="action-hint"
+              tabindex="0"
+              aria-label="What Advanced Search does"
+              title="Advanced Search pauses for your review before it searches: you confirm how the invention was understood, edit the technical elements, then edit and approve the search queries that will run. Nothing is searched for until you approve it."
+            >
+              <app-icon name="Info" [size]="15" />
+            </span>
+          </span>
         </div>
-        <p class="verify-note">
-          Advanced Search pauses for your review before it searches: you confirm
-          how the invention was understood, edit the technical elements, then
-          edit and approve the searches that will run. Nothing is searched for
-          until you approve it.
-        </p>
       </section>
 
     </div>

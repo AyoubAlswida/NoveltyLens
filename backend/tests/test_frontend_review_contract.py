@@ -651,6 +651,59 @@ def test_a_broken_rule_is_named_on_screen_rather_than_listed_in_advance():
     assert "violations().length === 0" in source
 
 
+def test_every_icon_a_template_asks_for_actually_exists():
+    """**An unknown icon name renders NOTHING, and nothing errors.**
+
+    `shared/icon.ts` looks the name up in `ICON_PATHS` and renders whatever it
+    finds; a name that is not there produces an empty element. So a typo, or a
+    glyph nobody added, is an invisible button — which is exactly what happened
+    to the row-delete control: it asked for `Trash2`, which was never in the set,
+    and shipped as an empty box beside every row.
+
+    Checked from here rather than in a component spec because it is a property of
+    the whole app: every template, against the one table, in one pass.
+
+    **Two passes, because names reach the component two ways.** Literal
+    `name="Foo"` attributes are read straight out of the templates. The four
+    `[name]="..."` bindings cannot be read that way at all -- an expression is
+    not a name -- and the only one of them fed from a data table is
+    `PHASE_ICONS`, which is exactly where this drifts: a phase added to the
+    backend's vocabulary gets a row here, and a glyph nobody drew renders as an
+    empty circle on the running screen. That table is checked directly. The
+    remaining three bindings choose between literals written inline
+    (`Moon`/`Sun`, `Check`) and are covered by the literal pass finding those
+    same names elsewhere in the app -- a genuinely weaker guarantee, and stated
+    rather than papered over.
+    """
+    paths = read(FRONTEND / "shared" / "icon-paths.ts")
+    available = set(re.findall(r"^  ([A-Za-z0-9]+):", paths, re.MULTILINE))
+    assert available, "no icons parsed -- the ICON_PATHS shape changed"
+
+    missing: dict[str, set[str]] = {}
+    for source in FRONTEND.rglob("*.ts"):
+        if source.name.endswith(".spec.ts") or source.name == "icon-paths.ts":
+            continue
+        asked = set(re.findall(r'<app-icon\s+name="([A-Za-z0-9]+)"', read(source)))
+        unknown = asked - available
+        if unknown:
+            missing[source.name] = unknown
+
+    assert not missing, f"templates ask for icons that do not exist: {missing}"
+
+    report = read(FRONTEND / "models" / "report.ts")
+    block = re.search(r"PHASE_ICONS[^{]*\{(.*?)\}", report, re.DOTALL)
+    assert block, "PHASE_ICONS not found -- the running screen's icon table moved"
+    phase_icons = dict(re.findall(r"(\w+):\s*'([A-Za-z0-9]+)'", block.group(1)))
+    assert phase_icons, "no phases parsed out of PHASE_ICONS"
+
+    unknown_phase_icons = {
+        phase: glyph for phase, glyph in phase_icons.items() if glyph not in available
+    }
+    assert not unknown_phase_icons, (
+        f"PHASE_ICONS names icons that do not exist: {unknown_phase_icons}"
+    )
+
+
 def test_the_requirements_list_is_gone_from_the_shell():
     """The block itself, not just its binding: a shell that still rendered it
     would bring the list back the moment anything passed rules again."""

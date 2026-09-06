@@ -643,6 +643,68 @@ button {
 .textarea-wrap-primary textarea {
   min-height: 176px;
   border-color: var(--teal);
+  /* Clears the attach row that sits inside the box. Scoped to `-primary`,
+     which only the submit page uses -- the stage-1 summary box shares
+     `.textarea-wrap` and has no tools, so it must not gain dead space. */
+  padding-bottom: 52px;
+}
+
+/* The composer row: inside the field, bottom-left, out of the text's way. */
+.composer-tools {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  pointer-events: none;
+}
+
+.composer-tools > * {
+  pointer-events: auto;
+}
+
+.composer-attach {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 11px;
+  border: 1px solid var(--line, #dbe4ea);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--navy-soft);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.composer-attach:hover {
+  color: var(--btn-blue);
+  border-color: var(--btn-blue);
+  background: #fff;
+}
+
+.composer-attach:focus-visible {
+  outline: none;
+  color: var(--btn-blue);
+  border-color: var(--btn-blue);
+  box-shadow: 0 0 0 3px rgba(17, 121, 196, 0.2);
+}
+
+:root[data-theme="dark"] .composer-attach {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+:root[data-theme="dark"] .composer-attach:hover,
+:root[data-theme="dark"] .composer-attach:focus-visible {
+  color: var(--btn-blue-dark);
+  border-color: var(--btn-blue-dark);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .textarea-wrap textarea:hover,
@@ -675,19 +737,10 @@ button {
   border: 0;
 }
 
-.upload-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 14px;
-}
+/* `.upload-row` and `.upload-button` were removed: the attach control moved
+   inside the description box (see `.composer-tools`), so the full-width
+   outlined button underneath it has no markup left. */
 
-.upload-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
 
 .upload-chip {
   display: inline-flex;
@@ -745,33 +798,64 @@ button {
   font-weight: 600;
 }
 
+/* Two actions, side by side and the same size. The gap was 30px, which read as
+   two unrelated controls rather than a choice between two ways to run the same
+   search; 12px groups them. */
 .form-actions {
   display: flex;
   align-items: center;
-  gap: 30px;
+  gap: 12px;
   margin-top: 24px;
-  /* Two actions now, and on a narrow screen they stack rather than shrink the
-     labels: "Run with feature verification" is the longer of the two and must
-     stay readable, because the difference between the buttons is the whole
-     decision the reviewer is making here. */
   flex-wrap: wrap;
 }
 
-/* The verified run sits beside the search, not above it: both are real ways to
-   use the tool, and search-only is still the faster and cheaper one. */
+/* A shared floor rather than a fixed width: the labels differ in length, and
+   pinning both would either pad the short one oddly or truncate the long one. */
+.form-actions .primary-action,
+.form-actions .secondary-button {
+  min-height: 44px;
+  min-width: 190px;
+  font-size: 14px;
+}
+
 .verify-action {
   display: inline-flex;
   align-items: center;
   gap: 10px;
 }
 
-.verify-note {
-  margin-top: 14px;
-  max-width: 62ch;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--muted-foreground);
+/* The hint sits with the button it describes, not under both. */
+.action-with-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
+
+.action-hint {
+  display: inline-flex;
+  align-items: center;
+  color: #9aabc0;
+  cursor: help;
+  border-radius: 999px;
+}
+
+.action-hint:hover,
+.action-hint:focus-visible {
+  color: var(--btn-blue);
+}
+
+/* Keyboard focus stays visible: this is reachable by tab, and the hint is the
+   only place the explanation now lives. */
+.action-hint:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(17, 121, 196, 0.22);
+}
+
+:root[data-theme="dark"] .action-hint:hover,
+:root[data-theme="dark"] .action-hint:focus-visible {
+  color: var(--btn-blue-dark);
+}
+
 
 /* Buttons follow the Aramco Pixel component spec: a solid Contained button, an
    Outlined button, and a flat grey disabled state. The previous blue-to-green
