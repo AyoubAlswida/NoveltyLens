@@ -82,16 +82,26 @@ export const STAGE_LABELS: Record<string, string> = {
          included. The browser checks missed it because clicking through the
          DOM does not require an element to be reachable by a person. -->
     <div class="screen screen-scroll gate-screen">
-      <header class="gate-head">
-        <div>
+      <header class="stage-header glass-card">
+        <!-- No back control here. It lives in the footer, labelled, beside the
+             action it is an alternative to. A chevron up here as well meant two
+             controls doing the identical thing on one screen, and the icon-only
+             one said nothing about what it did. -->
+        <div class="stage-header-body">
           <h1>{{ title() }}</h1>
-          <p class="gate-sub">
-            {{ stageLabel() }} · <span class="mono">{{ runId() }}</span>
-          </p>
+          @if (subtitle()) {
+            <p class="stage-lede">{{ subtitle() }}</p>
+          }
         </div>
-        <button class="btn-outlined" type="button" (click)="back.emit()">
-          <app-icon name="ChevronLeft" /> Back
-        </button>
+
+        <!-- Anchors the right end of the header. Rendered text rather than an
+             aria-label: a reviewer three screens into a flow needs to see how
+             far along they are. -->
+        @if (steps().length > 0) {
+          <span class="stage-step-count">
+            Step {{ current() }} of {{ steps().length }}
+          </span>
+        }
       </header>
 
       @switch (state()) {
@@ -163,7 +173,7 @@ export const STAGE_LABELS: Record<string, string> = {
               evidence, and reattaching that judgement to different evidence would
               credit you with having seen something you did not.
             </p>
-            <button class="btn-contained" type="button" (click)="reload.emit()">
+            <button class="primary-action compact" type="button" (click)="reload.emit()">
               Reload and review again
             </button>
           </div>
@@ -189,22 +199,11 @@ export const STAGE_LABELS: Record<string, string> = {
               </p>
             }
 
-            @if (rules().length > 0) {
-              <section class="gate-rules">
-                <h3>What this step requires</h3>
-                <ul>
-                  @for (rule of rules(); track rule) {
-                    <li>{{ rule }}</li>
-                  }
-                </ul>
-              </section>
-            }
-
             <ng-content />
 
             <footer class="gate-actions">
               <button
-                class="btn-contained"
+                class="primary-action compact"
                 type="button"
                 [disabled]="busy() || !canApprove()"
                 (click)="approve.emit()"
@@ -212,21 +211,22 @@ export const STAGE_LABELS: Record<string, string> = {
                 @if (busy()) {
                   <span class="spinner spinner-inline" aria-hidden="true"></span> Submitting…
                 } @else {
-                  <app-icon name="ShieldCheck" /> {{ approveLabel() }}
+                  <!-- No icon. A ShieldCheck was left here from when this button
+                       said "Approve" on a verification gate; on "Next" it means
+                       nothing, and an icon that decorates rather than tells you
+                       something is noise on the control you press most. -->
+                  {{ approveLabel() }}
                 }
               </button>
-              <button class="btn-outlined" type="button" [disabled]="busy()" (click)="back.emit()">
-                Not yet
+              <!-- "Back", not "Not yet". The old label answered a question this
+                   screen stopped asking: it belonged to a gate where declining
+                   meant "I am not approving this yet". Here it steps back a
+                   stage, and on the first stage it leaves the review. -->
+              <button class="secondary-button" type="button" [disabled]="busy()" (click)="back.emit()">
+                Back
               </button>
             </footer>
 
-            <p class="gate-note gate-audit">
-              Recorded against your account with a timestamp, in an append-only
-              audit trail. There is no automatic approval anywhere in this
-              workflow. This tool reports what the supplied passages state; it is
-              not a legal opinion, not an exhaustive prior-art search, and not a
-              determination that anything is novel.
-            </p>
           </div>
         }
       }
@@ -236,7 +236,19 @@ export const STAGE_LABELS: Record<string, string> = {
 export class GateShell {
   readonly gate = input.required<string>();
   readonly title = input.required<string>();
-  readonly runId = input.required<string>();
+  /** The sentence under the title, saying what this stage is asking for. */
+  readonly subtitle = input<string>('');
+
+  /**
+   * The names of every stage, in order, and which one is showing.
+   *
+   * Names rather than numbers: "Elements" tells a reviewer what is coming,
+   * where a third dot tells them only that something is. The count beside it
+   * ("Step 2 of 3") is the plain rendered text the spec requires.
+   */
+  readonly steps = input<string[]>([]);
+  readonly current = input<number>(0);
+
 
   /**
    * The stage name an inventor sees, derived from the internal gate letter.
@@ -251,7 +263,6 @@ export class GateShell {
   readonly state = input.required<GateState>();
   readonly detail = input<string>('');
   readonly blocking = input<Array<Record<string, unknown>>>([]);
-  readonly rules = input<string[]>([]);
   readonly busy = input<boolean>(false);
   readonly approveLabel = input<string>('Approve');
   readonly canApprove = input<boolean>(true);

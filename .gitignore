@@ -18,3 +18,7 @@ Thumbs.db
 docs/.pptx_build/
 docs/.pptx_workflow_build/
 backend/acceptance/*.log
+
+# Backups of .env carry the same live credentials the file does.
+.env.bak*
+.env.*.bak

@@ -266,11 +266,18 @@ const EXAMPLE_DESC =
                       way to continue it. Spec section 6.3.
                     -->
                     <div class="screen screen-scroll">
-                      <header class="gate-head">
-                        <h1>This run cannot be continued</h1>
-                        <button class="btn-outlined" type="button" (click)="closeReview()">
-                          Back
+                      <header class="report-toolbar glass-card gate-toolbar">
+                        <button
+                          class="secondary-button icon-button"
+                          type="button"
+                          (click)="closeReview()"
+                          aria-label="Back"
+                        >
+                          <app-icon name="ChevronLeft" [size]="20" />
                         </button>
+                        <div class="report-title-block">
+                          <h1>This run cannot be continued</h1>
+                        </div>
                       </header>
                       <p class="gate-note">
                         It is paused at a review step that has been removed from the
