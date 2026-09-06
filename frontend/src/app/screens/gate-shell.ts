@@ -84,14 +84,14 @@ export const STAGE_LABELS: Record<string, string> = {
     <div class="screen screen-scroll gate-screen">
       <header class="gate-head">
         <div>
-          <h1>{{ title() }}</h1>
-          <p class="gate-sub">
-            {{ stageLabel() }} · <span class="mono">{{ runId() }}</span>
-          </p>
+          <h1>{{ displayTitle() }}</h1>
+          <p class="gate-sub">Advanced Search · {{ stageLabel() }}</p>
         </div>
-        <button class="btn-outlined" type="button" (click)="back.emit()">
-          <app-icon name="ChevronLeft" /> Back
-        </button>
+        @if (state() !== 'resuming') {
+          <button class="btn-outlined" type="button" (click)="back.emit()">
+            <app-icon name="ChevronLeft" /> Back
+          </button>
+        }
       </header>
 
       @switch (state()) {
@@ -133,13 +133,19 @@ export const STAGE_LABELS: Record<string, string> = {
         }
 
         @case ('resuming') {
-          <div class="glass-card gate-card" data-state="resuming">
-            <h2><app-icon name="Check" /> Decision recorded</h2>
-            <p>
-              Your decision is committed and the run is queued to continue. The
-              worker picks it up on its next poll — this page does not resume it,
-              and nothing is running yet.
-            </p>
+          <div
+            class="glass-card gate-card gate-transition"
+            data-state="resuming"
+            aria-busy="true"
+          >
+            <div class="gate-transition-status">
+              <app-icon name="Check" />
+              <span>Changes saved</span>
+            </div>
+            <div class="gate-transition-progress">
+              <span class="spinner" aria-hidden="true"></span>
+              <p>{{ transitionMessage() }}</p>
+            </div>
           </div>
         }
 
@@ -247,6 +253,19 @@ export class GateShell {
    * the four cannot drift into describing the same workflow differently.
    */
   readonly stageLabel = computed(() => STAGE_LABELS[this.gate()] ?? "Review");
+
+  readonly displayTitle = computed(() => {
+    if (this.state() !== 'resuming') return this.title();
+    return this.gate() === 'STRATEGY'
+      ? 'Starting your prior-art search'
+      : 'Preparing your search strategy';
+  });
+
+  readonly transitionMessage = computed(() =>
+    this.gate() === 'STRATEGY'
+      ? 'We’re starting the searches you approved. Results will appear here when they’re ready.'
+      : 'We’re creating focused search queries from the technical limitations you approved.',
+  );
 
   readonly state = input.required<GateState>();
   readonly detail = input<string>('');

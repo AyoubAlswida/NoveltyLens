@@ -1,7 +1,9 @@
-"""Semantic text embeddings via an OpenAI-compatible /v1/embeddings endpoint.
+"""Semantic text embeddings via an explicitly selected hosted API protocol.
 
-Configured by ``settings.embedding_api_url`` / ``embedding_api_key``, which
-default to the same gateway and key as the chat completions in llm.py.
+``EMBEDDING_API_FORMAT=openai`` uses ``{"model", "input"}`` and the indexed
+OpenAI response shape. ``huggingface`` uses Inference Providers' feature-
+extraction contract: ``{"inputs", "normalize", "truncate"}`` and a bare array
+of vectors. Neither protocol is guessed from the URL.
 """
 
 import logging
@@ -49,6 +51,44 @@ things slower" rather than as a timeout."""
 # for very long documents. Increase if you want full-document coverage on
 # large patents at the cost of more embedding calls.
 MAX_CHUNKS_PER_DOCUMENT = 12
+
+
+def _request_body(texts: list[str]) -> dict[str, object]:
+    if settings.embedding_api_format == "huggingface":
+        return {"inputs": texts, "normalize": True, "truncate": True}
+    return {"model": settings.embedding_model, "input": texts}
+
+
+def _response_vectors(payload: object, expected: int) -> list[list[float]]:
+    if settings.embedding_api_format == "huggingface":
+        if not isinstance(payload, list):
+            raise RuntimeError("Hugging Face embedding response is not an array")
+        # The feature-extraction API may flatten a single input to one vector.
+        if expected == 1 and payload and all(isinstance(value, (int, float)) for value in payload):
+            payload = [payload]
+        data = payload
+    else:
+        if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+            raise RuntimeError("OpenAI embedding response has no data array")
+        # The provider may return a batch out of order; `index` restores the
+        # input order before callers zip vectors against patents.
+        rows = sorted(payload["data"], key=lambda row: row["index"])
+        data = [row["embedding"] for row in rows]
+
+    if len(data) != expected:
+        raise RuntimeError(f"Embedding count mismatch: sent {expected}, got {len(data)}")
+    if any(not isinstance(vector, list) or not vector for vector in data):
+        raise RuntimeError("Embedding response contains an empty or invalid vector")
+    if any(
+        not isinstance(value, (int, float))
+        for vector in data
+        for value in vector
+    ):
+        raise RuntimeError("Embedding response contains a non-numeric vector")
+    width = len(data[0])
+    if any(len(vector) != width for vector in data):
+        raise RuntimeError("Embedding response contains inconsistent vector dimensions")
+    return data
 
 
 def chunk_text(text: str, max_words: int = 180, overlap_words: int = 20, max_chunks: int = MAX_CHUNKS_PER_DOCUMENT) -> list[str]:
@@ -99,19 +139,14 @@ def _embed_batch(texts: list[str], timeout: int = 60, retries: int = 2) -> list[
             response = requests.post(
                 settings.embedding_api_url,
                 headers={"Authorization": f"Bearer {settings.embedding_api_key}"},
-                json={"model": settings.embedding_model, "input": texts},
+                json=_request_body(texts),
                 timeout=timeout,
             )
             response.raise_for_status()
             payload = response.json()
             if isinstance(payload, dict) and "error" in payload:
                 raise RuntimeError(str(payload["error"]))
-            # The provider is free to return the batch out of order; `index` is
-            # what it guarantees, and callers zip vectors against their input.
-            rows = sorted(payload["data"], key=lambda row: row["index"])
-            data = [row["embedding"] for row in rows]
-            if len(data) != len(texts):
-                raise RuntimeError(f"Embedding count mismatch: sent {len(texts)}, got {len(data)}")
+            data = _response_vectors(payload, len(texts))
             trace("embeddings.batch.response", attempt=attempt, vectors=len(data), dims=len(data[0]) if data else 0)
             return data
         except Exception as error:

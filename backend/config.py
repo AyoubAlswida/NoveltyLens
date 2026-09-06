@@ -72,12 +72,12 @@ class Settings:
     qdrant_api_key: str = field(default=os.getenv("QDRANT_API_KEY", ""), repr=False)
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-en-v1.5")
     embedding_api_url: str = os.getenv("EMBEDDING_API_URL", "")
-    """OpenAI-compatible ``/v1/embeddings`` endpoint. Required - there is no
-    default, because embeddings.py speaks the OpenAI request/response shape
-    unconditionally (``{"input": [...]}`` -> ``{"data": [{"embedding": [...]}]}``),
-    which the HuggingFace Router's feature-extraction pipeline this project used
-    to call does not speak. Point this at whatever OpenAI-compatible embeddings
-    endpoint backs ``embedding_model``."""
+    """Hosted embedding endpoint. Required because there is no silent local or
+    zero-vector fallback. ``embedding_api_format`` declares its wire protocol."""
+    embedding_api_format: str = os.getenv("EMBEDDING_API_FORMAT", "openai").strip()
+    """Embedding wire protocol: ``openai`` or ``huggingface``. Declared rather
+    than inferred from the URL so changing hosts cannot silently change the
+    request/response contract."""
     embedding_api_key: str = field(default=os.getenv("EMBEDDING_API_KEY", os.getenv("LLM_API_KEY", os.getenv("HF_TOKEN", ""))), repr=False)
     """Bearer token for ``embedding_api_url``. Defaults to LLM_API_KEY (falling
     further back to HF_TOKEN) since both calls typically go through the same
@@ -302,6 +302,18 @@ class Settings:
 
 
 settings = Settings()
+
+
+def validate_embedding_configuration(api_format: str) -> None:
+    """Refuse an unknown embedding protocol before the first paid request."""
+    if api_format not in {"openai", "huggingface"}:
+        raise ConfigError(
+            "EMBEDDING_API_FORMAT must be 'openai' or 'huggingface', got "
+            f"{api_format!r}"
+        )
+
+
+validate_embedding_configuration(settings.embedding_api_format)
 
 
 def validate_lease_configuration(ttl_seconds: float, heartbeat_seconds: float) -> None:

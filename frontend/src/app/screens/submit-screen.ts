@@ -97,7 +97,7 @@ const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.pdf', '.docx'];
         </div>
         <p class="verify-note">
           Advanced Search pauses for your review before it searches: you confirm
-          how the invention was understood, edit the technical elements, then
+          how the invention was understood, edit the technical limitations, then
           edit and approve the searches that will run. Nothing is searched for
           until you approve it.
         </p>

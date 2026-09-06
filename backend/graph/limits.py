@@ -43,6 +43,16 @@ edits in one sitting, independently of how it is grouped -- five capabilities of
 eight elements each would be forty, which is more than the stage is meant to ask
 anyone to review."""
 
+MAX_PROPOSED_SEARCH_LIMITATIONS = 7
+"""Maximum number of machine-proposed limitations shown at Stage 2.
+
+The live product presents one flat list, not verifier capabilities.  The model is
+asked to aim for four to seven focused, compound limitations and to use fewer
+rather than pad the list with generic components.  This cap applies to the
+machine proposal only: the reviewer remains free to edit the flat list before
+approving it.
+"""
+
 MAX_STRATEGY_QUERIES = 10
 """The most queries an approved search strategy may carry.
 
@@ -68,5 +78,6 @@ __all__ = [
     "MAX_CAPABILITIES",
     "MAX_ELEMENTS_PER_CAPABILITY",
     "MAX_ELEMENTS_TOTAL",
+    "MAX_PROPOSED_SEARCH_LIMITATIONS",
     "MAX_STRATEGY_QUERIES",
 ]

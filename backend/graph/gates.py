@@ -60,8 +60,8 @@ def _run_id(state: GraphState, gate: WorkflowGate) -> str:
 
     A gate node cannot run without one: the approval it will read back is stored
     against a run, and a pause nobody can resume is worse than no pause at all.
-    A search-only run never reaches here — `_route_after_understanding` sends it
-    straight past the whole branch.
+    A search-only run never reaches here — `_route_from_start` sends it into the
+    Quick Search branch instead.
     """
     run_id = (state.get("run_id") or "").strip()
     if not run_id:

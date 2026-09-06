@@ -76,11 +76,11 @@ argument that it is probably fine.
 RETRIEVAL_FLOOR: Optional[float] = None
 """**Deliberately `None`. Do not invent a threshold here.**
 
-Spec §16 decision 6 blocks the `NOT_EVALUATED` retrieval floor on the Qdrant /
-Qwen3-Embedding-4B recalibration CLAUDE.md flags as outstanding: the 0.6 constant
-in `search/vector_store.py` was measured against bge-large and is stale for a
-2560-dim model whose score distribution sits somewhere else entirely. A guessed
-floor would drop passages from the prompt and report the result as
+Spec §16 decision 6 blocks the `NOT_EVALUATED` retrieval floor until it is
+calibrated for passage-level verification. The 0.6 constant in
+`search/vector_store.py` was measured for whole-patent Qdrant retrieval and is
+not evidence for this separate boundary. A guessed floor would drop passages
+from the prompt and report the result as
 `NOT_EVALUATED` -- an evaluation that did not happen, attributed to a threshold
 nobody established.
 
@@ -113,9 +113,20 @@ def decompose_features_node(state: GraphState) -> dict[str, Any]:
     `llm.DECOMPOSITION_COMPONENT`, because spec section 16 decision 8 leaves the
     owner of this step open and an unnamed component cannot be assigned one.
     """
-    from graph.limits import MAX_CAPABILITIES, MAX_ELEMENTS_PER_CAPABILITY
+    from graph.limits import MAX_PROPOSED_SEARCH_LIMITATIONS
 
-    invention = state.get("invention_text") or state["description"]
+    # Advanced Search reaches this node directly, before the Quick Search
+    # understanding call. Claims are still part of what the reviewer must
+    # approve, so include them explicitly instead of depending on
+    # ``invention_text`` having been created by another branch.
+    invention = "\n\n".join(
+        part
+        for part in (
+            str(state.get("description") or "").strip(),
+            str(state.get("claims") or "").strip(),
+        )
+        if part
+    )
     feedback = str(state.get("understanding_feedback") or "")
     emit_progress(
         "decompose",
@@ -127,8 +138,8 @@ def decompose_features_node(state: GraphState) -> dict[str, Any]:
         problem_solved=str(state.get("problem_solved") or ""),
         novelty_statement=str(state.get("inventor_novelty_statement") or ""),
         feedback=feedback,
-        max_features=MAX_CAPABILITIES,
-        max_elements_per_feature=MAX_ELEMENTS_PER_CAPABILITY,
+        max_features=1,
+        max_elements_per_feature=MAX_PROPOSED_SEARCH_LIMITATIONS,
     )
 
     run_id = str(state.get("run_id") or "").strip()
@@ -328,8 +339,8 @@ def verify_features_node(
                     publication=under_evaluation,
                     passages=[entry.passage for entry in built],
                     cell_id=cell_id,
-                    # Spec §16 decision 6: blocked on the Qdrant/Qwen3
-                    # recalibration. Never a guessed number.
+                    # Spec §16 decision 6: the passage-level floor has not been
+                    # calibrated. Never substitute the patent-search threshold.
                     retrieval_floor=RETRIEVAL_FLOOR,
                 )
             except PassageSetIneligible as ineligible:

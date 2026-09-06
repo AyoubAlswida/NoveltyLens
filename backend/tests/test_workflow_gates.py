@@ -113,7 +113,8 @@ def test_gate_a_precedes_the_search_that_uses_its_decomposition():
     assert ("decompose", "gate_a") in edges
     assert ("gate_a", "propose_strategy") in edges
     assert ("propose_strategy", "gate_strategy") in edges
-    assert ("gate_strategy", "search_orchestrator") in edges
+    assert ("gate_strategy", "prepare_approved_search") in edges
+    assert ("prepare_approved_search", "search_orchestrator") in edges
     assert ("decompose", "search_orchestrator") not in edges
     assert ("gate_a", "search_orchestrator") not in edges
 
@@ -122,8 +123,8 @@ def test_no_provider_call_is_reachable_before_both_approvals():
     """**The property the SEARCH STRATEGY stage exists for.**
 
     `search_orchestrator` is the first node that can reach a provider. On the
-    verified branch it must be reachable only from `gate_strategy`, which is
-    reachable only from `propose_strategy`, which is reachable only from
+    verified branch it must be reachable only from `prepare_approved_search`,
+    which is reachable only from `gate_strategy`, then `propose_strategy`, then
     `gate_a`. Any other incoming edge would be a path to a provider call that
     skips one of the two approvals -- and it would be silent, because a run that
     searched early would look exactly like one that searched on time.
@@ -133,7 +134,12 @@ def test_no_provider_call_is_reachable_before_both_approvals():
     """
     edges = {(edge.source, edge.target) for edge in build_graph().get_graph().edges}
     into_search = {source for source, target in edges if target == "search_orchestrator"}
-    assert into_search == {"expand_queries", "gate_strategy"}
+    assert into_search == {"expand_queries", "prepare_approved_search"}
+
+    into_prepare = {
+        source for source, target in edges if target == "prepare_approved_search"
+    }
+    assert into_prepare == {"gate_strategy"}
 
     into_strategy_gate = {source for source, target in edges if target == "gate_strategy"}
     assert into_strategy_gate == {"propose_strategy"}

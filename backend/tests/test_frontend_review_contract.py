@@ -72,25 +72,25 @@ def test_the_shell_renders_a_distinct_screen_per_gate():
 
 def test_the_shell_can_open_and_close_a_review():
     source = read(APP)
-    assert "openReview" in source and "closeReview" in source
+    assert "openReview" in source and "requestReviewExit" in source
+    assert "cancelCurrentRun" in source
 
 
 def test_a_decision_resumes_watching_the_run_rather_than_stopping():
     """**Spec section 3.7, and the bug behind "I have to refresh after approving".**
 
-    `afterDecision()` used to clear the gate, switch to the running screen and
-    start nothing, so the poller that would notice the next stage or the finished
-    report was never started again. Every subsequent stage existed on the server
-    and nothing in the browser was looking for it.
+    `afterDecision()` must reconnect the single durable stream from its cursor;
+    otherwise the next review or finished report exists on the server while the
+    browser has stopped listening.
 
     Asserted here rather than in a component spec because it is a property of the
     shell: the component emits `resumed`, and what the shell does next is what
     decides whether the user has to reload the page.
     """
     source = read(APP)
-    body = source.split("afterDecision(): void {", 1)[1].split("\n  }", 1)[0]
-    assert "followToGate" in body, (
-        "afterDecision does not restart the poller; the next stage will never arrive"
+    body = source.split("afterDecision(gate: WorkflowGate): void {", 1)[1].split("\n  }", 1)[0]
+    assert "followAdvancedRun" in body, (
+        "afterDecision does not reconnect the durable stream; the next stage will never arrive"
     )
     # The run id is captured before the gate is cleared -- losing it would strand
     # the run just as effectively as not polling at all.
@@ -106,20 +106,13 @@ def test_a_completed_run_opens_the_standard_report_screen():
     it would render an approved-verification frame around a report that contains
     no verification.
 
-    Both entry points are checked -- the poller that notices a run finishing, and
-    the startup restore after a page reload -- because they are separate branches
-    and only one of them used to exist.
+    The stream follower that notices a run finishing must use the standard report path.
+    Reload no longer restores a live run: it explicitly cancels it.
     """
     source = read(APP)
     assert "'verification-report'" not in source.split("type Screen =", 1)[1].split(";", 1)[0]
 
-    # Anchored on the DEFINITIONS, not the first mention: `followToGate` is
-    # called from `afterDecision` above its own definition, and splitting on the
-    # bare name lands in the caller.
-    for definition in (
-        "private async followToGate(runId: string): Promise<void> {",
-        "async restoreActiveRun(): Promise<void> {",
-    ):
+    for definition in ("private async followAdvancedRun(runId: string): Promise<void> {",):
         body = source.split(definition, 1)[1]
         # Generous, because the branch carries a long comment explaining why a
         # finished run reopens its report rather than a progress bar.
@@ -130,9 +123,17 @@ def test_a_completed_run_opens_the_standard_report_screen():
         assert "verification-report" not in window
 
 
-def test_leaving_a_review_does_nothing_to_the_run():
-    """A client disconnect never cancels, fails or pauses a run (constraint 10)."""
-    assert "has never heard of this browser" in read(APP)
+def test_the_review_back_button_confirms_then_cancels_without_approving():
+    """Back cannot silently strand a live run at a review gate."""
+    source = read(APP)
+    request = source.split("requestReviewExit(): void", 1)[1].split("\n  }", 1)[0]
+    assert "confirmingRunExit.set(true)" in request
+    assert "approveGate" not in request
+
+    cancel = source.split("async cancelCurrentRun(): Promise<void>", 1)[1].split("\n  }", 1)[0]
+    assert "this.runs.cancelRun(runId)" in cancel
+    assert "this.screen.set('submit')" in cancel
+    assert "approveGate" not in cancel
 
 
 # --- every state is declared and distinct ----------------------------------
@@ -248,11 +249,13 @@ def test_the_active_run_key_is_namespaced_by_account():
     assert "forgetAll" in source
 
 
-def test_the_remembered_run_is_verified_before_it_is_rendered():
-    """Never render a run from localStorage alone: a 404 clears the key."""
+def test_the_remembered_run_is_only_a_cancellation_hint():
+    """Never render or fetch a run from localStorage; startup only cancels it."""
     source = read(RUNS_SERVICE)
-    assert "getRun" in source
-    assert "forget(email)" in source
+    active_store = source.split("export class ActiveRunStore", 1)[1]
+    assert "peek(email" in active_store
+    assert "getRun(" not in active_store
+    assert "restore(" not in active_store
 
 
 # --- the stream client matches the backend framing -------------------------
@@ -346,28 +349,15 @@ def test_component_specs_exist_for_the_review_workflow():
 # --- the gate screens are reachable from a cold start -----------------------
 
 
-def test_the_shell_reopens_a_parked_run_on_startup():
-    """`restoreActiveRun` is called, not merely defined.
-
-    It was fully implemented and **never invoked**, so the app signed in, read a
-    remembered run id out of localStorage, and rendered the submit screen anyway.
-    The effect was that all four gate screens -- built, styled, and covered by
-    component tests -- were unreachable from the running product, and a reviewer
-    who closed the tab mid-review had no way back to the gate.
-
-    Asserted by reading the source because the defect was an absent call: a test
-    of the method itself passes whether or not anything calls it. The browser
-    acceptance script catches this too, by failing to find a gate to click, but
-    that costs a browser and three processes to learn.
-    """
+def test_reload_cancels_the_remembered_run_instead_of_restoring_it():
+    """Reload is an explicit cancellation boundary for Advanced Search."""
     app = (FRONTEND / "app.ts").read_text(encoding="utf-8")
-    assert "restoreActiveRun()" in app, "app.ts never defines the restore path"
     startup = app.split("restore()", 1)
     assert len(startup) > 1, "app.ts no longer restores the session on startup"
-    assert "this.restoreActiveRun()" in startup[1], (
-        "app.ts defines restoreActiveRun but never calls it from the session "
-        "restore path, so a run parked at a gate cannot be reopened"
-    )
+    assert "this.cancelRememberedRun()" in startup[1]
+    assert "restoreActiveRun" not in app
+    assert "@HostListener('window:pagehide')" in app
+    assert "this.runs.cancelRun(runId, true)" in app
 
 
 def test_a_verified_run_can_be_started_from_the_product():
@@ -408,14 +398,14 @@ def test_admitting_a_run_does_not_open_a_gate_before_one_exists():
     reviewer was told "Nothing here yet. This is a real result, not a failed
     load." about a run that had not started, and nothing ever corrected it.
 
-    The empty state is not wrong; it was reached wrongly. `followToGate` waits
+    The empty state is not wrong; it was reached wrongly. The durable stream waits
     for the run to actually park, and handles a terminal run as itself rather
     than leaving the reviewer on a spinner.
     """
     app = (FRONTEND / "app.ts").read_text(encoding="utf-8")
-    admit = app.split("async startVerifiedRun")[1].split("private async followToGate")[0]
+    admit = app.split("async startVerifiedRun")[1].split("private async followAdvancedRun")[0]
 
-    assert "followToGate" in admit, "admission never waits for a gate to exist"
+    assert "followAdvancedRun" in admit, "admission never waits for a gate to exist"
     assert "this.screen.set('review')" not in admit, (
         "startVerifiedRun opens a gate screen directly; the run has no gate yet"
     )
@@ -423,13 +413,38 @@ def test_admitting_a_run_does_not_open_a_gate_before_one_exists():
         "an admitted run should show as running until it parks at a gate"
     )
 
-    follow = app.split("private async followToGate")[1].split("openReview(runId")[0]
+    follow = app.split("private async followAdvancedRun")[1].split(
+        "\n  /** Show the review screen", 1
+    )[0]
     assert "WAITING_FOR_REVIEW" in follow, "the wait does not check for a parked run"
     for terminal in ("COMPLETED", "FAILED"):
-        assert terminal in app.split("private async followToGate")[1][:2000], (
+        assert terminal in app.split("private async followAdvancedRun")[1][:7000], (
             f"a {terminal} run would leave the reviewer waiting on a gate that "
             "will never come"
         )
+
+    assert "this.runs.stream(" in follow, "Advanced Search progress still uses polling"
+
+
+def test_progress_and_retry_preserve_the_selected_search_branch():
+    """An Advanced Search failure must not retry through Quick Search."""
+    app = (FRONTEND / "app.ts").read_text(encoding="utf-8")
+    running = (FRONTEND / "screens" / "running-screen.ts").read_text(encoding="utf-8")
+    error = (FRONTEND / "screens" / "error-screen.ts").read_text(encoding="utf-8")
+
+    assert '[phaseOrder]="phaseOrder()"' in app
+    assert '(retry)="retryFailedRun()"' in app
+    error_binding = app.split("<app-error-screen", 1)[1].split("/>", 1)[0]
+    assert '(retry)="startRunning()"' not in error_binding
+
+    retry = app.split("retryFailedRun(): void", 1)[1]
+    assert "this.runMode() === 'advanced'" in retry
+    assert "this.startVerifiedRun()" in retry
+    assert "this.startRunning()" in retry
+
+    assert "const phaseOrder = this.phaseOrder()" in running
+    assert "phaseOrder.map" in running
+    assert "this.phaseOrder().map" in error
 
 
 def test_every_screen_owns_its_scrolling():

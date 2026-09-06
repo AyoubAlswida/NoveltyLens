@@ -461,8 +461,8 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-EMBED_DIM = 2560
-"""Must match the real model's output width (Qwen3-Embedding-4B is 2560).
+EMBED_DIM = 1024
+"""Must match the real model's output width (bge-large-en-v1.5 is 1024).
 
 Not a free choice: a Qdrant collection fixes its vector size on creation, so a
 mock vector of the wrong width fails outright against a `patents` collection any
@@ -476,7 +476,7 @@ unusable now and has to be dropped, not migrated.
 _HASH_DIM = 64
 """The width the hashing trick actually works in, before tiling up to EMBED_DIM.
 
-Hashing a short abstract straight into 2560 buckets leaves vectors so sparse
+Hashing a short abstract straight into 1024 buckets leaves vectors so sparse
 that almost every pair is orthogonal, and the whole report would come out at 0%
 - technically honest for a fake embedder, but useless for looking at how scores
 render. Tiling a dense 64-dim vector 40 times leaves cosine similarity exactly
@@ -597,27 +597,14 @@ def _mock_decomposition() -> str:
             {
                 "feature_id": "F1",
                 "feature_version": "1",
-                "feature_text": "flow-triggered self-cleaning of a filtration membrane",
+                "feature_text": "searchable technical limitations",
                 "elements": [
-                    {"element_id": "E1", "text": "a graphene-oxide filtration membrane", "core": True, "order": 1},
-                    {"element_id": "E2", "text": "a flow rate sensor downstream of the membrane", "core": True, "order": 2},
-                    {"element_id": "E3", "text": "a cleaning cycle actuator", "core": False, "order": 3},
+                    {"element_id": "E1", "text": "a portable treatment device filtering water through a graphene-oxide membrane", "core": True, "order": 1},
+                    {"element_id": "E2", "text": "a UV-C emitter sterilising filtrate downstream of the membrane", "core": True, "order": 2},
+                    {"element_id": "E3", "text": "a downstream flow sensor detecting membrane fouling from reduced flow", "core": True, "order": 3},
+                    {"element_id": "E4", "text": "automatic initiation of a membrane-cleaning cycle when fouling is detected", "core": True, "order": 4},
                 ],
-                "relationships": [
-                    {"relationship_id": "R1", "text": "the actuator initiates a cleaning cycle when the sensor reports a flow drop", "order": 1},
-                ],
-            },
-            {
-                "feature_id": "F2",
-                "feature_version": "1",
-                "feature_text": "ultraviolet sterilisation of the filtered stream",
-                "elements": [
-                    {"element_id": "E1", "text": "a UV-C emitter downstream of the membrane", "core": True, "order": 1},
-                    {"element_id": "E2", "text": "a treatment chamber enclosing the emitter", "core": True, "order": 2},
-                ],
-                "relationships": [
-                    {"relationship_id": "R1", "text": "the emitter irradiates water that has passed through the membrane", "order": 1},
-                ],
+                "relationships": [],
             },
         ]
     })

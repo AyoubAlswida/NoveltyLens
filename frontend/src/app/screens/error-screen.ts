@@ -1,6 +1,6 @@
 import { Component, ChangeDetectionStrategy, input, output, computed } from '@angular/core';
 import { Icon } from '../shared/icon';
-import { Phase, PHASE_ORDER, PHASE_LABELS } from '../models/report';
+import { Phase, PHASE_LABELS } from '../models/report';
 import { API_BASE_URL } from '../config';
 
 @Component({
@@ -37,7 +37,7 @@ import { API_BASE_URL } from '../config';
               <span class="error-pip {{ pip.state }}" [title]="pip.label"></span>
             }
             <span class="error-progress-note">
-              {{ reachedIndex() }} of {{ totalPhases }} phases completed
+              {{ reachedIndex() }} of {{ totalPhases() }} phases completed
             </span>
           </div>
         }
@@ -51,11 +51,7 @@ import { API_BASE_URL } from '../config';
           </button>
         </div>
 
-        <p class="error-hint">
-          If this keeps happening, check that the backend is running on
-          <code>{{ apiBaseUrl }}</code> with Qdrant up, and that the SerpAPI and HuggingFace
-          quotas are not exhausted.
-        </p>
+        <p class="error-hint"></p>
       </section>
 
     </div>
@@ -64,15 +60,16 @@ import { API_BASE_URL } from '../config';
 export class ErrorScreen {
   readonly detail = input.required<string>();
   readonly failedPhase = input.required<Phase | null>();
+  readonly phaseOrder = input.required<readonly Phase[]>();
   readonly retry = output<void>();
   readonly back = output<void>();
 
   readonly apiBaseUrl = API_BASE_URL;
-  readonly totalPhases = PHASE_ORDER.length;
+  readonly totalPhases = computed(() => this.phaseOrder().length);
 
   readonly reachedIndex = computed(() => {
     const phase = this.failedPhase();
-    return phase ? PHASE_ORDER.indexOf(phase) : -1;
+    return phase ? this.phaseOrder().indexOf(phase) : -1;
   });
 
   readonly heading = computed(() => {
@@ -84,7 +81,7 @@ export class ErrorScreen {
 
   readonly pips = computed(() => {
     const reached = this.reachedIndex();
-    return PHASE_ORDER.map((phase, index) => ({
+    return this.phaseOrder().map((phase, index) => ({
       phase,
       label: PHASE_LABELS[phase],
       state: index < reached ? 'done' : index === reached ? 'failed' : '',

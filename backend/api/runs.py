@@ -45,7 +45,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
 import db
@@ -273,6 +273,21 @@ async def get_run(run_id: str, email: CurrentUser) -> dict[str, Any]:
     return _run_view(run, last_event_id=last)
 
 
+@router.delete("/{run_id}", status_code=204)
+async def cancel_run(run_id: str, email: CurrentUser) -> Response:
+    """Cancel one live Advanced Search owned by the caller.
+
+    Removing the live run also removes its lease, fencing any worker that held
+    it. Completed and failed runs are retained so refresh cannot erase history.
+    """
+    with db.connect() as conn:
+        try:
+            store.cancel_run(conn, run_id=run_id, actor_email=email)
+        except Exception as error:
+            raise to_http(error, run_id=run_id) from error
+    return Response(status_code=204)
+
+
 @router.get("/{run_id}/stream")
 async def stream_run(
     run_id: str, request: Request, email: CurrentUser, last_event_id: LastEventId
@@ -285,10 +300,9 @@ async def stream_run(
     status. The check happens here, synchronously, and the generator only runs
     once it has passed.
 
-    **Disconnecting does nothing to the run** -- no cancellation, no status
-    change, no event. `request.is_disconnected()` is deliberately not consulted
-    anywhere: execution lives in a worker that has never heard of this
-    connection.
+    A dropped SSE connection by itself does nothing to the run. Page lifecycle
+    cancellation is an explicit authenticated ``DELETE /api/runs/{run_id}``,
+    not an inference from this stream disappearing.
     """
     with db.connect() as conn:
         try:

@@ -224,6 +224,49 @@ def test_regeneration_feedback_reaches_the_prompt_as_a_correction():
     assert "Do not repeat the previous one." in captured["prompt"]
 
 
+def test_the_proposal_prompt_asks_for_compound_searchable_limitations():
+    import llm
+
+    captured = {}
+
+    def capture(prompt, **kwargs):
+        captured["prompt"] = prompt
+        return {"summary": "s", "features": [_feature()]}
+
+    with patch.object(llm, "_llm_json", side_effect=capture):
+        llm.propose_understanding("a water filter")
+
+    prompt = captured["prompt"]
+    assert "Return exactly one feature, F1" in prompt
+    assert "Aim for 4 to 7 limitations" in prompt
+    assert "single generic component" in prompt
+    assert "Merge related nouns with the function, arrangement, trigger, or condition" in prompt
+    assert "relationships as an empty array" in prompt
+
+
+def test_duplicate_machine_proposed_limitations_fail_instead_of_being_hidden():
+    import llm
+
+    duplicate = _feature(elements=[
+        {"element_id": "E1", "text": "flow-triggered membrane cleaning", "core": True, "order": 1},
+        {"element_id": "E2", "text": "  FLOW-TRIGGERED   MEMBRANE CLEANING  ", "core": True, "order": 2},
+    ])
+    with patch.object(llm, "_llm_json", return_value={"summary": "s", "features": [duplicate]}):
+        with pytest.raises(llm.LLMResponseError, match="duplicate"):
+            llm.propose_understanding("a water filter")
+
+
+def test_separate_machine_proposed_relationships_fail_instead_of_being_flattened():
+    import llm
+
+    feature = _feature(relationships=[
+        {"relationship_id": "R1", "text": "a sensor triggers cleaning", "order": 1}
+    ])
+    with patch.object(llm, "_llm_json", return_value={"summary": "s", "features": [feature]}):
+        with pytest.raises(llm.LLMResponseError, match="separate relationships"):
+            llm.propose_understanding("a water filter")
+
+
 # `test_relationships_are_regenerated_against_the_current_elements_only` and
 # `test_an_absent_relationships_array_is_not_read_as_an_empty_one` were REMOVED
 # with `llm.regenerate_relationships`. They asserted that the regeneration prompt
@@ -239,7 +282,7 @@ def test_regeneration_feedback_reaches_the_prompt_as_a_correction():
 
 
 def test_the_understanding_stage_sits_before_the_search_in_the_graph():
-    """`decompose -> gate_a -> propose_strategy -> gate_strategy -> search_orchestrator`.
+    """The approved artifacts are prepared before the shared search pipeline.
 
     The gate is an `interrupt()`, and no provider is contacted until a person has
     approved what the run is looking for. The path gained the SEARCH STRATEGY
@@ -254,6 +297,8 @@ def test_the_understanding_stage_sits_before_the_search_in_the_graph():
     edges = {(edge.source, edge.target) for edge in build_graph().get_graph().edges}
     assert ("decompose", "gate_a") in edges
     assert ("gate_a", "propose_strategy") in edges
+    assert ("gate_strategy", "prepare_approved_search") in edges
+    assert ("prepare_approved_search", "search_orchestrator") in edges
     assert ("gate_a", "search_orchestrator") not in edges
     assert ("decompose", "search_orchestrator") not in edges
 
@@ -291,12 +336,43 @@ def test_a_read_failure_takes_the_branch_that_does_the_work():
         assert route_after_gate_a({"run_id": "r1"}) == "regenerate_understanding"
 
 
-def test_a_search_only_run_never_reaches_the_understanding_stage():
-    """The stage is on the verified branch only. A search-only run traverses
-    exactly the nodes it did before, which the SSE contract depends on."""
-    from graph.pipeline import _route_after_understanding
+def test_each_search_mode_starts_with_its_own_understanding_step():
+    """Advanced Search skips the Quick-only LLM/query expansion prelude."""
+    from graph.pipeline import _route_from_start
 
-    assert _route_after_understanding({"advanced_search": False}) == "search_orchestrator"
+    assert _route_from_start({"advanced_search": False}) == "understand"
+    assert _route_from_start({"advanced_search": True}) == "decompose"
+
+
+def test_approved_search_preparation_uses_no_unreviewed_machine_analysis():
+    from graph.understanding import prepare_approved_search_node
+
+    state = {
+        "description": "original description",
+        "claims": "original claims",
+        "approved_summary": "approved summary",
+        "approved_decomposition": {
+            "features": [{
+                "elements": [
+                    {"text": "approved limitation one"},
+                    {"text": "approved limitation two"},
+                ]
+            }]
+        },
+        "queries": ["approved query"],
+    }
+    prepared = prepare_approved_search_node(state)
+
+    assert prepared["analysis"].queries == ["approved query"]
+    assert prepared["analysis"].keywords == []
+    assert prepared["analysis"].concepts == [
+        "approved limitation one",
+        "approved limitation two",
+    ]
+    assert prepared["invention_text"] == (
+        "original description\n\noriginal claims\n\napproved summary\n\n"
+        "approved limitation one\n\napproved limitation two"
+    )
 
 
 # =========================================================================

@@ -955,8 +955,8 @@ def _stability_probe(
                     passages=list(case.passages),
                     cell_id=f"capability-gate:{decomposition.feature_id}:{case.case_id}",
                     result_version=str(run + 1),
-                    # Section 16 decision 6: blocked on the Qdrant/Qwen3
-                    # recalibration. Never a guessed number, here least of all.
+                    # Section 16 decision 6: the passage-level floor remains
+                    # uncalibrated. Never a guessed number, here least of all.
                     retrieval_floor=None,
                 ),
                 policy=policy,

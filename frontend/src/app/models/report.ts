@@ -29,57 +29,68 @@ export interface AnalysisReport {
 }
 
 /**
- * This order must remain aligned with backend/graph/events.py's `PHASES` tuple
- * MINUS `semantic_search` and `fuse`. Those two nodes are currently commented
- * out of `graph/pipeline.py` (search runs keyword-only), so the backend never
- * emits those phases - listing them here would let the checklist's
- * `complete: index < activeIndex` logic mark them done once `validate` fires,
- * showing steps as finished that never ran. Re-add both, in this same
- * position, the day `graph/pipeline.py` re-enables those nodes.
+ * The complete frontend progress vocabulary. The two search modes traverse
+ * different orders below; this union exists only to type an SSE progress event.
+ *
+ * This vocabulary must remain aligned with backend/graph/events.py's `PHASES`
+ * tuple MINUS `semantic_search` and `fuse`, whose nodes are currently disabled.
  */
 export const PHASE_ORDER = [
   'understand',
   'queries',
+  'decompose',
+  'gate_a',
+  'strategy',
+  'gate_strategy',
   'search',
-  // Emitted by the live `keyword_search` node on every search run. It was
-  // missing here while the backend emitted it, so the checklist skipped a step
-  // the run genuinely performed -- `analysis.ts` matches on the phase name and
-  // silently drops a name it does not know.
   'filter',
   'enrich',
   'validate',
   'compare',
   'analyze',
-  // --- Advanced Search ---
-  //
-  // Emitted only on an Advanced Search run. A search-only run never sends
-  // these, so the checklist renders the eight above exactly as it does today --
-  // `analysis.ts` matches on the phase name, and a name that never arrives is
-  // simply a step that never lights up.
-  //
-  // This list must stay in step with `backend/graph/events.py`'s PHASES.
-  // The backend refuses to emit a phase outside its own tuple; nothing catches
-  // a name that exists there and is missing HERE except a checklist that
-  // silently stalls in a browser.
-  'decompose',
-  // The SEARCH STRATEGY stage: the queries are proposed here, and
-  // `gate_strategy` below is the run waiting for a person to approve them.
-  'strategy',
-  // --- Human-in-the-Loop gates ---
-  //
-  // Emitted immediately before the run pauses for a person. They belong in the
-  // checklist because the run genuinely is at that step; the pause itself
-  // arrives as a `review_required` / `paused` event, which the running screen
-  // handles separately from the checklist.
-  //
-  // An Advanced Search run rejoins the ordinary pipeline after `gate_strategy`
-  // and ends with it, so the evidence-layer and Gate B/C/D phases that used to
-  // follow here were removed along with their nodes.
-  'gate_a',
-  'gate_strategy',
 ] as const;
 
 export type Phase = (typeof PHASE_ORDER)[number];
+export type SearchMode = 'quick' | 'advanced';
+
+/** The exact phases traversed by POST /api/analyze/stream. */
+export const QUICK_SEARCH_PHASE_ORDER: readonly Phase[] = [
+  'understand',
+  'queries',
+  'search',
+  'filter',
+  'enrich',
+  'validate',
+  'compare',
+  'analyze',
+];
+
+/** The exact durable Advanced Search route, including both review pauses. */
+export const ADVANCED_SEARCH_PHASE_ORDER: readonly Phase[] = [
+  'decompose',
+  'gate_a',
+  'strategy',
+  'gate_strategy',
+  'search',
+  'filter',
+  'enrich',
+  'validate',
+  'compare',
+  'analyze',
+];
+
+/** What the running screen shows before the first human review. */
+export const ADVANCED_PRE_REVIEW_PHASE_ORDER: readonly Phase[] = ['decompose'];
+
+/** What the running screen shows after the queries have been approved. */
+export const ADVANCED_EXECUTION_PHASE_ORDER: readonly Phase[] = [
+  'search',
+  'filter',
+  'enrich',
+  'validate',
+  'compare',
+  'analyze',
+];
 
 export const PHASE_LABELS: Record<Phase, string> = {
   understand: 'Extracting technical concepts & keywords…',
@@ -90,7 +101,7 @@ export const PHASE_LABELS: Record<Phase, string> = {
   validate: 'Checking relevance of candidates…',
   compare: 'Scoring patent similarities…',
   analyze: 'Writing detailed analysis…',
-  decompose: 'Proposing a technical summary and elements…',
+  decompose: 'Proposing a technical summary and limitations…',
   strategy: 'Planning the search…',
   gate_a: 'Awaiting your review of the understanding…',
   gate_strategy: 'Awaiting your approval of the search queries…',

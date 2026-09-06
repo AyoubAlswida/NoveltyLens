@@ -949,9 +949,9 @@ def test_the_gate_and_the_offline_suite_run_the_same_cases():
 
 
 def test_the_stability_probe_passes_no_retrieval_floor():
-    """§16 decision 6 blocks the floor on the Qdrant/Qwen3 recalibration. A
-    guessed floor here would drop passages and report `NOT_EVALUATED` for an
-    evaluation that never happened."""
+    """§16 decision 6 blocks the uncalibrated passage-level floor. A guessed
+    floor here would drop passages and report `NOT_EVALUATED` for an evaluation
+    that never happened."""
     source = (BACKEND / "verification" / "capability_test.py").read_text(encoding="utf-8")
     body = source.split("def _stability_probe", 1)[1]
     assert "retrieval_floor=None" in body

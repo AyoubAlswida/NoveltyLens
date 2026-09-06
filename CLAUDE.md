@@ -27,8 +27,9 @@ and an Angular frontend — with no shared tooling; each is run and developed se
 - **Quick Search** (`POST /api/analyze[/stream]`) — the description goes straight to the
   pipeline. Inline execution driven by the HTTP request: no run row, no lease, no event log.
 - **Advanced Search** (`POST /api/runs`) — the same search, preceded by guided editing. The
-  system proposes a technical summary and a flat list of technical elements; a person edits
-  and approves them; the system proposes search queries; the person edits and approves those;
+  system proposes a technical summary and a focused flat list of searchable technical
+  limitations; a person edits and approves them; the system proposes queries that combine
+  compatible limitations; the person edits and approves those;
   the approved queries are then executed by the *same* pipeline and the *same* report is
   displayed. Durable: a run row, a lease, an event log and a separate worker process.
 
@@ -55,11 +56,11 @@ and an Angular frontend — with no shared tooling; each is run and developed se
   purpose — `PostgresSaver` owns `checkpoints`, `checkpoint_blobs`, `checkpoint_writes` and
   `checkpoint_migrations` and tracks its own version in the last of them, and two migration
   systems owning the same tables conflict the first time either side changes a column.
-- Run the durable-workflow executor: `python -m workflow.worker` — a **second process**,
+- Run the durable-workflow executor natively: `python -m workflow.worker` — a **second process**,
   not a thread in the API. `--mock` drives a deterministic no-HTTP graph; `--once` claims at
   most one run and exits. Setting `WORKFLOW_EXECUTOR=inprocess` instead hosts the same loop
-  on a daemon thread inside `python server.py`, for local development only. **No endpoint
-  admits a durable run yet**, so either way this is exercised only by tests and by hand.
+  on a daemon thread inside `python server.py`, for local development only. Compose starts
+  the same worker automatically as its `worker` service.
   See "Durable workflow execution" below.
 - Compact finished runs' progress events: `python -m workflow.cleanup` (`--dry-run` first).
 - **Run it without spending quota: `python run_mock.py`** (`--fast` to drop the pacing delays, `--port` to move it). Serves the real app on 8001 with only the metered boundaries stubbed. See the mock-mode section below before changing it.
@@ -73,10 +74,10 @@ and an Angular frontend — with no shared tooling; each is run and developed se
 - Dev server: `npm run dev` (alias of `npm start` / `ng serve`) — `http://localhost:4200`; no dev-server proxy is configured
 - Build: `npm run build` — output in `dist/novelty-lens/`
 - Typecheck: `npm run typecheck` (`tsc --noEmit`). Angular's build typechecks templates too, so a bad binding fails the build rather than failing silently at runtime — this is new; the React version had no `tsconfig.json` at all.
-- `npm test` exists from the Angular scaffold but there are **no frontend tests**; it will find no specs.
+- Run frontend tests: `npm test` (Vitest through Angular's unit-test builder).
 
 **Local infrastructure** (from the repo root): `docker compose up -d --wait` starts
-**both** services, each with a persisted named volume and a healthcheck, so `--wait`
+Postgres, Qdrant, the API, the Advanced Search worker and the frontend, so `--wait`
 returns only once they are actually serving:
 
 - **Qdrant 1.18.3** (`127.0.0.1:6333` HTTP, `6334` gRPC) — the graph's `semantic_search`
@@ -100,10 +101,10 @@ deleted caching code is in git history at `15914d10^`.
 Keep the Qdrant image version in step with `qdrant-client` in `requirements.txt` — the
 client warns when the server is more than a minor version away.
 
-**Qdrant capacity.** Vectors live in RAM (2560-dim float32 = 10 KB/point): ~0.1 GB per
-10k patents, ~1 GB per 100k, ~9.6 GB per 1M — 2.5× the old bge-large figures, since
-Qwen3-Embedding-4B is 2560-dim where bge-large was 1024. The container is capped at
-`mem_limit: 2g`, which now holds roughly 200k patents rather than 500k, so a runaway
+**Qdrant capacity.** Vectors live in RAM (1024-dim float32 = 4 KB/point): ~0.04 GB per
+10k patents, ~0.4 GB per 100k, and ~3.8 GB per 1M. The current
+`BAAI/bge-large-en-v1.5` model is 1024-dimensional. The container is capped at
+`mem_limit: 2g`, which holds roughly 500k bare vectors, so a runaway
 corpus fails in one place instead of taking the host down. **Disk is the
 faster-growing number**: `on_disk_payload` is true and the payload stores each patent's
 *full* text (~273 KB average) even though only the first 600 words are embedded — roughly
@@ -111,9 +112,9 @@ faster-growing number**: `on_disk_payload` is true and the payload stores each p
 `store_patents` keys on `uuid5(patent.id)` and re-indexing overwrites rather than
 duplicating.
 
-**Running the app**: start both processes manually in separate terminals, with Qdrant up.
-There is no root script that runs them together, and no README. **A third process,
-`python -m workflow.worker`, is now REQUIRED for verified runs** —
+**Running the app natively** still needs a separate `python -m workflow.worker` process.
+Compose supplies that process as the restartable `worker` service. It is required for
+Advanced Search —
 `POST /api/runs` admits one (Implementation Gate E), and without a worker it sits `QUEUED`
 for ever. Adding API replicas does not help, because the API never executes a graph.
 Search-only runs (`POST /api/analyze`, `/api/analyze/stream`) still need only the API. The frontend calls the
@@ -125,13 +126,14 @@ bundle loads (a small script in `index.html`, or devtools) points the UI at anot
 **without a rebuild**, which is what the Playwright checks use to aim at a stub.
 
 **Env vars** (backend, via `backend/.env` — see `backend/.env.example`):
-`EMBEDDING_API_URL` (**required, no default** — ranking embeds on every request) and
+`EMBEDDING_API_URL` (**required, no default** — ranking embeds on every request),
+`EMBEDDING_API_FORMAT` (`openai` or `huggingface`, explicit rather than URL-inferred), and
 `LENS_API_KEY` (Lens.org — **it is the only enabled provider**; `SERPAPI_KEY` is read but
 Google Patents is commented out of `SOURCES`, and this file said the opposite until
 Implementation Gate A corrected it), plus `QDRANT_URL` / `QDRANT_API_KEY`. **Two credentials with a fallback chain**:
 `LLM_API_KEY` falls back to `HF_TOKEN`, and `EMBEDDING_API_KEY` falls back to `LLM_API_KEY`
-then `HF_TOKEN` — so one gateway key set as `LLM_API_KEY` covers both, and `HF_TOKEN` alone
-still covers both if you are on the committed HuggingFace defaults. `EPO_CONSUMER_KEY` /
+then `HF_TOKEN`. The current `.env` binds `EMBEDDING_API_KEY=${HF_TOKEN}` explicitly so
+the Aramco LLM key is never sent to Hugging Face. `EPO_CONSUMER_KEY` /
 `EPO_CONSUMER_SECRET` are read but currently unused (the EPO provider is commented out —
 see below). Optional: `LLM_API_URL`, `LLM_MODEL`, `EMBEDDING_MODEL`, and `TRACE=0` to
 silence the per-step trace `backend/tracing.py` prints to stdout on every request (it is
@@ -199,13 +201,13 @@ progress with a `setInterval`, unrelated to `progress.phase`. That was true of t
 `App.tsx` and is not true of the Angular app: `frontend/src/app/services/analysis.ts` does
 a raw `authorizedFetch` POST to `/api/analyze/stream` and reads the SSE body directly (see
 that file's own comment on why `EventSource` is unusable — it can carry neither a POST body
-nor an auth header). `frontend/src/app/models/report.ts`'s `PHASE_ORDER` mirrors the
-backend's phase vocabulary and drives the running screen's checklist for real. The SSE
+nor an auth header). `frontend/src/app/models/report.ts` declares separate chronological
+phase orders for Quick Search and Advanced Search; both are subsets of the backend's
+phase vocabulary and drive the running/error checklists for the selected branch. The SSE
 contract is load-bearing production behavior now, not a spec kept correct for a future
 wiring-up. Every event has a
 `type` of `progress` | `result` | `error`. `progress.phase` is one of the values in
-`backend/graph/events.py`'s `PHASES` tuple (ten now — see below, and see below for which of
-those ten the frontend's `PHASE_ORDER` currently omits). The stream must end with
+`backend/graph/events.py`'s `PHASES` tuple. The stream must end with
 exactly one `result` event (data shape:
 `patents[].{num,title,risk,rationale,key_overlap,url,source}` plus `title`, `date`,
 `concepts`, `recommendations`, `query_count`) or a client reading
@@ -243,16 +245,15 @@ enabled* — accurate as design intent, not as what a request currently exercise
   zero-tolerance policy a node that cannot produce a genuine result raises, and an error
   slot would invite nodes to record a problem and continue to a degraded answer.
 - `events.py` — `PHASES` plus `emit_progress`, which **raises `SSEContractError` on an
-  unknown phase name**. Its first ten entries are the search vocabulary: `understand`,
-  `queries`, `search`, `filter`, `enrich`, `semantic_search`, `fuse`, `validate`,
-  `compare`, `analyze`. The verification branch adds its own (including `strategy` and
-  `gate_strategy` for the search strategy stage), and a search-only run emits none of them.
+  unknown phase name**, and the chronological `QUICK_SEARCH_PHASES` and
+  `ADVANCED_SEARCH_PHASES` routes. The verification branch adds `decompose`, both review
+  gates, and `strategy` before it rejoins the ordinary search route.
   `semantic_search` and `fuse` stay in the tuple even while their nodes are disabled —
   `emit_progress` validates against this vocabulary, not against which nodes currently run,
   and the phase names need to still be valid the moment those nodes are re-enabled. The
-  frontend's own phase list, `PHASE_ORDER` in `frontend/src/app/models/report.ts`, is
-  narrower still: it omits `semantic_search` and `fuse` (those nodes don't run, so the
-  backend never emits them). **`filter` was missing too and has been added**: the live
+  frontend's phase orders in `frontend/src/app/models/report.ts` omit `semantic_search`
+  and `fuse` (those nodes don't run, so the backend never emits them). **`filter` was
+  missing too and has been added**: the live
   `keyword_search` node emits it on every search run, so the checklist was skipping a step
   the run genuinely performed. `tests/test_workflow_gates.py` and
   `tests/test_verification_integration.py` now assert the two lists agree in **both**
@@ -312,26 +313,35 @@ empty result set would state a finding the run did not make.
 **Feature-disclosure verification was withdrawn from the product on 2026-09-01**
 (`docs/decisions/2026-09-01-advanced-search-three-stages.md`). What replaced it is
 **Advanced Search**: a standard prior-art search preceded by guided editing. The system
-proposes a technical summary and a flat list of technical elements; a person edits and
-approves them; the system proposes search queries; the person edits and approves those;
+proposes a technical summary and a focused flat list of searchable technical limitations;
+a person edits and approves them; the system proposes queries that normally combine two or
+three compatible limitations; the person edits and approves those;
 the approved queries are then executed by the ordinary search pipeline and the ordinary
 report is displayed. It performs **no** evidence verification, makes **no** legal
 conclusion, and presents **no** numeric score.
 
-**One conditional edge separates two pipelines.** `_route_after_understanding` sends a run
-with `advanced_search` to `decompose` and everything else straight to `search_orchestrator`.
-**A search-only run traverses exactly the nodes it did before any of this existed and emits
-exactly the same phases** — `tests/test_verification_integration.py` asserts both, because
-the SSE contract is live production behaviour a browser depends on.
+**One conditional edge at `START` separates the two branches.** `_route_from_start` sends
+an Advanced Search directly to the reviewable understanding proposal (`decompose`) and a
+Quick Search to its one-shot LLM understanding (`understand`). Advanced Search does not run
+Quick Search's `understand -> expand_queries` first: those calls produced throwaway queries
+before the user had approved what the invention meant. **A Quick Search still traverses
+exactly its original route and emits exactly its original phases.**
 
 The flag is `advanced_search`, renamed from `verification_requested` with **no alias and no
 dual-read period**: it is an internal contract with one repository consumer.
 
 ```
-understand -> expand_queries -> decompose -> gate_a
-           -> propose_strategy -> gate_strategy -> search_orchestrator
-           -> keyword_search -> validate -> rank -> explain -> END
+START -> understand -> expand_queries ----------------------┐
+START -> decompose -> gate_a -> propose_strategy            │
+       -> gate_strategy -> prepare_approved_search ----------┤
+                                                            v
+             search_orchestrator -> keyword_search -> validate
+             -> rank -> explain -> END
 ```
+
+`prepare_approved_search` performs no model call. It converts the approved summary,
+limitations and query strings into the ordinary `InventionAnalysis`/`invention_text`
+consumed by ranking and reporting, so downstream work uses reviewed content only.
 
 **An Advanced Search run ends after `explain`, exactly as a search-only run does.** The
 durable executor then persists the report and the terminal result atomically; see
@@ -359,9 +369,10 @@ HTTP request, an event row and a checkpoint; if it carried the approval, forging
 those three points would be approving. `tests/test_workflow_gates.py` asserts at the AST
 level that no gate node captures the return value and that none calls an approval writer.
 
-**`search_orchestrator` has exactly two incoming edges** — `expand_queries` (the search-only
-branch, which has no gates at all) and `gate_strategy`. That is what makes "no provider call
-before both approvals" a property of the graph rather than a convention, and
+**`search_orchestrator` has exactly two incoming edges** — `expand_queries` (the Quick
+Search branch) and `prepare_approved_search` (the Advanced branch, reachable only after
+`gate_strategy`). That is what makes "no provider call before both approvals" a property of
+the graph rather than a convention, and
 `test_no_provider_call_is_reachable_before_both_approvals` asserts the count by name. The
 chain into it is now *tighter* than it was: `propose_strategy` is reachable only from
 `gate_a`, and `gate_a` only from `decompose`, because regeneration is gone.
@@ -553,7 +564,8 @@ run that pauses for human review measured in minutes to days.
 poll → acquire a lease → **reconcile** → execute → transition → release.
 
 - **`python -m workflow.worker` is a second workload**, deployed alongside the API
-  (`openshift/06-worker.yaml`, same image, command overridden). Without it a run admitted
+  (`docker-compose.yml`'s `worker` service and `openshift/06-worker.yaml`, same backend
+  image with the command overridden). Without it a run admitted
   by the API sits `QUEUED` forever; adding API replicas does not help, because the API
   never executes a graph.
 - **`WORKFLOW_EXECUTOR=worker|inprocess` selects the host process, not the
@@ -756,22 +768,26 @@ live in one place. Splitting them would put the drafts behind a router or a shar
 purely so that pressing Back could find them again.
 
 - **Stage 1** — the inventor's description read-only beside an editable technical summary.
-- **Stage 2** — a flat, editable list of technical element strings: add, edit, delete.
-- **Stage 3** — a plain, editable list of search query strings.
+- **Stage 2** — a flat, editable list of searchable technical limitations: add, edit,
+  delete. The machine aims for 4–7 compound limitations, keeps relationships/triggers in
+  the same line, and uses fewer rather than padding with generic components.
+- **Stage 3** — a plain, editable list of search query strings. The proposal normally
+  combines 2–3 compatible approved limitations per query instead of emitting one query per
+  isolated noun.
 - Each renders `1 / 3`, `2 / 3`, `3 / 3` as **rendered text**, not an aria-label.
 
-**Navigation preserves every edit and never touches the server.** Only two transitions
-mutate anything: leaving stage 2 the first time, and leaving stage 3. `1 -> 2` calls no
+**Navigation preserves every edit.** Only two transitions mutate anything: leaving stage 2
+the first time, and leaving stage 3. `1 -> 2` calls no
 approval endpoint, which is asserted rather than assumed — a stage that quietly approved on
 its way past would make "Next" an approval the reviewer never recognised as one.
 
-**After the understanding approval the component polls for the proposed queries itself** and
-walks the reviewer on to stage 3, rather than emitting `resumed` and being remounted. A
-remount would drop the stage 1 and 2 drafts, and re-reading what you just approved is an
-ordinary thing to want to do. It hands back to the shell only after the strategy approval.
-`understandingApproved` then makes `2 -> 3` plain navigation, so walking back and forward
-cannot attempt a second approval — which would be a `WRONG_GATE` conflict for a reviewer who
-did nothing wrong.
+**The shell owns one durable SSE watcher for the whole run.** After the understanding
+approval the component emits which approval committed; the shell reconnects from the last
+event id and changes the same mounted component's `gate` input when STRATEGY pauses. The
+component does not run its own poller, so there is one authority for progress, pauses,
+terminal results and failures. Keeping the component mounted preserves stage 1 and 2 drafts.
+`understandingApproved` makes a later `2 -> 3` plain navigation, so walking back and forward
+cannot attempt a second approval.
 
 **Twelve states, and collapsing any two would report one situation as another** — the
 backend's zero-tolerance policy, moved into the UI: `loading` (not `empty`), `empty` (a real
@@ -791,7 +807,7 @@ the wire field is typed `StoredGate`, which is wider. That split is what forces 
 `@default` arm in `app.ts` that says "This run cannot be continued" rather than rendering a
 blank review screen. The run's data is retained; there is simply no way to carry it forward.
 
-**`npm test` runs Vitest through `@angular/build:unit-test`** — **49** specs covering the API
+**`npm test` runs Vitest through `@angular/build:unit-test`** — **50** specs covering the API
 client, the SSE reader, the cursor, account-namespaced run persistence, the three stages and
 the report. `vitest.config.ts` pins `pool: 'threads'` because the default `forks` pool never
 starts a worker on this machine. `@types/node` is a declared devDependency: `tsconfig.spec.json`
@@ -998,7 +1014,8 @@ replaced — that one could only warn about the collision. `workflow/review.py` 
 cross-kind uniqueness, because a UI that cannot produce a collision is not the same thing as
 a backend that would refuse one.
 
-**Four limits, and only one of them is derived.** `backend/graph/limits.py`:
+**Five named limits, but only two affect the live proposal path.**
+`backend/graph/limits.py`:
 
 - `MAX_CAPABILITIES` = `MATRIX_CELL_CAP // MAX_APPROVED_CANDIDATES` = **5**. Derived, never
   written as a literal. **Now inert**: capability grouping was removed with feature
@@ -1006,8 +1023,14 @@ a backend that would refuse one.
   blocking rule reads this. `MATRIX_CELL_CAP` gates no live path either.
 - `MAX_ELEMENTS_PER_CAPABILITY` = **8** and `MAX_ELEMENTS_TOTAL` = **25**. **Chosen** (owner
   decision, 2026-08-30) and explicitly *not* matrix-derived — elements do not multiply cells.
-  One cell asks about one capability and all its elements at once, so an element lengthens a
-  prompt and lengthens what a reviewer reads, neither of which is the cell cap.
+  They remain for retained verification code and the legacy payload field; the simplified
+  flat-list approval has no maximum-element blocking rule.
+- `MAX_PROPOSED_SEARCH_LIMITATIONS` = **7**. **Chosen** (owner decision, 2026-09-06) for
+  the machine proposal shown at Stage 2. The prompt aims for four to seven compound,
+  independently searchable limitations, permits fewer when the description cannot support
+  four, and forbids padding. `propose_understanding` rejects more than seven, multiple
+  feature groups, exact duplicate texts, empty texts, and separate relationship records;
+  it never silently merges, drops or repairs model output.
 - `MAX_STRATEGY_QUERIES` = **10**. **Chosen, and NOT an owner decision yet** — recorded as
   outstanding in the constant's own docstring rather than presented as settled, because what
   it should be depends on the discovery provider's rate and quota behaviour and measuring
@@ -1015,11 +1038,11 @@ a backend that would refuse one.
   provider call plus enrichment, so an unbounded list is an unbounded spend that one
   approval commits the deployment to.
 
-All four are enforced in `workflow/review.py` (binding) **and** in the screen (so a reviewer
-meets a limit while editing rather than after submitting). The screen reads them from the
-gate payload rather than restating them, so the two cannot disagree. **The UI states the
-limit and never the derivation** — a reviewer told "five capabilities because the matrix caps
-at 75 cells" has been shown an implementation detail in place of a reason.
+The live approval rules remain deliberately simple: non-empty summary, at least one
+non-empty limitation, and at least one non-empty query. The seven-item bound is therefore a
+machine-proposal quality guard, not a restriction on what a reviewer may approve after
+editing. The Stage 2 screen explains the 4–7 target and the difference between a compound
+limitation and a generic standalone component.
 
 **Six blocking conditions, up from four.** `NO_SUMMARY`, `NO_FEATURES`, `NO_ELEMENTS`,
 `EMPTY_REQUIREMENT_TEXT`, `DUPLICATE_REQUIREMENT_ID`, `NO_VERSION` — plus `NO_CORE_ELEMENT`,
@@ -1068,8 +1091,8 @@ approval.**
 
 **The `patents` / `search_runs` / `search_run_matches` / `users` search schema is untouched,
 and so is Quick Search.** `POST /api/analyze` and `/api/analyze/stream` traverse exactly the
-nodes they did before and emit exactly the same phases; `_route_after_understanding` still
-sends a search-only run straight to `search_orchestrator`, and
+nodes they did before and emit exactly the same phases; `_route_from_start` sends Quick
+Search to `understand`, then `expand_queries` leads to `search_orchestrator`, and
 `tests/test_verification_integration.py` still asserts both.
 
 **Frontend.** `screens/understanding-review.ts` replaces `screens/decomposition-review.ts`,
@@ -1090,78 +1113,28 @@ for*. `POST /api/analyze` and `/api/analyze/stream` are untouched — a search-o
 still goes straight from `expand_queries` to `search_orchestrator` and emits exactly the
 phases it did before.
 
-**The graph gained one node pair and one loop.** `propose_strategy` reads the **approved**
-summary and decomposition and proposes queries; `gate_strategy` pauses; on resume it reads
-the approved strategy back through the approved-only reader and writes `queries` from its
-**enabled** entries. `search_orchestrator` is reachable on the verified branch from nowhere
-else, which is what makes "no provider call before both approvals" a property of the graph
-rather than a convention.
+`propose_strategy` reads the **approved** summary and limitations and proposes a flat list
+of query strings. `gate_strategy` pauses; on resume it re-reads the approved strategy from
+the approval store. `prepare_approved_search` then constructs the shared search state from
+those reviewed artifacts without another LLM call. A proposal is never dispatched.
 
-**Only enabled queries from the approved strategy execute.** `gate_strategy_node` is the
-only thing that writes `queries` on the verified branch, and it writes
-`approved["enabled_queries"]`. A proposal is never dispatched; a disabled query is **kept**
-in `approved_strategy_queries` rather than dropped, because a reviewer switching a search
-off is a decision the report has to be able to state.
-
-**Coverage is the question this stage asks, and it uses `covered_element_ids`.** Each query
-names the approved element ids it is aimed at, and `workflow/review.py` refuses an approval
-that leaves a **core** element uncovered by any enabled query (`UNCOVERED_CORE_ELEMENT`).
-Reporting no prior art for something nobody searched for is not a finding. The check is an
-**id-set comparison** and says so: `covered_element_ids` carries no foreign key, so what is
-checked is that the ids exist and that the core ones are named — never that a query would
-actually retrieve prior art for them. That second thing is the judgement the person makes.
-
-**The ids are feature-qualified (`F1.E2`), and they have to be.** A requirement id is unique
-within one feature and not across a run — `decomposition_requirement_ids` is keyed by
-`(decomposition_id, requirement_id)`, one decomposition per feature — so a bare `E1` in two
-features is two different elements. Treating a claim for one as covering the other would
-report a core element as searched for when nothing searched for it.
-
-**A strategy names the understanding version it covers, and a mismatch is stale.** Coverage
-was computed over one version's element ids; if the understanding is regenerated and
-re-approved, reusing the strategy would report coverage of requirements it was never checked
-against (`STALE_UNDERSTANDING_VERSION`).
-
-**Regeneration is a durable work request, exactly like a manual candidate.**
-`POST /api/runs/{id}/strategy/regenerate` records a row and returns **202**; the **worker**
-carries it out. `gate_strategy_node` checks for a pending regeneration **before** reading
-any approved artifact and returns `{}` if it finds one — a rejection is not an approval, and
-reading one there would either fail or pick up a version approved earlier.
-`claim_strategy_regeneration` stamps `processed_at` under the lease, and the claimed row is
-**kept** as the evidence that a person asked and the worker acted.
-
-**Ten blocking conditions**, in `workflow/review.py::_gate_strategy_blocking`:
-`NO_QUERIES`, `NO_ENABLED_QUERY`, `EMPTY_QUERY_TEXT`, `NO_QUERY_ID`, `DUPLICATE_QUERY_ID`,
-`TOO_MANY_QUERIES`, `NO_UNDERSTANDING_VERSION`, `STALE_UNDERSTANDING_VERSION`,
-`UNKNOWN_ELEMENT_REFERENCE` and `UNCOVERED_CORE_ELEMENT`.
-
-**`MAX_STRATEGY_QUERIES = 10` is CHOSEN and is NOT an owner decision yet**, and
-`graph/limits.py` records it as outstanding rather than presenting it as settled — the same
-honesty `RETRIEVAL_FLOOR = None` applies to a number nobody has measured. Every enabled
-query is a metered provider call plus the enrichment its results pull, so an unbounded list
-is an unbounded spend one approval commits the deployment to; ten is twice what
-`llm.understand_invention` generates on its own. It is enforced in `workflow/review.py`
-(binding) and shown in the stage payload, and neither place explains the derivation.
-
+The strategy screen intentionally has no enable flags, coverage map, element ids, or
+regeneration loop. Every non-empty query the person approves executes. Its single blocking
+condition is `NO_QUERIES`; the understanding gate separately requires a non-empty summary
+and at least one non-empty technical limitation.
 **`llm.propose_search_strategy` is the component**, named in `llm.STRATEGY_COMPONENT` for
 the same reason `DECOMPOSITION_COMPONENT` is: the specification does not assign an owner to
 it. Its marker, `STRATEGY_PROMPT_MARKER`, deliberately shares no wording with the
 decomposition markers — those two overlap on purpose and needed an ordering rule at the
 double; this one is a different component and can be matched in any order.
 
-**Three tables (migrations `0022`/`0023`)**, in the same three shapes the understanding
-stage uses and for the same reasons: a proposal table that *cannot* record an approval, the
-approved artifact, and the regeneration work request. See the Persistence section, and note
-`0022` is the non-transactional enum-label migration described there.
+The retained persistence tables still separate machine proposals from approved artifacts;
+withdrawn regeneration and coverage columns may remain in historical schema, but no live
+route or screen exposes them.
 
-**Frontend.** `screens/strategy-review.ts` is the fifth gate screen. The reviewer edits
-query text, switches queries on and off, and ticks which elements each search is looking
-for; the coverage panel names every element that nothing will search for, and marks the core
-ones as blocking. The heading a person sees is **"AI-proposed query coverage"**, and the
-stage is "Search strategy" — `STRATEGY` is the internal gate value and appears nowhere on
-the screen. `covered()` is a **method, not a `computed()`**, for exactly the reason
-`violations()` is one on the understanding screen: it reads a signal *and* plain nested
-objects, so a computed would not invalidate when a query is switched off.
+**Frontend.** Stage 3 of `advanced-search-stages.ts` edits the flat query list. It is the
+same mounted component as stages 1 and 2, so Back can revisit the approved understanding
+without fetching or reconstructing the drafts.
 
 ### Human-in-the-Loop: the two gates, and who may resume a run
 
@@ -1170,7 +1143,8 @@ An Advanced Search run pauses **twice** and a person decides whether it continue
 `graph/pipeline.py`:
 
 ```
-decompose -> gate_a -> propose_strategy -> gate_strategy -> search_orchestrator -> … -> explain -> END
+decompose -> gate_a -> propose_strategy -> gate_strategy
+          -> prepare_approved_search -> search_orchestrator -> … -> explain -> END
 ```
 
 Gate A sits **before** the strategy that is built from the understanding, and the strategy
@@ -1250,8 +1224,15 @@ is connection-local and deliberately **not** in the `workflow_event_type` enum.
   would occupy an API worker for minutes to days to deliver nothing.
 - **A slow client is disconnected, never buffered** (`SSE_WRITE_TIMEOUT_SECONDS`), and
   nothing is lost: every frame is still in `workflow_events`.
-- **A disconnect never touches the run.** `is_disconnected()` appears nowhere; a test greps
-  for it.
+- **The SSE reader never guesses cancellation from a disconnect.** The product instead
+  issues authenticated `DELETE /api/runs/{id}` on `pagehide`, and repeats that cancellation
+  on startup from the account-scoped remembered id if the unload request was lost. The
+  delete removes only a live run; completed and failed runs remain in history. Removing the
+  run cascades to its lease, so the next heartbeat fences the worker. An external request
+  already in flight can return, but it cannot commit after the fence.
+- **Leaving the first review is explicit cancellation.** Back opens an in-app confirmation;
+  confirming calls the same authenticated delete before returning to the submit screen.
+  Dismissing it keeps the reviewer and the run exactly where they were.
 
 **Two endpoints record a request and do none of the work**, and their `202` is the
 design rather than a courtesy. `POST /api/runs/{id}/candidates` (case T) and
@@ -1411,7 +1392,7 @@ a drop-in replacement, and **changing provider is an `.env` change, not a code c
 The committed defaults are the HuggingFace Router with
 `meta-llama/Llama-3.1-8B-Instruct:novita`, and `LLM_API_KEY` falls back to `HF_TOKEN` so
 that combination keeps working with no extra config. **`backend/.env` currently overrides
-all three** to an internal Aramco LiteLLM gateway
+the LLM URL, model, and credential** to an internal Aramco LiteLLM gateway
 (`https://dev-metabrain-api.aramco.com.sa/v1/chat/completions`, model `minimaxm3`), which
 resolves only from inside Aramco's network — the defaults are what a machine outside it
 falls back to, so a `Could not resolve host` here is a network-location symptom, not a
@@ -1459,31 +1440,31 @@ likely thing to push it over the limit.
 
 ### Embeddings and Qdrant: hosted, not local, corpus grows from live traffic
 
-`backend/embeddings.py` calls a **hosted** embedding model over an OpenAI-compatible
-`/v1/embeddings` endpoint — `EMBEDDING_API_URL` (**required, no default**),
-`EMBEDDING_MODEL`, and `EMBEDDING_API_KEY`, which falls back to `LLM_API_KEY` then
-`HF_TOKEN` since one gateway usually serves both. Not `sentence-transformers`, which stays
-an unused dependency by design (see above). Raises on failure; there is no zero-vector
-fallback. `chunk_text` splits long documents into overlapping word-count windows (capped at
-`MAX_CHUNKS_PER_DOCUMENT`), used by `compare.py`'s ranking and `vector_store`'s truncation.
+`backend/embeddings.py` calls a **hosted** embedding model using three explicit settings:
+`EMBEDDING_API_URL` (**required, no default**), `EMBEDDING_MODEL`, and
+`EMBEDDING_API_FORMAT`. `EMBEDDING_API_KEY` falls back to `LLM_API_KEY` then `HF_TOKEN`, but
+the current `.env` binds it directly to `HF_TOKEN` because the LLM and embedding providers
+are different. Not `sentence-transformers`, which stays an unused dependency by design (see
+above). Failures raise; there is no zero-vector fallback. `chunk_text` splits long documents
+into overlapping word-count windows (capped at `MAX_CHUNKS_PER_DOCUMENT`), used by
+`compare.py`'s ranking and `vector_store`'s truncation.
 
-**It speaks the OpenAI shape only** — `{"model", "input": [...]}` in, `{"data": [{"index",
-"embedding"}]}` out, re-sorted by `index` because the provider is free to return a batch out
-of order and `compare.py` maps vectors back to patents by position. This replaced the
-HuggingFace Router's `feature-extraction` pipeline (`{"inputs": [...]}` in, a bare nested
-list out), which is a *different* protocol, not a variant — pointing `EMBEDDING_API_URL`
-back at an HF feature-extraction URL will fail on the response shape.
+**The wire protocol is declared, never guessed from the URL.** `openai` sends
+`{"model", "input": [...]}` and reads `{"data": [{"index", "embedding"}]}`, re-sorting by
+`index` before callers map vectors back to patents. `huggingface` sends
+`{"inputs": [...], "normalize": true, "truncate": true}` to the Inference Providers
+feature-extraction endpoint and reads its bare vector array. Response counts, dimensions,
+and numeric contents are validated before anything is scored.
 
-**The model is `Qwen3-Embedding-4B` at 2560 dimensions, and that width is load-bearing.**
-Qdrant fixes a collection's vector size at creation, so the 1024-dim `patents` collection
-every earlier bge-large run built is **unusable and has to be dropped, not migrated** —
-there is no bulk re-ingestion step, so the corpus rebuilds from live traffic. `run_mock.py`'s
-`EMBED_DIM` must track this too (it tiles a 64-dim hash, so the width must stay an exact
-multiple of 64). Two constants in `search/vector_store.py` were calibrated against
-bge-large and are **now stale**: `MIN_SIMILARITY_SCORE` (0.6, measured against bge's score
-distribution) and `QUERY_INSTRUCTION` (rewritten to Qwen3's `Instruct:`/`Query:` format but
-not yet re-probed). Both only affect semantic search, which is disabled — re-measure before
-re-enabling it. See those docstrings.
+**The current model is `BAAI/bge-large-en-v1.5` at 1024 dimensions, and that width is
+load-bearing.** Qdrant fixes a collection's vector size at creation, so any `patents`
+collection created with the previous 2560-dimensional Qwen3 model is **incompatible and has
+to be dropped and rebuilt, not migrated**, before semantic indexing is re-enabled. There is
+no bulk re-ingestion step, so the corpus rebuilds from live traffic. `run_mock.py`'s
+`EMBED_DIM` is 1024 as well (it tiles a 64-dim hash, so the width must stay an exact multiple
+of 64). `MIN_SIMILARITY_SCORE` (0.6) and `QUERY_INSTRUCTION` are the values previously
+calibrated for this BGE model. Semantic search remains disabled for independent workflow
+reasons; re-probe those values if the model, prefix, or corpus distribution changes.
 
 `backend/search/vector_store.py` wraps a `qdrant-client` `QdrantClient` (`settings.qdrant_url`
 / `settings.qdrant_api_key`) around a single `patents` collection, created lazily on first
@@ -1519,12 +1500,11 @@ would degrade the more the tool was used. Enriched `keyword_patents` are always 
 since that copy can only improve what is stored.
 
 **Retrieval is asymmetric, deliberately.** `semantic_search` embeds the query with
-`QUERY_INSTRUCTION` prepended; `store_patents` embeds documents with no prefix. Both
-bge-large and Qwen3-Embedding were trained that way — the prefix is a retrieval instruction
-to the model, not content — but **the format is model-specific**: bge wanted a fixed
-sentence (`"Represent this sentence for searching relevant passages: "`), Qwen3 wants an
-`Instruct: <task>\nQuery: ` pair naming the retrieval task, which is what the constant now
-holds. Do not "make these consistent" by prefixing documents too: the shared
+`QUERY_INSTRUCTION` prepended; `store_patents` embeds documents with no prefix. The current
+BGE model uses the fixed query sentence
+(`"Represent this sentence for searching relevant passages: "`). It is a retrieval
+instruction to the model, not content. Do not "make these consistent" by prefixing
+documents too: the shared
 prefix would pull every stored vector toward the same region and flatten the very gap
 `MIN_SIMILARITY_SCORE` has to cut through. `tests/test_phase3_agents.py` pins both halves.
 The prefix is applied to queries only and does **not** require re-indexing an existing
@@ -1533,12 +1513,11 @@ collection, since document vectors are unchanged by it. Note `tests/fakes.py`'s
 its five content words as ordinary query terms and dilute the real ones, an artifact of
 the stub that production doesn't have (same reasoning as that module's `_STOPWORDS`).
 
-The query also passes `score_threshold=MIN_SIMILARITY_SCORE` (0.6 — **stale**: the
-live-Qdrant probe behind it measured BAAI/bge-large-en-v1.5, where unrelated queries scored
-0.51-0.56 and related ones 0.68-0.76, and Qwen3-Embedding-4B's scores sit somewhere else
-entirely. There's no exact-zero baseline for either model, so the threshold has to clear
-whatever that floor turns out to be rather than sit at 0 — re-probe before re-enabling
-semantic search). Without
+The query also passes `score_threshold=MIN_SIMILARITY_SCORE` (0.6). The live-Qdrant probe
+behind it measured the current BAAI/bge-large-en-v1.5 model: unrelated queries scored
+0.51-0.56 and related ones 0.68-0.76. There is no exact-zero baseline for arbitrary English
+text, so the threshold sits in the observed gap rather than at zero. Re-probe it if the
+model, prefix, or corpus changes. Without
 it, `query_points` always returns its `limit` nearest neighbors even when the
 closest thing in a small or unrelated corpus still isn't actually similar —
 "the least-bad options available" would otherwise flow into validation and
@@ -1747,14 +1726,13 @@ them degrade gracefully, by design: an exhausted quota fails the request.
 - **SerpAPI** — 250 searches/month, ~25 per novelty search. `GET https://serpapi.com/account?api_key=...`
   reports `plan_searches_left`. Exhaustion returns HTTP 429. This one is unchanged by the
   LLM/embedding provider switch and remains the tightest limit in the project.
-- **HuggingFace Router** — a monthly included-credit allowance shared by *both* the LLM
-  calls and the embedding calls, so running out stops the pipeline at `understand`, well
-  before search. Exhaustion returns HTTP 402 with
+- **HuggingFace Router** — a monthly included-credit allowance used by the current BGE
+  embedding calls. Exhaustion returns HTTP 402 with
   `"You have depleted your monthly included credits"` at every request size, not just large
   ones — so a sudden 402 is a billing state, not something a smaller `max_tokens` will fix.
-  **This applies only while `.env` is on the committed HuggingFace defaults**; it currently
-  points both LLM and embeddings at the Aramco gateway instead, whose limits are not
-  documented here. `HF_TOKEN` is still read and still the fallback credential.
+  The LLM currently points at the Aramco gateway instead, whose limits are not documented
+  here. `HF_TOKEN` is bound explicitly to `EMBEDDING_API_KEY`; it remains the fallback for
+  the committed Hugging Face LLM defaults as well.
 
 Check before any benchmarking or repeated live runs; it is very easy to spend a month's
 allowance in an afternoon of testing.
@@ -1866,8 +1844,8 @@ the feature × publication matrix, any persistence or SSE surface, and the §1.2
 eligibility classifier — that one sits at the enrichment boundary the spec's §17.2/§17.3 flag
 as blocking, and its "substantive description" branch is an unapproved judgment call (§16
 decision 13). The retrieval floor for `NOT_EVALUATED` is a caller-supplied parameter with no
-default, because §16 decision 6 blocks it on the same Qdrant/Qwen3 recalibration this file
-flags as outstanding.
+default, because §16 decision 6 requires a passage-level calibration. The whole-patent
+Qdrant threshold is not evidence for that separate boundary.
 
 ### Mock mode: `python run_mock.py`, for looking at the app without paying for it
 
@@ -1905,12 +1883,12 @@ Four things about it are load-bearing:
   report screen prints beside each publication number. Mock runs are written to the real
   database, so that string is also how you find them again:
   `DELETE FROM search_runs WHERE id IN (SELECT run_id FROM search_run_matches WHERE source LIKE 'MOCK DATA%');`
-- **The mock embedder emits 2560-dim vectors**, matching Qwen3-Embedding-4B. A Qdrant
+- **The mock embedder emits 1024-dim vectors**, matching BAAI/bge-large-en-v1.5. A Qdrant
   collection fixes its width on creation, so a wrong-width vector would fail against a
   `patents` collection a real run already made. Nothing writes today (indexing is disabled
   in `graph/pipeline.py`), which is exactly why the mismatch would be baffling later. It
-  emitted 1024 while the project used bge-large; `EMBED_DIM` has to move with the model,
-  and must stay an exact multiple of the 64-dim hash it tiles.
+  `EMBED_DIM` has to move with the model and must stay an exact multiple of the 64-dim hash
+  it tiles.
 
 The LLM double keys off real prompt substrings (`"PatentScout AI"`, `"screening N
 candidate"`, `"expert patent examiner"`, `llm.DECOMPOSITION_PROMPT_MARKER` /
@@ -1998,8 +1976,8 @@ Layout of `frontend/src/app/`:
   longer exists.
 - `config.ts` — `API_BASE_URL`, replacing `import.meta.env.VITE_API_URL`. See the running
   section above for the `window.NOVELTY_LENS_API_URL` override.
-- `models/report.ts` — `AnalysisReport`, `HistoryEntry`, `PHASE_ORDER`, `PHASE_LABELS`,
-  `PHASE_ICONS`, and the `StreamEvent` union. `PHASE_ORDER` is the mirror of
+- `models/report.ts` — `AnalysisReport`, `HistoryEntry`, the Quick/Advanced phase orders,
+  `PHASE_LABELS`, `PHASE_ICONS`, and the `StreamEvent` union. The two route orders mirror
   `backend/graph/events.py`.
 - `services/auth.ts` — the session. Token in localStorage, `restore()` re-validates it
   against `GET /api/auth/me` on startup, and `authorizedFetch` attaches the header and
@@ -2229,7 +2207,8 @@ just moved into the UI.
 A failed run used to fire a native `alert()` and drop the user back on `submit`, which
 threw away everything the stream had already said. `ErrorScreen` now renders the backend's
 `error` detail **verbatim** in a mono block, names the phase it died in, and shows how many
-of the nine phases completed. **That detail is sanitized server-side before it is streamed**
+phases in the selected Quick/Advanced route completed. Retrying preserves that route; an
+Advanced Search failure cannot silently become a Quick Search. **That detail is sanitized server-side before it is streamed**
 (`server.py` passes it through `workflow/redaction.py`'s `safe_detail`; it used to be
 `str(error)`), so what reaches the browser is the provider and the HTTP status rather than a
 provider body — the actionable half of "an HTTP 429, a depleted-credits 402" survives, and the
@@ -2261,11 +2240,11 @@ Measured end-to-end on a live request (13 candidates, 20 keyword hits), **123.5s
 the current round of fixes**. The progress events are emitted *before* their work, so
 reading the SSE timestamps naively misattributes every phase — the real breakdown was:
 
-**Every row below predates the provider switch** and was measured against the HuggingFace
-Router (Llama-3.1-8B, bge-large). The pipeline now runs on an internal Aramco gateway with
-a reasoning LLM and a 4B embedding model at 2.5× the vector width, so the LLM and embedding
-rows in particular are no longer predictive. Re-measure before optimizing against them; the
-*shape* of the analysis (what dominates, and why) is what still holds.
+**Every row below predates the current split-provider configuration** and was measured with
+the HuggingFace Router for both Llama-3.1-8B and bge-large. The current LLM uses the internal
+Aramco gateway while embeddings use Hugging Face BGE again, so network latency and provider
+load still make the LLM and embedding rows non-predictive. Re-measure before optimizing
+against them; the *shape* of the analysis (what dominates, and why) is what still holds.
 
 | Work | Before | After (measured) |
 |---|---:|---:|
@@ -2282,11 +2261,11 @@ rows in particular are no longer predictive. Re-measure before optimizing agains
 Three things worth knowing before optimizing further:
 
 - **`store_patents` was uploading ~99.3% waste.** Indexed patents average 273,000
-  characters and bge-large capped at 512 tokens, so a 20-patent batch shipped ~5.5 MB to
+  characters and BGE caps input at 512 tokens, so a 20-patent batch shipped ~5.5 MB to
   compute vectors reflecting each document's first ~2,000 characters. `MAX_INDEX_WORDS`
-  in `search/vector_store.py` truncates at 600 words. Qwen3-Embedding-4B's window is far
-  larger, so that cap is now a cost/latency choice rather than a model limit — raising it
-  would change stored vectors and force a re-index. See that constant's docstring.
+  in `search/vector_store.py` truncates at 600 words, slightly above BGE's effective token
+  window so the endpoint performs the final truncation. Lowering it into the effective
+  window would change stored vectors and force a re-index. See that constant's docstring.
 - **Embedding concurrency needs small batches, and the two settings are coupled.** The
   first attempt used `BATCH_SIZE=32` with 4 workers and came out *slower than serial*,
   because a 32-text request under concurrency exceeded `_embed_batch`'s 30s read timeout

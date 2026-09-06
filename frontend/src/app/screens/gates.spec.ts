@@ -41,17 +41,8 @@ class FakeRuns {
     return this.failWith ? Promise.reject(this.failWith) : Promise.resolve(value);
   }
 
-  /** What `getRun` reports; the component polls it after the first approval. */
-  runStatus: { status: string; current_gate: string | null } = {
-    status: 'WAITING_FOR_REVIEW',
-    current_gate: 'STRATEGY',
-  };
-
   newKey() {
     return `key-${this.sent.length + 1}`;
-  }
-  getRun() {
-    return Promise.resolve(this.runStatus as unknown as Record<string, unknown>);
   }
   gateA() {
     return this.maybeFail(this.gateAPayload as Record<string, unknown>);
@@ -107,10 +98,19 @@ async function atStageOne(runs: FakeRuns) {
   const fixture = mount(AdvancedSearchStages, runs, {
     runId: 'r1',
     gate: 'A',
-    pollIntervalMs: 0,
   });
   await settle(fixture);
   return fixture;
+}
+
+async function arriveAtStrategy(
+  fixture: ComponentFixture<AdvancedSearchStages>,
+): Promise<void> {
+  // The app's single durable SSE watcher reports the next pause by updating
+  // this input. The same component instance stays mounted, so earlier edits
+  // remain available when the reviewer walks back.
+  fixture.componentRef.setInput('gate', 'STRATEGY');
+  await settle(fixture);
 }
 
 describe('Advanced Search — stage 1, the understanding', () => {
@@ -183,6 +183,8 @@ describe('Advanced Search — stage 2, the technical elements', () => {
       'a UV-C emitter',
     ]);
     expect(text(fixture)).toContain('2 / 3');
+    expect(text(fixture)).toContain('one searchable technical limitation');
+    expect(text(fixture)).toContain('Aim for 4–7 focused limitations');
   });
 
   it('adds, edits and deletes an element', async () => {
@@ -265,7 +267,6 @@ describe('Advanced Search — stage 3, the searches', () => {
     const fixture = mount(AdvancedSearchStages, runs, {
       runId: 'r1',
       gate: 'STRATEGY',
-      pollIntervalMs: 0,
     });
     await settle(fixture);
     return fixture;
@@ -279,6 +280,7 @@ describe('Advanced Search — stage 3, the searches', () => {
       'uv-c sterilisation drinking bottle',
     ]);
     expect(text(fixture)).toContain('3 / 3');
+    expect(text(fixture)).toContain('combine the approved limitations');
   });
 
   it('adds, edits and deletes a query', async () => {
@@ -335,6 +337,7 @@ describe('Advanced Search — navigation preserves every edit', () => {
     component.editRow(component.elements, component.elements()[0].key, 'my element');
     await component.next(); // 2 -> 3, approves the understanding
     await settle(fixture);
+    await arriveAtStrategy(fixture);
     component.queries.set([{ key: 'q1', text: 'my query' }]);
 
     expect(component.stage()).toBe(3);
@@ -352,6 +355,7 @@ describe('Advanced Search — navigation preserves every edit', () => {
     component.editRow(component.elements, component.elements()[0].key, 'my element');
     await component.next();
     await settle(fixture);
+    await arriveAtStrategy(fixture);
     component.queries.set([{ key: 'q1', text: 'my query' }]);
 
     component.previous(); // 3 -> 2
@@ -373,6 +377,7 @@ describe('Advanced Search — navigation preserves every edit', () => {
     await component.next(); // 1 -> 2
     await component.next(); // 2 -> 3, one approval
     await settle(fixture);
+    await arriveAtStrategy(fixture);
     expect(runs.sent.filter((c) => c.method === 'approveGateA')).toHaveLength(1);
 
     component.previous(); // 3 -> 2
@@ -413,7 +418,6 @@ describe('Advanced Search — failure states stay distinct', () => {
     const fixture = mount(AdvancedSearchStages, runs, {
       runId: 'r1',
       gate: 'A',
-      pollIntervalMs: 0,
     });
     await settle(fixture);
     expect(fixture.componentInstance.state()).toBe('forbidden');
@@ -425,7 +429,6 @@ describe('Advanced Search — failure states stay distinct', () => {
     const fixture = mount(AdvancedSearchStages, runs, {
       runId: 'r1',
       gate: 'A',
-      pollIntervalMs: 0,
     });
     await settle(fixture);
     expect(fixture.componentInstance.state()).toBe('reconnecting');
@@ -476,33 +479,38 @@ describe('Advanced Search — the next stage arrives with no page reload', () =>
   /**
    * **Spec section 8.1 row 14, and the bug behind "I have to refresh".**
    *
-   * Two consecutive approvals against a faked run API, with nothing reloading
-   * anything. The first approval commits and the component walks the reviewer on
-   * to stage 3 by itself; the second commits and hands back to the shell.
-   *
-   * The app-level half of this is `afterDecision()`, which restarts
-   * `followToGate` for the run it just decided on --
-   * `test_frontend_review_contract.py` asserts that, because it is a property of
-   * `app.ts` rather than of this component.
+   * Two consecutive approvals against a faked run API, with no remount. The
+   * app-level durable stream moves the same component from A to STRATEGY by
+   * updating its gate input.
    */
   it('drives two approvals in a row without remounting', async () => {
     const runs = new FakeRuns();
     const fixture = await atStageOne(runs);
     const component = fixture.componentInstance;
 
-    let resumedCount = 0;
-    component.resumed.subscribe(() => (resumedCount += 1));
+    const resumed: string[] = [];
+    component.resumed.subscribe((gate) => resumed.push(gate));
 
     await component.next(); // 1 -> 2
-    await component.next(); // 2 -> 3, approval one, then the hand-off poll
+    await component.next(); // approval one
     await settle(fixture);
+    expect(component.state()).toBe('resuming');
+    expect(resumed).toEqual(['A']);
+
+    const transitionText = text(fixture).toLowerCase();
+    expect(transitionText).toContain('preparing your search strategy');
+    expect(transitionText).toContain('changes saved');
+    expect(transitionText).not.toContain('worker');
+    expect(transitionText).not.toContain('poll');
+    expect(transitionText).not.toContain('r1');
+    expect(fixture.nativeElement.querySelector('.gate-head button')).toBeNull();
+
+    await arriveAtStrategy(fixture);
 
     expect(component.stage()).toBe(3);
     expect(component.state()).toBe('review');
-    // The queries the worker proposed are on screen, fetched by the component
-    // itself -- no reload, and no second mount.
+    // The queries the worker proposed are on screen with no reload or remount.
     expect(component.queries().map((row) => row.text)).toEqual(STRATEGY.queries);
-    expect(resumedCount).toBe(0);
 
     await component.next(); // approval two
     await settle(fixture);
@@ -512,8 +520,7 @@ describe('Advanced Search — the next stage arrives with no page reload', () =>
       'approveGateStrategy',
     ]);
     expect(component.state()).toBe('resuming');
-    // Only now does the shell take over, to watch the run to its report.
-    expect(resumedCount).toBe(1);
+    expect(resumed).toEqual(['A', 'STRATEGY']);
   });
 });
 
@@ -532,6 +539,7 @@ describe('Advanced Search — the stage label names the stage you are on', () =>
     expect(component.stageGate()).toBe('A');
     await component.next();
     await settle(fixture);
+    await arriveAtStrategy(fixture);
     expect(component.stage()).toBe(3);
     expect(component.stageGate()).toBe('STRATEGY');
   });

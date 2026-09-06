@@ -5,6 +5,7 @@ import {
   signal,
   effect,
   inject,
+  HostListener,
 } from '@angular/core';
 import { Icon } from './shared/icon';
 import { SubmitScreen } from './screens/submit-screen';
@@ -13,13 +14,24 @@ import { ReportScreen } from './screens/report-screen';
 import { ErrorScreen } from './screens/error-screen';
 import { HistoryScreen } from './screens/history-screen';
 import { LoginScreen } from './screens/login-screen';
-import { ActiveRunStore, RunsService, RunSummary } from './services/runs';
+import { ActiveRunStore, RunApiError, RunsService, StreamCursor } from './services/runs';
 import { AdvancedSearchStages } from './screens/advanced-search-stages';
 import type { StoredGate } from './models/report';
 import { AnalysisService } from './services/analysis';
 import { AuthService } from './services/auth';
 import { HistoryService, reportFromHistory } from './services/history';
-import { AnalysisReport, HistoryEntry, Phase, PHASE_ORDER, StreamEvent } from './models/report';
+import {
+  ADVANCED_SEARCH_PHASE_ORDER,
+  ADVANCED_EXECUTION_PHASE_ORDER,
+  ADVANCED_PRE_REVIEW_PHASE_ORDER,
+  AnalysisReport,
+  HistoryEntry,
+  Phase,
+  QUICK_SEARCH_PHASE_ORDER,
+  SearchMode,
+  StreamEvent,
+  WorkflowGate,
+} from './models/report';
 
 type Screen =
   | 'submit'
@@ -228,7 +240,11 @@ const EXAMPLE_DESC =
               />
             }
             @case ('running') {
-              <app-running-screen [phaseIdx]="phaseIdx()" [phaseMessages]="phaseMessages()" />
+              <app-running-screen
+                [phaseIdx]="phaseIdx()"
+                [phaseMessages]="phaseMessages()"
+                [phaseOrder]="phaseOrder()"
+              />
             }
             @case ('report') {
               @if (reportData(); as report) {
@@ -237,27 +253,17 @@ const EXAMPLE_DESC =
             }
             @case ('review') {
               @if (reviewRunId(); as runId) {
-                <!-- One screen per workflow gate. They ask different questions
-                     and enforce different completion rules, so a single generic
-                     editor could not implement any of them faithfully. -->
-                @switch (reviewGate()) {
-                  @case ('A') {
-                    <app-advanced-search-stages
-                      [runId]="runId"
-                      gate="A"
-                      (back)="closeReview()"
-                      (resumed)="afterDecision()"
-                    />
-                  }
-                  @case ('STRATEGY') {
-                    <app-advanced-search-stages
-                      [runId]="runId"
-                      gate="STRATEGY"
-                      (back)="closeReview()"
-                      (resumed)="afterDecision()"
-                    />
-                  }
-                  @default {
+                @if (reviewGate() === 'A' || reviewGate() === 'STRATEGY') {
+                  <!-- One mounted editor owns all three visible stages. Changing
+                       gates updates its input without discarding the drafts the
+                       reviewer just approved. -->
+                  <app-advanced-search-stages
+                    [runId]="runId"
+                    [gate]="activeReviewGate()"
+                    (back)="requestReviewExit()"
+                    (resumed)="afterDecision($event)"
+                  />
+                } @else {
                     <!--
                       A run parked at a gate this app no longer knows: B, C or D
                       from before feature verification was withdrawn. It must
@@ -268,7 +274,7 @@ const EXAMPLE_DESC =
                     <div class="screen screen-scroll">
                       <header class="gate-head">
                         <h1>This run cannot be continued</h1>
-                        <button class="btn-outlined" type="button" (click)="closeReview()">
+                        <button class="btn-outlined" type="button" (click)="requestReviewExit()">
                           Back
                         </button>
                       </header>
@@ -279,7 +285,6 @@ const EXAMPLE_DESC =
                         search to analyse the same invention again.
                       </p>
                     </div>
-                  }
                 }
               }
             }
@@ -296,11 +301,51 @@ const EXAMPLE_DESC =
               <app-error-screen
                 [detail]="errorDetail()"
                 [failedPhase]="failedPhase()"
-                (retry)="startRunning()"
+                [phaseOrder]="errorPhaseOrder()"
+                (retry)="retryFailedRun()"
                 (back)="goHome()"
               />
             }
           }
+        }
+
+        @if (confirmingRunExit()) {
+          <div class="run-exit-backdrop" (click)="keepReviewing()">
+            <section
+              class="run-exit-dialog"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="run-exit-title"
+              (click)="$event.stopPropagation()"
+            >
+              <h2 id="run-exit-title">Cancel this Advanced Search?</h2>
+              <p>
+                Leaving now stops the current run. The approved drafts and any
+                unfinished search work will not be kept as a result.
+              </p>
+              @if (runExitError()) {
+                <p class="run-exit-error" role="alert">{{ runExitError() }}</p>
+              }
+              <div class="run-exit-actions">
+                <button
+                  class="primary-action compact"
+                  type="button"
+                  [disabled]="cancellingRun()"
+                  (click)="cancelCurrentRun()"
+                >
+                  {{ cancellingRun() ? 'Cancelling…' : 'Cancel search' }}
+                </button>
+                <button
+                  class="secondary-button"
+                  type="button"
+                  [disabled]="cancellingRun()"
+                  (click)="keepReviewing()"
+                >
+                  Keep reviewing
+                </button>
+              </div>
+            </section>
+          </div>
         }
       </main>
     </div>
@@ -320,6 +365,8 @@ export class App {
 
   private readonly activeRuns = inject(ActiveRunStore);
   private readonly runs = inject(RunsService);
+  private readonly streamCursor = inject(StreamCursor);
+  private advancedStreamAbort: AbortController | null = null;
 
 
   readonly screen = signal<Screen>('submit');
@@ -336,6 +383,27 @@ export class App {
    * rather than rendering nothing. Section 6.3.
    */
   readonly reviewGate = signal<StoredGate | null>(null);
+  readonly confirmingRunExit = signal(false);
+  readonly cancellingRun = signal(false);
+  readonly runExitError = signal('');
+
+  /** The branch currently shown. It controls both progress order and retry. */
+  readonly runMode = signal<SearchMode>('quick');
+  /** False while Advanced Search is preparing the first review; true only
+   * after the reviewer releases the approved queries into the live search. */
+  readonly advancedSearchReleased = signal(false);
+  readonly phaseOrder = computed(() =>
+    this.runMode() === 'advanced'
+      ? this.advancedSearchReleased()
+        ? ADVANCED_EXECUTION_PHASE_ORDER
+        : ADVANCED_PRE_REVIEW_PHASE_ORDER
+      : QUICK_SEARCH_PHASE_ORDER,
+  );
+  readonly errorPhaseOrder = computed(() =>
+    this.runMode() === 'advanced'
+      ? ADVANCED_SEARCH_PHASE_ORDER
+      : QUICK_SEARCH_PHASE_ORDER,
+  );
 
   /** Admit a verified run, then wait at its first gate.
    *
@@ -353,7 +421,10 @@ export class App {
     const description = this.description().trim();
     if (!description) return;
     const email = this.auth.email();
+    this.runMode.set('advanced');
+    this.advancedSearchReleased.set(false);
     this.errorDetail.set('');
+    this.failedPhase.set(null);
     try {
       const created = await this.runs.createRun(description);
       const runId = String(created['run_id']);
@@ -372,7 +443,7 @@ export class App {
       this.phaseMessages.set({});
       this.screen.set('running');
       void this.loadHistory();
-      void this.followToGate(runId);
+      void this.followAdvancedRun(runId);
     } catch (error) {
       this.errorDetail.set(
         error instanceof Error ? error.message : 'The run could not be started.',
@@ -381,142 +452,210 @@ export class App {
     }
   }
 
-  /** Watch an admitted run until it parks at a gate, then open that gate.
-   *
-   * Polling rather than streaming: this asks the one question the screen needs
-   * -- "is there a decision to make yet?" -- and the answer lives in the run
-   * row, which any API process can answer. The SSE stream carries progress and
-   * is the better source for a phase checklist; wiring it here is worth doing
-   * and is not what fixes the empty gate.
-   *
-   * A terminal run is handled as itself: `COMPLETED` opens the report,
-   * `FAILED` opens the error screen with the sanitized detail. Neither is a
-   * gate, and neither should leave the reviewer on a spinner.
-   */
-  private async followToGate(runId: string): Promise<void> {
-    for (let attempt = 0; attempt < 600; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      // The reviewer navigated away -- to History, to a new search. Their
-      // choice wins, and the run is unaffected either way.
-      if (this.reviewRunId() !== runId) return;
-      let run: RunSummary;
+  /** Follow one durable run through progress, both pauses, and its terminal
+   * outcome. The event log is the authority; `GET /runs/{id}` is used only
+   * after a connection closes without a terminal frame so reconnecting never
+   * turns a dropped HTTP connection into a fabricated run failure. */
+  private async followAdvancedRun(runId: string): Promise<void> {
+    this.advancedStreamAbort?.abort();
+    const controller = new AbortController();
+    this.advancedStreamAbort = controller;
+
+    while (this.reviewRunId() === runId && !controller.signal.aborted) {
+      let stoppedByEvent = false;
       try {
-        run = await this.runs.getRun(runId);
-      } catch {
-        // A dropped request is not a dropped run. Keep waiting.
+        await this.runs.stream(
+          runId,
+          this.streamCursor.get(runId),
+          (event) => {
+            if (controller.signal.aborted || this.reviewRunId() !== runId) return;
+
+            if (event.type === 'progress') {
+              const visibleOrder = this.phaseOrder();
+              const idx = visibleOrder.indexOf(event.phase);
+              if (idx >= 0) {
+                this.phaseIdx.update((previous) => Math.max(previous, idx));
+                this.phaseMessages.update((previous) => ({
+                  ...previous,
+                  [event.phase]: event.message,
+                }));
+              }
+              return;
+            }
+
+            if (event.type === 'paused') {
+              stoppedByEvent = true;
+              this.openReview(runId, event.gate);
+              return;
+            }
+
+            if (event.type === 'snapshot' && event.status === 'WAITING_FOR_REVIEW' && event.current_gate) {
+              stoppedByEvent = true;
+              this.openReview(runId, event.current_gate);
+              return;
+            }
+
+            if (event.type === 'result') {
+              stoppedByEvent = true;
+              this.reportData.set(event.data);
+              this.screen.set('report');
+              this.finishAdvancedRun(runId);
+              void this.loadHistory();
+              return;
+            }
+
+            if (event.type === 'error') {
+              stoppedByEvent = true;
+              this.errorDetail.set(event.detail || 'The run failed.');
+              const phase = event.phase as Phase | undefined;
+              this.failedPhase.set(
+                phase && ADVANCED_SEARCH_PHASE_ORDER.includes(phase) ? phase : null,
+              );
+              this.screen.set('error');
+              this.finishAdvancedRun(runId);
+            }
+          },
+          (id) => this.streamCursor.advance(runId, id),
+          controller.signal,
+        );
+      } catch (error) {
+        if (controller.signal.aborted || stoppedByEvent || this.reviewRunId() !== runId) return;
+        // A dropped stream says nothing about the run. Reconnect from the last
+        // durable event id instead of presenting it as a backend failure.
+        await new Promise((resolve) => setTimeout(resolve, 750));
         continue;
       }
-      if (run.status === 'WAITING_FOR_REVIEW' && run.current_gate) {
-        this.openReview(runId, run.current_gate);
-        return;
+
+      if (stoppedByEvent || this.reviewRunId() !== runId || controller.signal.aborted) return;
+
+      try {
+        const run = await this.runs.getRun(runId);
+        if (run.status === 'WAITING_FOR_REVIEW' && run.current_gate) {
+          this.openReview(runId, run.current_gate);
+          return;
+        }
+        if (run.status === 'COMPLETED') {
+          this.reportData.set(await this.runs.report(runId));
+          this.screen.set('report');
+          this.finishAdvancedRun(runId);
+          void this.loadHistory();
+          return;
+        }
+        if (run.status === 'FAILED') {
+          this.errorDetail.set(run.failure_detail || 'The run failed.');
+          this.screen.set('error');
+          this.finishAdvancedRun(runId);
+          return;
+        }
+      } catch {
+        // The run row is a recovery check, not the authority for declaring a
+        // failure. The durable stream reconnect below remains the source.
       }
-      if (run.status === 'COMPLETED') {
-        // The STANDARD report screen, the same one a quick search and a run
-        // reopened from History use. One display path, so a durable run cannot
-        // render differently from the report it stored.
-        this.reportData.set(await this.runs.report(runId));
-        this.screen.set('report');
-        return;
-      }
-      if (run.status === 'FAILED') {
-        this.errorDetail.set(run.failure_detail || 'The run failed.');
-        this.screen.set('error');
-        return;
-      }
+      await new Promise((resolve) => setTimeout(resolve, 750));
     }
   }
 
   /** Show the review screen for one gate of one run. */
   openReview(runId: string, gate: StoredGate): void {
+    this.runMode.set('advanced');
     this.reviewRunId.set(runId);
     this.reviewGate.set(gate);
     this.screen.set('review');
   }
 
-  /** Leave the review screen without deciding. The run is untouched: closing a
-   * tab, navigating away and refusing to decide are all the same thing to a
-   * worker that has never heard of this browser. */
-  closeReview(): void {
-    this.reviewRunId.set(null);
-    this.reviewGate.set(null);
-    this.screen.set('submit');
+  activeReviewGate(): string {
+    return this.reviewGate() ?? '';
   }
 
-  /** The approved final report, when one has been fetched. */
+  /** Back at stage one is a cancellation request, not silent abandonment. */
+  requestReviewExit(): void {
+    this.runExitError.set('');
+    this.confirmingRunExit.set(true);
+  }
+
+  keepReviewing(): void {
+    if (!this.cancellingRun()) this.confirmingRunExit.set(false);
+  }
+
+  async cancelCurrentRun(): Promise<void> {
+    const runId = this.reviewRunId();
+    if (!runId || this.cancellingRun()) return;
+    this.cancellingRun.set(true);
+    this.runExitError.set('');
+    try {
+      await this.runs.cancelRun(runId);
+      this.finishAdvancedRun(runId);
+      this.advancedSearchReleased.set(false);
+      this.phaseIdx.set(-1);
+      this.phaseMessages.set({});
+      this.screen.set('submit');
+    } catch (error) {
+      this.runExitError.set(
+        error instanceof Error ? error.message : 'The search could not be cancelled.',
+      );
+    } finally {
+      this.cancellingRun.set(false);
+    }
+  }
+
+  private finishAdvancedRun(runId: string): void {
+    this.advancedStreamAbort?.abort();
+    this.advancedStreamAbort = null;
+    this.streamCursor.clear(runId);
+    const email = this.auth.email();
+    if (email) this.activeRuns.forget(email);
+    this.reviewRunId.set(null);
+    this.reviewGate.set(null);
+    this.confirmingRunExit.set(false);
+  }
 
   /**
    * After a decision commits, **resume watching the run**.
    *
    * The run is `RESUMING`, not running: the executor picks it up on its next
-   * poll. This has to restart `followToGate` for the same run, because that
-   * poller is the only thing that notices the next stage, the completed report
-   * or a failure.
-   *
-   * It used to clear the gate, switch to the running screen and start nothing.
-   * That is the whole bug behind "the user has to refresh after approving":
-   * every subsequent stage existed on the server and nothing in the browser was
-   * looking for it, so the screen sat on a spinner until the user reloaded the
-   * page by hand. Losing the run id here would strand the run just as
-   * effectively, which is why it is captured before the gate is cleared.
+   * stream. Gate A keeps the same editor mounted while the worker proposes the
+   * queries. STRATEGY releases the run into the ordinary execution checklist.
    */
-  afterDecision(): void {
+  afterDecision(gate: WorkflowGate): void {
     const runId = this.reviewRunId();
-    this.reviewGate.set(null);
-    this.screen.set('running');
-    if (runId) void this.followToGate(runId);
+    this.runMode.set('advanced');
+    if (gate === 'STRATEGY') {
+      this.advancedSearchReleased.set(true);
+      this.reviewGate.set(null);
+      this.phaseIdx.set(0);
+      this.phaseMessages.set({});
+      this.screen.set('running');
+    }
+    if (runId) void this.followAdvancedRun(runId);
   }
 
-  /**
-   * Remember which run this account is on, so a reload lands back on it.
-   *
-   * **Namespaced by email** (spec Gate F item 1): two accounts on one browser
-   * must not inherit each other's run. Cleared on sign-out, on any 401, and
-   * whenever the signed-in email changes (item 2).
-   */
-  rememberActiveRun(runId: string): void {
-    const email = this.auth.email();
-    if (email) this.activeRuns.remember(email, runId);
-  }
-
-  /**
-   * Restore the remembered run **after asking the backend whether it exists**.
-   *
-   * Never renders a run from localStorage alone: a 404 clears the key silently
-   * and returns to submit, because the backend answers 404 identically for "no
-   * such run" and "not yours" and this must not try to tell them apart.
-   */
-  async restoreActiveRun(): Promise<void> {
+  /** Cancel the run remembered by the previous page instead of restoring it. */
+  private async cancelRememberedRun(): Promise<void> {
     const email = this.auth.email();
     if (!email) return;
+    const runId = this.activeRuns.peek(email);
+    if (!runId) return;
     try {
-      const run = await this.activeRuns.restore(email);
-      if (!run) return;
-      this.reviewRunId.set(run.run_id);
-      if (run.status === 'WAITING_FOR_REVIEW' && run.current_gate) {
-        this.reviewGate.set(run.current_gate);
-        this.screen.set('review');
-      } else if (run.status === 'COMPLETED') {
-        // **A finished run reopens its report, not a progress bar.** Sending
-        // every non-parked status to 'running' meant that after a restart -- or
-        // any reload once the run was over -- a reviewer was shown "Analyzing
-        // your invention..." with a spinner, for work that had finished and been
-        // approved. That is the same substitution the backend forbids, moved
-        // into the UI: a completed run reported as one still in progress.
-        const report = await this.runs.report(run.run_id);
-        this.reportData.set(report);
-        this.screen.set('report');
-      } else if (run.status === 'FAILED') {
-        // Its own branch for the same reason: a failed run is not a running one,
-        // and the error screen names the failure instead of spinning forever.
-        this.errorDetail.set(run.failure_detail || 'The run failed.');
-        this.screen.set('error');
-      } else {
-        this.screen.set('running');
+      await this.runs.cancelRun(runId);
+      this.activeRuns.forget(email);
+    } catch (error) {
+      if (error instanceof RunApiError && error.status === 404) {
+        this.activeRuns.forget(email);
+        return;
       }
-    } catch {
-      // A transport failure is not proof the run is gone. Stay where we are; the
-      // running screen shows a reconnecting state rather than dropping the run.
+      // Keep the key so a later reload retries the cancellation. The run is
+      // never restored to the screen while that retry is pending.
+      console.warn('Could not cancel the previous run:', error);
     }
+  }
+
+  /** Best-effort early cancellation; startup retries it if delivery is lost. */
+  @HostListener('window:pagehide')
+  cancelRunOnPageExit(): void {
+    const email = this.auth.email();
+    if (!email) return;
+    const runId = this.reviewRunId() ?? this.activeRuns.peek(email);
+    if (runId) void this.runs.cancelRun(runId, true).catch(() => undefined);
   }
   readonly description = signal(EXAMPLE_DESC);
   /** Optional Stage 1 context for a verified run. Empty is a real answer -- the
@@ -575,18 +714,8 @@ export class App {
         // Recents lives in the sidebar now, so history is fetched on sign-in
         // rather than only when the History screen opens.
         if (valid) void this.loadHistory();
-        // And a verified run that is parked at a gate is reopened at that gate.
-        //
-        // Without this call the app signed in, saw a remembered run id in
-        // localStorage, and rendered the submit screen anyway -- so a reviewer
-        // who closed the tab during a review had no way back to the gate, and
-        // the four gate screens were unreachable from the running product even
-        // though every one of them was built and tested.
-        //
-        // `restoreActiveRun` re-fetches the run before rendering anything and
-        // clears the key on a 404, so a stale or foreign id can never put a gate
-        // on screen.
-        if (valid) void this.restoreActiveRun();
+        // Reload is a cancellation boundary: never reopen the old workflow.
+        if (valid) void this.cancelRememberedRun();
       })
       .catch((failure) => {
         // A backend that is merely unreachable is NOT an ended session; keep the
@@ -617,6 +746,7 @@ export class App {
     this.failedPhase.set(null);
     this.phaseIdx.set(-1);
     this.phaseMessages.set({});
+    this.runMode.set('quick');
     this.cameFromHistory = false;
     this.openEntryId.set(null);
     this.screen.set('submit');
@@ -711,6 +841,7 @@ export class App {
   async startRunning() {
     if (!this.description().trim()) return;
 
+    this.runMode.set('quick');
     this.screen.set('running');
     this.phaseIdx.set(-1);
     this.phaseMessages.set({});
@@ -731,9 +862,9 @@ export class App {
         { description: this.description(), claims: '' },
         (event: StreamEvent) => {
           if (event.type === 'progress') {
-            const idx = (PHASE_ORDER as readonly string[]).indexOf(event.phase);
+            const idx = QUICK_SEARCH_PHASE_ORDER.indexOf(event.phase);
             if (idx >= 0) {
-              lastPhase = PHASE_ORDER[idx];
+              lastPhase = QUICK_SEARCH_PHASE_ORDER[idx];
               this.phaseIdx.update((previous) => Math.max(previous, idx));
               this.phaseMessages.update((previous) => ({
                 ...previous,
@@ -797,5 +928,14 @@ export class App {
       this.failedPhase.set(lastPhase);
       this.screen.set('error');
     }
+  }
+
+  /** Retry the branch that failed; an Advanced Search must never become Quick. */
+  retryFailedRun(): void {
+    if (this.runMode() === 'advanced') {
+      void this.startVerifiedRun();
+      return;
+    }
+    void this.startRunning();
   }
 }

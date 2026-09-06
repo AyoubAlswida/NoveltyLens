@@ -64,6 +64,7 @@ __all__ = [
     "get_run",
     "list_runs",
     "list_events",
+    "cancel_run",
     "transition_status",
     "begin_resume",
     "_system_get_run",
@@ -159,6 +160,40 @@ def list_events(
     """
     get_run(conn, run_id=run_id, actor_email=actor_email)
     return read_events(conn, run_id=run_id, after_sequence=after_sequence, limit=limit)
+
+
+def cancel_run(
+    conn: psycopg.Connection, *, run_id: str, actor_email: str
+) -> bool:
+    """Delete one owned, non-terminal run and fence any worker holding it.
+
+    The run row is locked before its status is inspected. Deleting it cascades
+    to its permanent lease row, so the next heartbeat fences a worker that was
+    between external calls. An external request already in flight may return,
+    but without the run and lease its result cannot be committed.
+
+    Completed and failed runs are retained: refreshing a finished report must
+    not erase history. Returns ``True`` only when a live run was removed.
+    """
+    with conn.transaction():
+        row = conn.execute(
+            """
+            SELECT status
+              FROM verification_runs
+             WHERE id = %s AND created_by = %s
+             FOR UPDATE
+            """,
+            (run_id, actor_email),
+        ).fetchone()
+        if row is None:
+            raise RunNotFoundError(f"run {run_id} not found")
+        if RunStatus(row[0]) in (RunStatus.COMPLETED, RunStatus.FAILED):
+            return False
+        conn.execute(
+            "DELETE FROM verification_runs WHERE id = %s AND created_by = %s",
+            (run_id, actor_email),
+        )
+    return True
 
 
 def get_terminal_event(

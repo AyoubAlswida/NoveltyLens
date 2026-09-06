@@ -2,8 +2,8 @@
 
 The worker is a **second workload**, not a thread inside the API. In production
 it runs alongside the FastAPI deployment: the API admits runs and commits human
-decisions, this process executes them. A client disconnect never reaches it,
-because it has never heard of the HTTP connection.
+decisions, this process executes them. Cancellation reaches it by deleting the
+run's lease, not by coupling it to an HTTP connection.
 
 Two refusals matter more than anything else it does, and both are here:
 
@@ -24,6 +24,13 @@ from config import ConfigError, settings, validate_lease_configuration
 from workflow import worker
 
 BACKEND = Path(__file__).resolve().parent.parent
+
+
+def test_compose_starts_the_worker_as_a_permanent_service():
+    compose = (BACKEND.parent / "docker-compose.yml").read_text(encoding="utf-8")
+    worker_block = compose.split("  worker:", 1)[1].split("\n  frontend:", 1)[0]
+    assert 'command: ["python", "-m", "workflow.worker"]' in worker_block
+    assert "restart: unless-stopped" in worker_block
 
 
 # --- startup validation ---------------------------------------------------

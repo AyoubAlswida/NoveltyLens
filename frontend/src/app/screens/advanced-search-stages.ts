@@ -11,6 +11,7 @@ import { FormsModule } from '@angular/forms';
 import { Icon } from '../shared/icon';
 import { GateShell, GateState, classify } from './gate-shell';
 import { RunApiError, RunsService } from '../services/runs';
+import type { WorkflowGate } from '../models/report';
 
 /** One editable row. `key` is for `@for` tracking only and is never sent. */
 export interface DraftRow {
@@ -36,7 +37,7 @@ export const TOTAL_STAGES = 3;
 export const STAGE_RULES: Record<string, string[]> = {
   A: [
     'a non-empty technical summary',
-    'at least one technical element with text in it',
+    'at least one technical limitation with text in it',
   ],
   STRATEGY: [
     'at least one search with terms in it',
@@ -47,10 +48,10 @@ export const STAGE_RULES: Record<string, string[]> = {
  * **Advanced Search: three stages, two approvals, one screen.**
  *
  * A standard prior-art search preceded by guided editing. The system proposes a
- * technical summary and a flat list of technical elements; the user edits and
- * approves them; the system proposes search queries; the user edits and approves
- * those; the approved queries are then executed by the ordinary search pipeline
- * and the ordinary report is displayed.
+ * technical summary and a focused flat list of searchable technical
+ * limitations; the user edits and approves them; the system proposes search
+ * queries; the user edits and approves those; the approved queries are then
+ * executed by the ordinary search pipeline and the ordinary report is displayed.
  *
  * It performs **no** evidence verification, makes **no** legal conclusion, and
  * presents **no** numeric score.
@@ -140,18 +141,19 @@ export const STAGE_RULES: Record<string, string[]> = {
 
         @case (2) {
           <section class="stage-pane" aria-labelledby="stage2-heading">
-            <h2 id="stage2-heading">The technical elements to search for</h2>
+            <h2 id="stage2-heading">The technical limitations to search for</h2>
             <p class="pane-note">
-              Each line is one technical element of the invention. Edit them, add
-              what is missing, and remove anything that is not part of what you
-              are claiming.
+              Each line should be one searchable technical limitation, not a
+              single generic component. Keep interacting parts, triggers, and
+              conditions together. Aim for 4–7 focused limitations; use fewer
+              rather than adding something the invention does not claim.
             </p>
 
             <ul class="draft-list">
               @for (row of elements(); track row.key; let i = $index) {
                 <li class="draft-row">
                   <label class="sr-only" [attr.for]="'element-' + row.key">
-                    Technical element {{ i + 1 }}
+                    Technical limitation {{ i + 1 }}
                   </label>
                   <input
                     class="draft-input"
@@ -163,18 +165,18 @@ export const STAGE_RULES: Record<string, string[]> = {
                     class="draft-remove"
                     type="button"
                     (click)="removeRow(elements, row.key)"
-                    [attr.aria-label]="'Remove technical element ' + (i + 1)"
+                    [attr.aria-label]="'Remove technical limitation ' + (i + 1)"
                   >
                     <app-icon name="Trash2" [size]="16" />
                   </button>
                 </li>
               } @empty {
-                <li class="empty-state">No technical elements yet. Add the first one.</li>
+                <li class="empty-state">No technical limitations yet. Add the first one.</li>
               }
             </ul>
 
             <button class="btn-outlined" type="button" (click)="addRow(elements, 'E')">
-              <app-icon name="Plus" [size]="16" /> Add element
+              <app-icon name="Plus" [size]="16" /> Add limitation
             </button>
           </section>
         }
@@ -183,9 +185,9 @@ export const STAGE_RULES: Record<string, string[]> = {
           <section class="stage-pane" aria-labelledby="stage3-heading">
             <h2 id="stage3-heading">The searches that will run</h2>
             <p class="pane-note">
-              These are the searches this run will perform. Edit them, add your
-              own, and remove any that are not worth running. Approving this step
-              starts the search.
+              These searches combine the approved limitations from different
+              technical angles. Edit them, add your own, and remove any that are
+              not worth running. Approving this step starts the search.
             </p>
 
             <ul class="draft-list">
@@ -238,16 +240,7 @@ export class AdvancedSearchStages {
   /** Which gate the run is actually parked at, which decides where we land. */
   readonly gate = input.required<string>();
   readonly back = output<void>();
-  readonly resumed = output<void>();
-
-  /**
-   * How long to wait between polls for the proposed queries.
-   *
-   * An input purely so a test can set it to zero. The backend's retry policies
-   * take an injectable sleeper for the same reason: a suite that genuinely
-   * sleeps is a suite people stop running.
-   */
-  readonly pollIntervalMs = input<number>(1000);
+  readonly resumed = output<WorkflowGate>();
 
   readonly TOTAL_STAGES = TOTAL_STAGES;
 
@@ -335,7 +328,7 @@ export class AdvancedSearchStages {
       case 1:
         return 'Review the understanding';
       case 2:
-        return 'Edit the technical elements';
+        return 'Edit the technical limitations';
       default:
         return 'Edit and approve the searches';
     }
@@ -385,7 +378,7 @@ export class AdvancedSearchStages {
       problems.push('The technical summary cannot be empty.');
     }
     if (this.stage() === 2 && !this.nonEmpty(this.elements()).length) {
-      problems.push('At least one technical element is needed.');
+      problems.push('At least one technical limitation is needed.');
     }
     if (this.stage() === 3 && !this.nonEmpty(this.queries()).length) {
       problems.push('At least one search is needed.');
@@ -434,12 +427,6 @@ export class AdvancedSearchStages {
           this.actionKey('understanding'),
         ),
       );
-      // The approval committed; the worker now proposes the queries. This
-      // component waits for them and walks the reviewer on to stage 3 itself,
-      // rather than handing back to the shell and being remounted -- a remount
-      // would drop the stage 1 and 2 drafts, and walking back to re-read what
-      // you just approved is the ordinary thing to want to do.
-      if (this.state() === 'resuming') await this.awaitStrategy();
       return;
     }
 
@@ -450,41 +437,6 @@ export class AdvancedSearchStages {
         this.actionKey('strategy'),
       ),
     );
-  }
-
-  /**
-   * Wait for the worker to propose the search queries, then show stage 3.
-   *
-   * Polling, because the strategy is proposed by a worker in another process:
-   * there is nothing to await locally. Bounded rather than indefinite, and a
-   * timeout leaves the run alone -- it is executing perfectly well, and the
-   * reviewer can reopen it. `resuming` stays on screen throughout, which is
-   * what it means: the decision is committed and the run is continuing.
-   */
-  private async awaitStrategy(): Promise<void> {
-    for (let attempt = 0; attempt < 300; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs()));
-      try {
-        const run = await this.runs.getRun(this.runId());
-        if (run.current_gate === 'STRATEGY') {
-          const payload = await this.runs.gateStrategy(this.runId());
-          this.queries.set(
-            ((payload['queries'] as string[]) ?? []).map((q) => this.row(q)),
-          );
-          this.stage.set(3);
-          this.state.set('review');
-          return;
-        }
-        if (run.status === 'COMPLETED' || run.status === 'FAILED') {
-          // The run finished without pausing again. Hand back to the shell,
-          // which renders the report or the failure.
-          this.resumed.emit();
-          return;
-        }
-      } catch {
-        // A dropped request is not a dropped run. Keep waiting.
-      }
-    }
   }
 
   /**
@@ -509,14 +461,11 @@ export class AdvancedSearchStages {
       await send();
       this.state.set('resuming');
       if (action === 'understanding') {
-        // **Deliberately silent.** Emitting `resumed` here would hand back to
-        // the shell, which would remount this component at the strategy gate and
-        // drop the stage 1 and 2 drafts with it. The component carries the
-        // reviewer through to stage 3 itself and hands back only at the end.
         this.understandingApproved.set(true);
+        this.resumed.emit('A');
         return;
       }
-      this.resumed.emit();
+      this.resumed.emit('STRATEGY');
     } catch (error) {
       const next = classify(error, this.detail);
       if (next === 'blocked' && error instanceof RunApiError) {

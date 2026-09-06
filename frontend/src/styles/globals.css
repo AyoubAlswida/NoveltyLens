@@ -2691,6 +2691,33 @@ button {
 
 .mono { font-family: var(--font-mono); }
 
+/* Leaving the first review cancels a live durable run, so it is confirmed in
+   the app instead of silently stranding work at a gate. */
+.run-exit-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: rgba(7, 22, 45, 0.52);
+}
+
+.run-exit-dialog {
+  width: min(100%, 480px);
+  padding: 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--card);
+  color: var(--fg);
+  box-shadow: var(--shadow);
+}
+
+.run-exit-dialog h2 { margin: 0 0 0.625rem; }
+.run-exit-dialog p { margin: 0; color: var(--muted); }
+.run-exit-actions { display: flex; gap: 0.75rem; margin-top: 1.25rem; }
+.run-exit-error { margin-top: 0.75rem !important; color: var(--risk-high, #c0392b) !important; }
+
 /* --- dark counterparts, one per state class above ----------------------- */
 :root[data-theme="dark"] .review-editor,
 :root[data-theme="dark"] .add-row input {
@@ -2707,3 +2734,8 @@ button {
 }
 :root[data-theme="dark"] .field-error { color: #ff8a7a; }
 :root[data-theme="dark"] .field-note { color: var(--teal-70); }
+:root[data-theme="dark"] .run-exit-backdrop { background: rgba(0, 0, 0, 0.72); }
+:root[data-theme="dark"] .run-exit-dialog {
+  background: var(--card); border-color: var(--border); box-shadow: none;
+}
+:root[data-theme="dark"] .run-exit-error { color: #ff8a7a !important; }

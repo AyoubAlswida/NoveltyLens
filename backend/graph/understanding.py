@@ -13,6 +13,8 @@ for, and prior art retrieved with it would be presented as though it were.
 from graph.events import emit_progress
 from graph.state import GraphState
 from llm import understand_invention
+from models import InventionAnalysis
+from workflow.types import UnapprovedArtifactError
 
 
 def understand_node(state: GraphState) -> dict:
@@ -56,3 +58,58 @@ def expand_queries_node(state: GraphState) -> dict:
     queries = state["analysis"].queries
     emit_progress("queries", f"Generated {len(queries)} AI search queries", count=len(queries), queries=queries)
     return {"queries": queries}
+
+
+def prepare_approved_search_node(state: GraphState) -> dict:
+    """Build the shared search inputs from the two human-approved artifacts.
+
+    Advanced Search has already paid for a reviewed technical summary, reviewed
+    limitations, and reviewed queries. Running ``understand_invention`` before
+    those reviews duplicated the work, generated queries nobody would use, and
+    made the progress screen claim the search plan existed before the reviewer
+    approved what the invention meant.
+
+    This node performs no model call and emits no progress phase. It preserves
+    the ordinary downstream contract by constructing ``InventionAnalysis`` and
+    ``invention_text`` from approved text only. Missing approved input fails
+    loudly; raw or candidate text is never substituted for an approval.
+    """
+    summary = str(state.get("approved_summary") or "").strip()
+    approved = state.get("approved_decomposition") or {}
+    queries = [str(query).strip() for query in (state.get("queries") or ()) if str(query).strip()]
+
+    limitations = [
+        str(element.get("text") or "").strip()
+        for feature in (approved.get("features") or ())
+        for element in (feature.get("elements") or ())
+        if str(element.get("text") or "").strip()
+    ]
+    if not summary:
+        raise UnapprovedArtifactError(
+            "Advanced Search cannot start without the approved technical summary"
+        )
+    if not limitations:
+        raise UnapprovedArtifactError(
+            "Advanced Search cannot start without approved technical limitations"
+        )
+    if not queries:
+        raise UnapprovedArtifactError(
+            "Advanced Search cannot start without approved search queries"
+        )
+
+    description = str(state.get("description") or "").strip()
+    claims = str(state.get("claims") or "").strip()
+    invention_text = "\n\n".join(
+        part for part in (description, claims, summary, *limitations) if part
+    )
+    return {
+        "analysis": InventionAnalysis(
+            queries=queries,
+            keywords=[],
+            concepts=limitations,
+        ),
+        "invention_text": invention_text,
+    }
+
+
+__all__ = ["expand_queries_node", "prepare_approved_search_node", "understand_node"]

@@ -125,6 +125,16 @@ describe('RunsService', () => {
     }
   });
 
+  it('cancels a run with DELETE and preserves keepalive for page exit', async () => {
+    auth.responder = () => new Response(null, { status: 204 });
+
+    await runs.cancelRun('r1', true);
+
+    expect(auth.calls[0].url).toContain('/api/runs/r1');
+    expect(auth.calls[0].init.method).toBe('DELETE');
+    expect(auth.calls[0].init.keepalive).toBe(true);
+  });
+
   it('sends the reconnection cursor as a query parameter, not a header', async () => {
     // The browser will not send `Last-Event-ID` for a raw fetch, so the client
     // must carry it itself -- which is why the backend accepts both forms.
@@ -205,31 +215,16 @@ describe('ActiveRunStore', () => {
     expect(localStorage.getItem('novelty-lens-active-run:b@example.invalid')).toBe('run-b');
   });
 
-  it('verifies the run with the backend before returning it', async () => {
+  it('exposes the remembered id for cancellation without fetching the run', () => {
     store.remember('a@example.invalid', 'run-a');
-    auth.responder = () => json({ run_id: 'run-a', status: 'WAITING_FOR_REVIEW' });
-
-    const run = await store.restore('a@example.invalid');
-    expect(run?.run_id).toBe('run-a');
-    expect(auth.calls[0].url).toContain('/api/runs/run-a');
+    expect(store.peek('a@example.invalid')).toBe('run-a');
+    expect(auth.calls).toHaveLength(0);
   });
 
-  it('clears the key silently when the run is gone or not ours', async () => {
+  it('forgets a remembered run explicitly after cancellation', () => {
     store.remember('a@example.invalid', 'run-a');
-    auth.responder = () => json({ code: 'RUN_NOT_FOUND', detail: 'no' }, 404);
-
-    expect(await store.restore('a@example.invalid')).toBeNull();
+    store.forget('a@example.invalid');
     expect(localStorage.getItem('novelty-lens-active-run:a@example.invalid')).toBeNull();
-  });
-
-  it('keeps the key when the failure is transport, not a 404', async () => {
-    // A dropped connection is not proof the run is gone. Dropping the key here
-    // would lose a paused run over a flaky network.
-    store.remember('a@example.invalid', 'run-a');
-    auth.responder = () => json({ code: 'X', detail: 'boom' }, 503);
-
-    await expect(store.restore('a@example.invalid')).rejects.toBeTruthy();
-    expect(localStorage.getItem('novelty-lens-active-run:a@example.invalid')).toBe('run-a');
   });
 
   it('forgets every account when the signed-in identity changes', () => {
@@ -240,7 +235,7 @@ describe('ActiveRunStore', () => {
     expect(localStorage.getItem('novelty-lens-active-run:b@example.invalid')).toBeNull();
   });
 
-  it('returns null when nothing was ever remembered', async () => {
-    expect(await store.restore('nobody@example.invalid')).toBeNull();
+  it('returns null when nothing was ever remembered', () => {
+    expect(store.peek('nobody@example.invalid')).toBeNull();
   });
 });

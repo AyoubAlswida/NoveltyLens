@@ -185,12 +185,12 @@ def select_passages(
     takes the head. It **never pads**: a set of two comes back as a set of two.
 
     ``retrieval_floor`` defaults to ``None`` - no floor - on purpose. Spec section
-    16 decision 6 records that the floor cannot be set yet: it depends on the
-    Qdrant / Qwen3-Embedding-4B recalibration CLAUDE.md already flags as
-    outstanding, and the 0.6 constant in ``search/vector_store.py`` was measured
-    against bge-large. Inventing a number here would be exactly the fabricated
-    constant that decision is holding open, so the caller supplies one or there
-    is none.
+    16 decision 6 records that the floor cannot be set yet. The 0.6 constant in
+    ``search/vector_store.py`` is calibrated for whole-patent Qdrant retrieval;
+    it has not been established as a passage-level verification floor. Reusing
+    it here would be exactly the fabricated constant that decision is holding
+    open, so the caller supplies an independently calibrated value or there is
+    none.
 
     A floor supplied with no scores drops everything, and that is the intended
     direction: a passage whose score is unknown has not been shown to clear the

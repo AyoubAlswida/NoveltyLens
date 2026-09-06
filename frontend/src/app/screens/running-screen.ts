@@ -1,6 +1,6 @@
 import { Component, ChangeDetectionStrategy, input, computed } from '@angular/core';
 import { Icon } from '../shared/icon';
-import { Phase, PHASE_ORDER, PHASE_LABELS, PHASE_ICONS } from '../models/report';
+import { Phase, PHASE_LABELS, PHASE_ICONS } from '../models/report';
 
 @Component({
   selector: 'app-running-screen',
@@ -10,10 +10,7 @@ import { Phase, PHASE_ORDER, PHASE_LABELS, PHASE_ICONS } from '../models/report'
     <div class="screen screen-scroll">
       <section class="intro-copy running-intro">
         <h1>Analyzing your invention</h1>
-        <p>
-          This can take a couple of minutes &mdash; several uncached LLM and embedding calls run in
-          sequence.
-        </p>
+        <p>This can take a couple of minutes.</p>
       </section>
 
       <section class="progress-card glass-card" aria-live="polite">
@@ -34,18 +31,19 @@ import { Phase, PHASE_ORDER, PHASE_LABELS, PHASE_ICONS } from '../models/report'
           </div>
         }
       </section>
-
     </div>
   `,
 })
 export class RunningScreen {
   readonly phaseIdx = input.required<number>();
   readonly phaseMessages = input.required<Partial<Record<Phase, string>>>();
+  readonly phaseOrder = input.required<readonly Phase[]>();
 
   readonly steps = computed(() => {
     const activeIndex = Math.max(this.phaseIdx(), 0);
     const messages = this.phaseMessages();
-    return PHASE_ORDER.map((phase, index) => {
+    const phaseOrder = this.phaseOrder();
+    return phaseOrder.map((phase, index) => {
       const complete = index < activeIndex;
       const active = index === activeIndex;
       return {
@@ -54,7 +52,7 @@ export class RunningScreen {
         label: messages[phase] || PHASE_LABELS[phase],
         complete,
         active,
-        last: index === PHASE_ORDER.length - 1,
+        last: index === phaseOrder.length - 1,
         status: complete ? 'complete' : active ? 'active' : 'pending',
       };
     });

@@ -102,6 +102,23 @@ services:
       qdrant:
         condition: service_healthy
 
+  worker:
+    build:
+      context: ./backend
+    container_name: agenticai-worker
+    restart: unless-stopped
+    command: ["python", "-m", "workflow.worker"]
+    env_file:
+      - backend/.env
+    environment:
+      DATABASE_URL: postgresql://agenticai:agenticai@postgres:5432/agenticai
+      QDRANT_URL: http://qdrant:6333
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+
   frontend:
     build:
       context: ./frontend

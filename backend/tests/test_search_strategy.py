@@ -49,7 +49,7 @@ def _query(query_id="Q1", text="graphene oxide membrane", covers=("F1.E1",), ena
 
 
 def test_the_strategy_stage_sits_between_the_approved_understanding_and_the_search():
-    """`gate_a -> propose_strategy -> gate_strategy -> search_orchestrator`.
+    """Approved queries are prepared before the shared search pipeline.
 
     Nothing is dispatched to a provider until a person has approved both what the
     invention is and what will be searched for.
@@ -59,7 +59,8 @@ def test_the_strategy_stage_sits_between_the_approved_understanding_and_the_sear
     edges = {(edge.source, edge.target) for edge in build_graph().get_graph().edges}
     assert ("gate_a", "propose_strategy") in edges
     assert ("propose_strategy", "gate_strategy") in edges
-    assert ("gate_strategy", "search_orchestrator") in edges
+    assert ("gate_strategy", "prepare_approved_search") in edges
+    assert ("prepare_approved_search", "search_orchestrator") in edges
 
 
 def test_an_approved_strategy_leads_to_the_search_and_nowhere_else():
@@ -75,7 +76,7 @@ def test_an_approved_strategy_leads_to_the_search_and_nowhere_else():
     graph = build_graph().get_graph()
     edges = {(edge.source, edge.target) for edge in graph.edges}
     out_of_gate = {target for source, target in edges if source == "gate_strategy"}
-    assert out_of_gate == {"search_orchestrator"}
+    assert out_of_gate == {"prepare_approved_search"}
     assert "regenerate_strategy" not in set(graph.nodes)
 
 
@@ -94,9 +95,9 @@ def test_a_read_failure_takes_the_branch_that_does_the_work():
 def test_a_search_only_run_never_reaches_the_strategy_stage():
     """The stage is on the verified branch only. A search-only run traverses
     exactly the nodes it did before, which the SSE contract depends on."""
-    from graph.pipeline import _route_after_understanding
+    from graph.pipeline import _route_from_start
 
-    assert _route_after_understanding({"advanced_search": False}) == "search_orchestrator"
+    assert _route_from_start({"advanced_search": False}) == "understand"
 
 
 def test_the_gate_refuses_to_pause_a_run_it_cannot_be_resumed_for():
@@ -115,6 +116,42 @@ def test_the_proposing_node_refuses_an_unapproved_understanding():
 
     with pytest.raises(UnapprovedArtifactError):
         propose_strategy_node({"candidate_decomposition": {"features": [{"feature_id": "F1"}]}})
+
+
+def test_the_strategy_prompt_combines_approved_limitations_instead_of_isolating_them():
+    import llm
+
+    captured = {}
+
+    def capture(prompt, **kwargs):
+        captured["prompt"] = prompt
+        return {
+            "queries": [{
+                "query_id": "Q1",
+                "query_text": "flow-triggered membrane cleaning sensor",
+                "rationale": "Looks for the approved combination.",
+                "covered_element_ids": ["F1.E1", "F1.E2"],
+            }]
+        }
+
+    features = [{
+        "feature_id": "F1",
+        "feature_version": "1",
+        "feature_text": "searchable technical limitations",
+        "elements": [
+            {"element_id": "E1", "text": "a flow sensor detecting membrane fouling", "core": True, "order": 1},
+            {"element_id": "E2", "text": "cleaning triggered when flow drops", "core": True, "order": 2},
+        ],
+        "relationships": [],
+    }]
+
+    with patch.object(llm, "_llm_json", side_effect=capture):
+        llm.propose_search_strategy("a self-cleaning filter", features)
+
+    prompt = captured["prompt"]
+    assert "Most queries must combine 2 or 3 compatible approved limitations" in prompt
+    assert "Do not turn each limitation into an isolated one-line query" in prompt
+    assert "between 4 and 10 words" in prompt
 
 
 # =========================================================================

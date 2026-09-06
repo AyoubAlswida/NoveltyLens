@@ -28,7 +28,7 @@ from evidence.eligibility import ExclusionState
 from evidence.passages import build_passages
 from graph import evidence_nodes
 from graph import verification_nodes
-from graph.events import PHASES
+from graph.events import ADVANCED_SEARCH_PHASES, PHASES, QUICK_SEARCH_PHASES
 from graph.pipeline import run_graph_pipeline
 from graph.verification_nodes import (
     MATRIX_CELL_CAP,
@@ -250,6 +250,29 @@ def test_the_backend_and_frontend_phase_lists_agree():
     # hides real work. Both directions are wrong, and this assertion checks both.
     disabled = {"semantic_search", "fuse"}
     assert set(PHASES) - disabled == frontend
+
+
+def test_each_frontend_checklist_matches_its_backend_route():
+    """The two graph branches need two chronological checklists."""
+    from pathlib import Path
+
+    report = (
+        Path(__file__).resolve().parent.parent.parent
+        / "frontend" / "src" / "app" / "models" / "report.ts"
+    ).read_text(encoding="utf-8")
+
+    advanced_block = report.split(
+        "export const ADVANCED_SEARCH_PHASE_ORDER: readonly Phase[] = [", 1
+    )[1].split("];", 1)[0]
+    quick_block = report.split(
+        "export const QUICK_SEARCH_PHASE_ORDER: readonly Phase[] = [", 1
+    )[1].split("];", 1)[0]
+
+    def phases(block: str) -> tuple[str, ...]:
+        return tuple(re.findall(r"'([a-z_]+)'", block))
+
+    assert phases(quick_block) == QUICK_SEARCH_PHASES
+    assert phases(advanced_block) == ADVANCED_SEARCH_PHASES
 
 
 # --- the nodes are thin wrappers -------------------------------------------
@@ -600,17 +623,17 @@ def test_the_validated_result_itself_refuses_collection_mutation():
         machine.elements[0].evidence.append(object())
 
 
-# --- the mock serves a matrix, free ----------------------------------------
+# --- the mock serves the guided search, free -------------------------------
 
 
-def test_run_mock_serves_a_verification_matrix_with_no_outbound_http():
-    """`run_mock.py`'s doubles cover the whole verified branch, so the UI work
-    Gate D needs costs nothing."""
+def test_run_mock_serves_guided_search_with_no_outbound_http():
+    """`run_mock.py` follows the live flat-limitation proposal without HTTP."""
     from run_mock import _mock_decomposition, _mock_llm_chat
 
     decomposition = json.loads(_mock_decomposition())
-    assert len(decomposition["features"]) == 2
-    assert decomposition["features"][0]["elements"]
+    assert len(decomposition["features"]) == 1
+    assert len(decomposition["features"][0]["elements"]) == 4
+    assert decomposition["features"][0]["relationships"] == []
 
     import llm as llm_module
 
@@ -995,8 +1018,8 @@ def test_the_matrix_node_spawns_no_executor_or_thread_pool():
 
 
 def test_the_retrieval_floor_is_passed_explicitly_and_is_none():
-    """§16 decision 6 blocks the floor on the Qdrant/Qwen3-Embedding-4B
-    recalibration. Passing it **explicitly** matters: relying on
+    """§16 decision 6 blocks the uncalibrated passage-level floor. Passing it
+    **explicitly** matters: relying on
     `verify_feature_disclosure`'s own default would mean a later change to that
     default silently altered what this run evaluated."""
     captured = {}

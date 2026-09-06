@@ -45,7 +45,11 @@ from graph.searching import (
     # semantic_search_node,  # TEMP: disabled - see module docstring above
 )
 from graph.state import GraphState
-from graph.understanding import expand_queries_node, understand_node
+from graph.understanding import (
+    expand_queries_node,
+    prepare_approved_search_node,
+    understand_node,
+)
 from graph.validation import validate_node
 from graph.gates import gate_a_node, gate_strategy_node
 from graph.strategy import propose_strategy_node
@@ -70,16 +74,15 @@ def _route_after_validate(state: GraphState) -> str:
     return "rank" if state["candidates"] else END
 
 
-def _route_after_understanding(state: GraphState) -> str:
-    """The one branch that separates a search-only run from a verified one.
+def _route_from_start(state: GraphState) -> str:
+    """Send each search mode to the first piece of work it actually needs.
 
-    A search-only run goes straight to `search_orchestrator` and traverses
-    **exactly** the nodes it did before this gate existed, emitting exactly the
-    phases it emitted before. That is asserted rather than assumed: the SSE
-    contract is live production behaviour that a browser depends on, and this
-    gate's whole job was to add a branch beside it, not through it.
+    Quick Search needs the one-shot understanding call. Advanced Search starts
+    with the reviewable proposal instead: running Quick Search understanding and
+    query expansion first generated throwaway queries and put unrelated progress
+    in front of the first review gate.
     """
-    return "decompose" if state.get("advanced_search") else "search_orchestrator"
+    return "decompose" if state.get("advanced_search") else "understand"
 
 
 def _assemble() -> StateGraph:
@@ -92,10 +95,11 @@ def _assemble() -> StateGraph:
     same phases, which is what keeps today's SSE stream byte-identical.
 
     **An Advanced Search run rejoins the ordinary pipeline and ends with it.**
-    After `gate_strategy` it runs `search_orchestrator -> keyword_search ->
-    validate -> rank -> explain` and terminates, exactly as a search-only run
-    does. Gates B, C and D, the evidence layer and the draft report were removed
-    from this topology when feature verification was withdrawn from the product.
+    After `gate_strategy`, `prepare_approved_search` converts the reviewed
+    summary, limitations, and queries into the ordinary search state without an
+    LLM call. It then runs `search_orchestrator -> keyword_search -> validate ->
+    rank -> explain` and terminates. Gates B, C and D, the evidence layer and the
+    draft report were removed when feature verification was withdrawn.
 
     They are **removed, not commented out.** The `# TEMP: disabled` style below
     is reserved for the semantic-search trio, which is genuinely coming back;
@@ -124,13 +128,13 @@ def _assemble() -> StateGraph:
     builder.add_node("rank", rank_node)
     builder.add_node("explain", explain_node)
 
-    builder.add_edge(START, "understand")
-    builder.add_edge("understand", "expand_queries")
     builder.add_conditional_edges(
-        "expand_queries",
-        _route_after_understanding,
-        {"decompose": "decompose", "search_orchestrator": "search_orchestrator"},
+        START,
+        _route_from_start,
+        {"decompose": "decompose", "understand": "understand"},
     )
+    builder.add_edge("understand", "expand_queries")
+    builder.add_edge("expand_queries", "search_orchestrator")
     builder.add_edge("search_orchestrator", "keyword_search")
     # builder.add_edge("search_orchestrator", "semantic_search")  # TEMP: disabled
     # TEMP: disabled along with semantic_search and fuse (see node registrations
@@ -173,6 +177,7 @@ def _assemble() -> StateGraph:
     builder.add_node("gate_a", gate_a_node)
     builder.add_node("propose_strategy", propose_strategy_node)
     builder.add_node("gate_strategy", gate_strategy_node)
+    builder.add_node("prepare_approved_search", prepare_approved_search_node)
 
     # Gate A sits between the machine proposing an understanding and the search
     # that uses it, so nothing is searched for against elements nobody approved.
@@ -192,10 +197,11 @@ def _assemble() -> StateGraph:
     # the approved strategy. `search_orchestrator` is reachable from nowhere else
     # on this branch, which is what makes "no provider call before both
     # approvals" a property of the graph rather than a convention -- the node has
-    # exactly two incoming edges, `expand_queries` and `gate_strategy`, and
-    # `tests/test_workflow_gates.py` asserts that count by name.
+    # exactly two incoming edges, `expand_queries` and `prepare_approved_search`,
+    # and `tests/test_workflow_gates.py` asserts that count by name.
     builder.add_edge("propose_strategy", "gate_strategy")
-    builder.add_edge("gate_strategy", "search_orchestrator")
+    builder.add_edge("gate_strategy", "prepare_approved_search")
+    builder.add_edge("prepare_approved_search", "search_orchestrator")
 
     return builder
 
@@ -216,8 +222,8 @@ def build_graph():
 
     **No checkpointer is needed and none is used.** `interrupt()` requires one,
     and the only nodes that call it are the four gates -- which a search-only run
-    never reaches, because `_route_after_understanding` sends it straight to
-    `search_orchestrator`. A verified run on this compilation would fail at the
+    never reaches, because `_route_from_start` sends it through the Quick Search
+    branch only. A verified run on this compilation would fail at the
     first gate rather than pause silently, which is the correct direction to
     fail: `POST /api/analyze/stream` cannot admit a verified run at all.
     """

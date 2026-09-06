@@ -355,6 +355,77 @@ def test_admission_requires_a_description(client):
     assert response.status_code == 422
 
 
+def test_an_owner_can_cancel_a_live_run(client, pg, make_run):
+    run_id = make_run(created_by=OWNER)
+
+    response = client.delete(f"/api/runs/{run_id}", headers=auth())
+
+    assert response.status_code == 204
+    assert pg.execute(
+        "SELECT 1 FROM verification_runs WHERE id = %s", (run_id,)
+    ).fetchone() is None
+    assert pg.execute(
+        "SELECT 1 FROM run_leases WHERE run_id = %s", (run_id,)
+    ).fetchone() is None
+
+
+def test_cancelling_a_running_run_fences_its_worker(client, pg, make_run):
+    run_id = make_run(created_by=OWNER)
+    token = lease.acquire(pg, run_id=run_id, owner_id=WORKER, ttl_seconds=TTL)
+    assert token is not None
+    store.transition_status(
+        pg,
+        run_id=run_id,
+        owner_id=WORKER,
+        fence_token=token,
+        expected_from=(RunStatus.QUEUED,),
+        to_status=RunStatus.RUNNING,
+    )
+
+    response = client.delete(f"/api/runs/{run_id}", headers=auth())
+
+    assert response.status_code == 204
+    assert not lease.heartbeat(
+        pg,
+        run_id=run_id,
+        owner_id=WORKER,
+        fence_token=token,
+        ttl_seconds=TTL,
+    )
+
+
+def test_cancel_keeps_a_terminal_run_in_history(client, pg, make_run):
+    run_id = make_run(created_by=OWNER)
+    token = lease.acquire(pg, run_id=run_id, owner_id=WORKER, ttl_seconds=TTL)
+    assert token is not None
+    events.finalize_run_failure(
+        pg,
+        run_id=run_id,
+        owner_id=WORKER,
+        fence_token=token,
+        payload={"detail": "The provider failed."},
+        failure_code="PROVIDER_ERROR",
+    )
+
+    response = client.delete(f"/api/runs/{run_id}", headers=auth())
+
+    assert response.status_code == 204
+    assert pg.execute(
+        "SELECT status FROM verification_runs WHERE id = %s", (run_id,)
+    ).fetchone()[0] == RunStatus.FAILED
+
+
+def test_cancel_is_ownership_scoped(client, pg, make_run, second_user):
+    run_id = make_run(created_by=OWNER)
+
+    response = client.delete(f"/api/runs/{run_id}", headers=auth(second_user))
+
+    assert response.status_code == 404
+    assert pg.execute(
+        "SELECT 1 FROM verification_runs WHERE id = %s", (run_id,)
+    ).fetchone() is not None
+
+
 @pytest.mark.parametrize(
     "withdrawn",
     ["problem_solved", "inventor_novelty_statement", "cutoff_date", "anything_else"],

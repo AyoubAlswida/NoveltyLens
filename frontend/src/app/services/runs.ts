@@ -169,6 +169,11 @@ export class RunsService {
     return this.call(`/api/runs/${runId}/report`) as Promise<AnalysisReport>;
   }
 
+  /** Cancel a live Advanced Search. `keepalive` lets pagehide finish the request. */
+  cancelRun(runId: string, keepalive = false): Promise<void> {
+    return this.call<void>(`/api/runs/${runId}`, { method: 'DELETE', keepalive });
+  }
+
   // --- mutations -----------------------------------------------------------
 
   /**
@@ -285,23 +290,14 @@ export class RunsService {
 }
 
 /**
- * The active verified run, remembered across a reload — **namespaced by account**.
+ * The active verified run, remembered only so a reload can cancel it.
  *
- * Spec Gate F item 1: there is no router, so a paused run survives a reload only
- * if the client remembers which run it was on. Item 2 is why the key carries the
- * email: two accounts on one browser must not inherit each other's run, and a
- * signed-out browser must not remember one at all.
- *
- * **Never render a run from this key alone.** `restore()` calls
- * `GET /api/runs/{id}` first; a 404 clears the key silently and returns to
- * submit. localStorage is a hint about what to ask for, never a source of truth
- * about what exists or who owns it.
+ * The key is namespaced by account so one user can never cancel another user's
+ * remembered run. It is not navigation state and is never used to restore a
+ * screen.
  */
 @Injectable({ providedIn: 'root' })
 export class ActiveRunStore {
-  private readonly auth = inject(AuthService);
-  private readonly runs = inject(RunsService);
-
   private key(email: string): string {
     return `novelty-lens-active-run:${email}`;
   }
@@ -311,12 +307,22 @@ export class ActiveRunStore {
     try {
       localStorage.setItem(this.key(email), runId);
     } catch {
-      // A browser with storage disabled loses resume-after-reload and nothing
-      // else. It is not worth failing a working session over.
+      // A browser with storage disabled loses the startup cancellation retry;
+      // pagehide still makes its best-effort request. Do not fail a working
+      // session merely because storage is unavailable.
     }
   }
 
-  /** Forget it. Called on sign-out, on any 401, and on a 404 during restore. */
+  /** Read the id to cancel. It is never sufficient authority to render a run. */
+  peek(email: string): string | null {
+    try {
+      return localStorage.getItem(this.key(email));
+    } catch {
+      return null;
+    }
+  }
+
+  /** Forget it after cancellation, completion, failure, sign-out, or a 404. */
   forget(email: string): void {
     try {
       localStorage.removeItem(this.key(email));
@@ -337,34 +343,6 @@ export class ActiveRunStore {
     }
   }
 
-  /**
-   * The remembered run, **verified against the backend before it is returned**.
-   *
-   * Returns `null` when there is nothing remembered, when the run no longer
-   * exists, or when it belongs to somebody else — the backend answers 404 for
-   * the last two identically, and this must not try to tell them apart.
-   */
-  async restore(email: string): Promise<RunSummary | null> {
-    let runId: string | null = null;
-    try {
-      runId = localStorage.getItem(this.key(email));
-    } catch {
-      return null;
-    }
-    if (!runId) return null;
-
-    try {
-      return await this.runs.getRun(runId);
-    } catch (error) {
-      if (error instanceof RunApiError && error.status === 404) {
-        this.forget(email);
-        return null;
-      }
-      // A transport failure is not proof the run is gone. The key stays, and the
-      // caller shows a reconnecting state rather than silently dropping the run.
-      throw error;
-    }
-  }
 }
 
 /**

@@ -811,8 +811,8 @@ def propose_understanding(
     problem_solved: str = "",
     novelty_statement: str = "",
     feedback: str = "",
-    max_features: int = 5,
-    max_elements_per_feature: int = 8,
+    max_features: int = 1,
+    max_elements_per_feature: int = 7,
 ) -> dict:
     """Propose a **candidate** understanding of an invention, for a human to edit.
 
@@ -865,25 +865,27 @@ def propose_understanding(
 
     prompt = f"""You are a feature decomposition assistant for patent novelty analysis.
 
-Write a short technical summary of the invention, then decompose it into at most {max_features} distinct technical features.
+Write a short technical summary of the invention, then identify a focused flat list of searchable technical limitations. The wire schema still calls the single container a feature, but the reviewer sees only the element texts.
 
 The SUMMARY is 2-4 sentences restating the invention in precise technical language. It is shown to the inventor as the system's understanding of their invention, and must not add capabilities the description does not state.
-A FEATURE is one self-contained technical capability of the invention.
-An ELEMENT is a single structural or functional component the feature requires.
-A RELATIONSHIP is how two or more elements interact, are arranged, or are connected.
+A SEARCHABLE TECHNICAL LIMITATION is a concrete combination of structure, function, arrangement, trigger, or operating condition that can distinguish the invention in patent text. Keep interacting parts together when their interaction is what matters.
 
 Rules:
-- Each element must be independently checkable against a patent passage. "A heat exchanger disposed within the exhaust duct" is checkable; "an efficient design" is not.
-- Mark an element core=true when the feature is not the claimed feature without it.
-- At most {max_elements_per_feature} elements per feature.
-- Every relationship must refer only to elements of its own feature.
-- Every element_id and relationship_id must be unique ACROSS the whole feature - never reuse an id between an element and a relationship.
-- Use element ids E1, E2, ... and relationship ids R1, R2, ... within each feature.
+- Return exactly one feature, F1. Do not split the limitations into multiple feature groups.
+- Aim for 4 to {max_elements_per_feature} limitations. Use fewer if the description does not support four; never pad the list or invent a limitation.
+- Each limitation must be independently checkable against a patent passage. "a flow sensor downstream of a membrane that triggers cleaning when flow drops" is checkable; "a sensor", "a membrane", and "an efficient design" are not useful standalone limitations.
+- Do not output a single generic component, material, energy type, or result by itself unless it is genuinely distinctive without any relationship or condition.
+- Merge related nouns with the function, arrangement, trigger, or condition that gives them technical meaning.
+- Do not repeat or paraphrase the same limitation in more than one element.
+- Mark every element core=true; the reviewer approves one flat list and the search must account for every approved line.
+- Return relationships as an empty array. Relationships are represented inside the limitation text, not as separate records.
+- At most {max_elements_per_feature} elements total.
+- Use element ids E1, E2, ... in order.
 - feature_version is "1" for a first proposal.
 - Do not invent components the invention does not describe.
 
 Return ONLY valid JSON in this exact schema:
-{{"summary": "string", "features": [{{"feature_id": "F1", "feature_version": "1", "feature_text": "string", "elements": [{{"element_id": "E1", "text": "string", "core": true, "order": 1}}], "relationships": [{{"relationship_id": "R1", "text": "string", "order": 1}}]}}]}}
+{{"summary": "string", "features": [{{"feature_id": "F1", "feature_version": "1", "feature_text": "searchable technical limitations", "elements": [{{"element_id": "E1", "text": "string", "core": true, "order": 1}}], "relationships": []}}]}}
 Do not change the schema. Do not add explanations. Return JSON only.
 
 Invention:
@@ -912,6 +914,43 @@ Invention:
         raise LLMResponseError(
             "LLM returned no features; a decomposition with nothing in it is not a "
             "proposal a human can edit, and an empty candidate set is not invented here"
+        )
+    if len(features) != 1:
+        raise LLMResponseError(
+            "LLM did not return the one flat technical-limitation group requested; "
+            "the product does not silently merge machine-proposed feature groups"
+        )
+
+    feature = features[0]
+    if not isinstance(feature, dict):
+        raise LLMResponseError("LLM returned a malformed technical-limitation group")
+    elements = feature.get("elements")
+    if not isinstance(elements, list) or not elements:
+        raise LLMResponseError(
+            "LLM returned no searchable technical limitations; an empty proposal is "
+            "not invented here"
+        )
+    if len(elements) > max_elements_per_feature:
+        raise LLMResponseError(
+            "LLM returned more searchable technical limitations than requested; the "
+            "product does not silently discard model output"
+        )
+    normalized_texts: set[str] = set()
+    for element in elements:
+        if not isinstance(element, dict) or not str(element.get("text") or "").strip():
+            raise LLMResponseError("LLM returned an empty searchable technical limitation")
+        normalized = " ".join(str(element["text"]).casefold().split())
+        if normalized in normalized_texts:
+            raise LLMResponseError(
+                "LLM returned duplicate searchable technical limitations; the product "
+                "does not silently remove model output"
+            )
+        normalized_texts.add(normalized)
+    relationships = feature.get("relationships")
+    if relationships != []:
+        raise LLMResponseError(
+            "LLM returned separate relationships even though the product requires each "
+            "relationship to stay inside its searchable limitation text"
         )
     trace(
         "propose_understanding.done",
@@ -1032,20 +1071,22 @@ def propose_search_strategy(
 
     prompt = f"""You are a patent search strategist.
 
-Below is an APPROVED technical summary of an invention and the approved technical elements a human confirmed. Propose at most {max_queries} patent search queries that together retrieve prior art for those elements.
+Below is an APPROVED technical summary of an invention and the approved searchable technical limitations a human confirmed. Propose at most {max_queries} patent search queries that together retrieve prior art for those limitations.
 
 APPROVED SUMMARY:
 {summary}
 
-APPROVED TECHNICAL ELEMENTS:
+APPROVED SEARCHABLE TECHNICAL LIMITATIONS:
 {elements_block}
 
 Rules:
-- Every element marked [core] must be covered by at least one query. A core element is one the invention is not itself without.
+- Every limitation marked [core] must be covered by at least one query. A core limitation is one the invention is not itself without.
 - covered_element_ids lists the element ids a query is aimed at, written exactly as they appear above, including the feature prefix (for example F1.E2). Never invent an id that is not listed.
-- Do not claim coverage a query does not have. A query listed against an element it would not retrieve prior art for is worse than one fewer query.
-- Keep each query between 3 and 8 words, in the vocabulary patent titles, abstracts and claims actually use.
-- Vary the angle across the set: what the invention does, what it is made of, the domain it is used in, and how an examiner would classify it.
+- Most queries must combine 2 or 3 compatible approved limitations. Do not turn each limitation into an isolated one-line query.
+- A query may target one limitation alone only when that limitation is technically distinctive enough to retrieve useful prior art by itself.
+- Do not claim coverage a query does not have. A query listed against a limitation it would not retrieve prior art for is worse than one fewer query.
+- Keep each query between 4 and 10 words, in the vocabulary patent titles, abstracts and claims actually use.
+- Vary the angle across the set: the distinctive combination, the operating relationship or trigger, the domain, and plausible patent synonyms.
 - Avoid near-duplicate queries; each one should be able to return something the others would miss.
 - rationale is one short sentence saying what this query is looking for.
 - Use query ids Q1, Q2, ... in the order you propose them.

@@ -20,10 +20,11 @@ MAX_INDEX_WORDS = 600
 """Words of each document actually sent to the embedding API.
 
 Sized for BAAI/bge-large-en-v1.5's 512-token limit, past which the endpoint
-truncated silently, so everything beyond roughly the first 400 words never
-reached the model. Qwen3-Embedding-4B accepts far more (32k tokens), so this cap
-is now a deliberate cost/latency bound rather than a model limit - raising it
-would change stored vectors and require re-indexing, so it is left alone.
+truncates. Everything beyond roughly the first 400 words therefore does not
+affect the vector. The 600-word cap is intentionally a little above that model
+limit and avoids uploading the rest of very large patent documents. Lowering it
+below the effective token window would change stored vectors and require
+re-indexing.
 This project's indexed patents average **273,000 characters**
 (median 156,000; largest observed 3.2 MB), which meant a 20-patent batch shipped
 ~5.5 MB over HTTP to compute vectors that only ever reflected each document's
@@ -50,38 +51,22 @@ regardless of how far away they actually are - on a small or unrelated corpus
 that means "the least-bad options available," not "genuinely similar," and
 those would flow into validation and ranking looking like real candidates.
 
-**This number is stale and has to be re-calibrated.** It was measured against
-BAAI/bge-large-en-v1.5 on a live Qdrant holding ~80 water-bottle/UV-sterilization
-patents: an unrelated query ("tractor gearbox") scored 0.51-0.56 and closely
-related queries scored 0.68-0.76, so 0.6 sat in the gap between the two clusters.
-The project now embeds with Qwen3-Embedding-4B, whose scores occupy a different
-range entirely, and there is no exact-zero baseline for either model - any two
-pieces of English text land above 0, so the threshold has to clear whatever that
-model's floor turns out to be rather than sit at 0. Re-run the same probe (an
-obviously unrelated query and a few obviously related ones against a populated
-collection) and move this into the observed gap before trusting semantic search.
-Semantic search is currently disabled in ``graph/pipeline.py``, which is the only
-reason a stale threshold is not affecting live results today."""
+This was calibrated against the current BAAI/bge-large-en-v1.5 model on a live
+Qdrant holding ~80 water-bottle/UV-sterilization patents: an unrelated query
+("tractor gearbox") scored 0.51-0.56 and closely related queries scored
+0.68-0.76, so 0.6 sat in the observed gap between the two clusters. There is no
+exact-zero baseline for arbitrary English text, so retain the measured floor
+rather than replacing it with zero. Re-probe whenever the model, prefix, or
+corpus distribution changes. Semantic search is currently disabled in
+``graph/pipeline.py`` for reasons independent of this calibration."""
 
-QUERY_INSTRUCTION = (
-    "Instruct: Given a description of an invention, retrieve prior-art patents "
-    "describing similar technology\nQuery: "
-)
-"""Instruction prefix Qwen3-Embedding expects on the *query* side.
+QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
+"""Instruction prefix BAAI/bge-large-en-v1.5 expects on the query side.
 
-Qwen3-Embedding is asymmetric the same way bge was, but its trained format is an
-``Instruct:``/``Query:`` pair naming the retrieval task, not a fixed sentence -
-so the task description above is part of the contract, not decoration. Documents
-are still embedded bare; ``store_patents`` deliberately does not prefix them, and
-adding it there would pull every stored vector toward a shared region and flatten
-the gap MIN_SIMILARITY_SCORE has to cut through.
-
-**Not yet measured on this project's corpus.** The bge-era prefix it replaced was
-backed by a live probe (relevant hits rose ~0.02-0.03, the unrelated tail stayed
-flat or fell). Nothing equivalent has been run against Qwen3-Embedding-4B, and
-the old numbers do not carry over - they were a different model in a different
-space. Re-probe alongside MIN_SIMILARITY_SCORE once there is an indexed corpus
-to probe against."""
+Documents remain unprefixed. This exact asymmetric pairing was measured on the
+project's patent corpus: relevant hits improved while the unrelated tail stayed
+flat or fell. Changing the prefix changes the vector space and requires a corpus
+re-index before semantic search can be enabled again."""
 
 client = QdrantClient(
     url=settings.qdrant_url,
