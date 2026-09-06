@@ -80,6 +80,7 @@ def endpoints(run_id: str) -> list[tuple[str, str, dict | None]]:
     # keeps this list honest against the router itself.
     return [
         ("GET", f"/api/runs/{run_id}", None),
+        ("DELETE", f"/api/runs/{run_id}", None),
         ("GET", f"/api/runs/{run_id}/stream", None),
         ("GET", f"/api/runs/{run_id}/gates/A", None),
         ("POST", f"/api/runs/{run_id}/gates/A/approve",

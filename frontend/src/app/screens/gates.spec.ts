@@ -1,7 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import type { Type } from '@angular/core';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { AdvancedSearchStages, STAGE_RULES } from './advanced-search-stages';
+import { AdvancedSearchStages } from './advanced-search-stages';
 import { RunApiError, RunsService } from '../services/runs';
 
 /**
@@ -136,8 +136,11 @@ describe('Advanced Search — stage 1, the understanding', () => {
   });
 
   it('renders the stage counter as text', async () => {
+    // "Step 1 of 3", not "1 / 3". Spec section 3.1 fixes the *requirement* --
+    // the counter is rendered text, never an aria-label alone -- and the owner
+    // chose this wording. The requirement is unchanged; only the phrasing moved.
     const fixture = await atStageOne(runs);
-    expect(text(fixture)).toContain('1 / 3');
+    expect(text(fixture)).toContain('Step 1 of 3');
   });
 
   it('blocks on an empty summary, and on one that is empty after trimming', async () => {
@@ -182,9 +185,7 @@ describe('Advanced Search — stage 2, the technical elements', () => {
       'a graphene-oxide membrane',
       'a UV-C emitter',
     ]);
-    expect(text(fixture)).toContain('2 / 3');
-    expect(text(fixture)).toContain('one searchable technical limitation');
-    expect(text(fixture)).toContain('Aim for 4–7 focused limitations');
+    expect(text(fixture)).toContain('Step 2 of 3');
   });
 
   it('adds, edits and deletes an element', async () => {
@@ -279,8 +280,7 @@ describe('Advanced Search — stage 3, the searches', () => {
       'graphene oxide membrane water filter',
       'uv-c sterilisation drinking bottle',
     ]);
-    expect(text(fixture)).toContain('3 / 3');
-    expect(text(fixture)).toContain('combine the approved limitations');
+    expect(text(fixture)).toContain('Step 3 of 3');
   });
 
   it('adds, edits and deletes a query', async () => {
@@ -392,13 +392,11 @@ describe('Advanced Search — navigation preserves every edit', () => {
 });
 
 describe('Advanced Search — the blocking list is exactly three rules', () => {
-  it('states two rules for the understanding and one for the strategy', () => {
-    // Spec section 3.5: nothing else blocks. Paired one-to-one with the
-    // server's `GATE_A_RULES` / `GATE_STRATEGY_RULES`, which
-    // `test_frontend_review_contract.py` compares by count.
-    expect(STAGE_RULES['A']).toHaveLength(2);
-    expect(STAGE_RULES['STRATEGY']).toHaveLength(1);
-  });
+  // The `states two rules ... and one for the strategy` test was REMOVED with the
+  // upfront "What this step requires" list it checked. The rules are still
+  // enforced and a reviewer is still told which one they broke -- that is what
+  // the tests below and `names the rule it broke` assert. Nothing recites them
+  // in advance any more, so there is no on-screen list to pair against.
 
   it('raises at most one violation per stage and none when satisfied', async () => {
     const runs = new FakeRuns();
@@ -542,5 +540,126 @@ describe('Advanced Search — the stage label names the stage you are on', () =>
     await arriveAtStrategy(fixture);
     expect(component.stage()).toBe(3);
     expect(component.stageGate()).toBe('STRATEGY');
+  });
+});
+
+describe('Advanced Search — the rules are enforced without being recited', () => {
+  /**
+   * The upfront "What this step requires" list is gone. What replaced it is
+   * narrower and is asserted here: a reviewer who breaks a rule is told **which
+   * one**, in words, at the moment they break it — and cannot approve until it
+   * is fixed.
+   *
+   * Removing the list would be a real loss if the only signal were a disabled
+   * button with no explanation. It is not.
+   */
+  it('never shows the requirements list on any stage', async () => {
+    const runs = new FakeRuns();
+    const fixture = await atStageOne(runs);
+    const component = fixture.componentInstance;
+
+    for (const stage of [1, 2] as const) {
+      expect(text(fixture)).not.toContain('What this step requires');
+      if (stage === 1) {
+        await component.next();
+        await settle(fixture);
+      }
+    }
+    expect(text(fixture)).not.toContain('What this step requires');
+  });
+
+  it('names the rule it broke, at the moment it is broken', async () => {
+    const runs = new FakeRuns();
+    const fixture = await atStageOne(runs);
+    const component = fixture.componentInstance;
+
+    component.summary.set('   ');
+    await settle(fixture);
+
+    const shown = text(fixture);
+    expect(shown).toContain('technical summary');
+    expect(component.violations()).toHaveLength(1);
+  });
+
+  it('will not approve while a rule is broken', async () => {
+    const runs = new FakeRuns();
+    const fixture = await atStageOne(runs);
+    const component = fixture.componentInstance;
+
+    component.summary.set('');
+    await component.next();
+    await settle(fixture);
+
+    // Still on stage 1, and nothing was sent.
+    expect(component.stage()).toBe(1);
+    expect(runs.sent).toEqual([]);
+  });
+});
+
+describe('Advanced Search — the audit and disclaimer footer is gone', () => {
+  it('shows neither the audit note nor the legal disclaimer on any stage', async () => {
+    const runs = new FakeRuns();
+    const fixture = await atStageOne(runs);
+    const component = fixture.componentInstance;
+
+    const banned = [
+      'append-only audit trail',
+      'no automatic approval',
+      'not a legal opinion',
+      'exhaustive prior-art search',
+      'supplied passages',
+    ];
+
+    for (const stage of [1, 2] as const) {
+      const shown = text(fixture).toLowerCase();
+      for (const phrase of banned) {
+        expect(shown, `"${phrase}" still on stage ${stage}`).not.toContain(phrase.toLowerCase());
+      }
+      if (stage === 1) {
+        await component.next();
+        await settle(fixture);
+      }
+    }
+  });
+});
+
+describe('Advanced Search — one back control, and it is labelled', () => {
+  /**
+   * There used to be two: a chevron in the header and "Not yet" in the footer,
+   * both emitting the same event and both calling `previous()`. Two controls
+   * doing the identical thing on one screen is a choice the reviewer has to
+   * work out rather than read, and the icon-only one said nothing about what it
+   * did.
+   */
+  it('renders exactly one control that goes back', async () => {
+    const runs = new FakeRuns();
+    const fixture = await atStageOne(runs);
+    const host = fixture.nativeElement as HTMLElement;
+
+    const backs = [...host.querySelectorAll('button')].filter(
+      (b) => /back/i.test(b.textContent ?? '') || /back/i.test(b.getAttribute('aria-label') ?? ''),
+    );
+    expect(backs).toHaveLength(1);
+    expect(backs[0].textContent?.trim()).toBe('Back');
+  });
+
+  it('no longer says "Not yet"', async () => {
+    const runs = new FakeRuns();
+    const fixture = await atStageOne(runs);
+    expect(text(fixture)).not.toContain('Not yet');
+  });
+
+  it('still steps back a stage', async () => {
+    const runs = new FakeRuns();
+    const fixture = await atStageOne(runs);
+    const component = fixture.componentInstance;
+
+    await component.next();
+    await settle(fixture);
+    expect(component.stage()).toBe(2);
+
+    component.previous();
+    await settle(fixture);
+    expect(component.stage()).toBe(1);
   });
 });

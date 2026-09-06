@@ -643,6 +643,198 @@ button {
 .textarea-wrap-primary textarea {
   min-height: 176px;
   border-color: var(--teal);
+  /* Clears the attach row that sits inside the box. Scoped to `-primary`,
+     which only the submit page uses -- the stage-1 summary box shares
+     `.textarea-wrap` and has no tools, so it must not gain dead space. */
+  padding-bottom: 52px;
+}
+
+/* The composer row: inside the field, bottom-left, out of the text's way. */
+.composer-tools {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  pointer-events: none;
+}
+
+.composer-tools > * {
+  pointer-events: auto;
+}
+
+.composer-attach {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 11px;
+  border: 1px solid var(--line, #dbe4ea);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--navy-soft);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.composer-attach:hover {
+  color: var(--btn-blue);
+  border-color: var(--btn-blue);
+  background: #fff;
+}
+
+.composer-attach:focus-visible {
+  outline: none;
+  color: var(--btn-blue);
+  border-color: var(--btn-blue);
+  box-shadow: 0 0 0 3px rgba(17, 121, 196, 0.2);
+}
+
+/* The Advanced switch sits at the right end of the composer row; attach and the
+   uploaded-file chip keep the left. `margin-left: auto` rather than
+   `justify-content: space-between` on the parent, because the chip appears and
+   disappears and space-between would move the switch when it did. */
+.composer-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.composer-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 11px 6px 8px;
+  border: 1px solid var(--line, #dbe4ea);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--navy-soft);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.composer-toggle:hover {
+  color: var(--btn-blue);
+  border-color: var(--btn-blue);
+  background: #fff;
+}
+
+.composer-toggle:focus-visible {
+  outline: none;
+  color: var(--btn-blue);
+  border-color: var(--btn-blue);
+  box-shadow: 0 0 0 3px rgba(17, 121, 196, 0.2);
+}
+
+/* On-state carries colour AND the knob's position, so it does not rely on hue
+   alone to say which way the switch is set.
+
+   The TEXT uses the darker --btn-blue-hover, not --btn-blue. At 12.5px bold
+   this is normal text by WCAG's reckoning, not large, and the base blue sits
+   at 4.15:1 on its own tint -- under AA. The darker token measures 5.36:1.
+   Border and track keep the base blue: they are UI components, which need
+   3:1, and both clear it. */
+.composer-toggle.is-on {
+  color: var(--btn-blue-hover);
+  border-color: var(--btn-blue);
+  background: rgba(17, 121, 196, 0.08);
+}
+
+.composer-switch {
+  display: inline-flex;
+  align-items: center;
+  width: 26px;
+  height: 15px;
+  padding: 2px;
+  border-radius: 999px;
+  background: #c6d2dc;
+  transition: background 140ms ease;
+}
+
+.composer-toggle.is-on .composer-switch {
+  background: var(--btn-blue);
+}
+
+.composer-switch-knob {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 140ms ease;
+}
+
+.composer-toggle.is-on .composer-switch-knob {
+  transform: translateX(11px);
+}
+
+/* Dark counterparts, written here rather than discovered later: every rule
+   above that carries a literal colour needs one, or the dark block's
+   `:root[data-theme="dark"] .foo` specificity silently erases the state. */
+:root[data-theme="dark"] .composer-toggle {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: #d3d9e0;
+}
+
+:root[data-theme="dark"] .composer-toggle:hover,
+:root[data-theme="dark"] .composer-toggle:focus-visible {
+  color: var(--btn-blue-dark);
+  border-color: var(--btn-blue-dark);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Same correction as the light on-state, same reason: --btn-blue-dark is
+   3.82:1 on its own tint, --btn-blue-dark-hover is 4.80:1. */
+:root[data-theme="dark"] .composer-toggle.is-on {
+  color: var(--btn-blue-dark-hover);
+  border-color: var(--btn-blue-dark);
+  background: rgba(84, 172, 240, 0.16);
+}
+
+:root[data-theme="dark"] .composer-switch {
+  background: rgba(255, 255, 255, 0.26);
+}
+
+:root[data-theme="dark"] .composer-toggle.is-on .composer-switch {
+  background: var(--btn-blue-dark);
+}
+
+/* The knob is white on both themes: it sits on the track's fill, not on the
+   page, so it does not follow the surface colour. */
+:root[data-theme="dark"] .composer-switch-knob {
+  background: #fff;
+}
+
+/* Motion is a preference, not decoration. The knob's position is the state, so
+   it still moves -- only the animation between positions is dropped. */
+@media (prefers-reduced-motion: reduce) {
+  .composer-switch,
+  .composer-switch-knob,
+  .composer-toggle {
+    transition: none;
+  }
+}
+
+
+:root[data-theme="dark"] .composer-attach {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+:root[data-theme="dark"] .composer-attach:hover,
+:root[data-theme="dark"] .composer-attach:focus-visible {
+  color: var(--btn-blue-dark);
+  border-color: var(--btn-blue-dark);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .textarea-wrap textarea:hover,
@@ -675,19 +867,10 @@ button {
   border: 0;
 }
 
-.upload-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 14px;
-}
+/* `.upload-row` and `.upload-button` were removed: the attach control moved
+   inside the description box (see `.composer-tools`), so the full-width
+   outlined button underneath it has no markup left. */
 
-.upload-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
 
 .upload-chip {
   display: inline-flex;
@@ -745,33 +928,57 @@ button {
   font-weight: 600;
 }
 
+/* One action now. Advanced Search became a mode on the description box rather
+   than a second button, so this row holds a single control -- the flex/gap
+   stays because the row is still a row, and the wrap keeps it sane on narrow
+   screens. */
 .form-actions {
   display: flex;
   align-items: center;
-  gap: 30px;
+  gap: 12px;
   margin-top: 24px;
-  /* Two actions now, and on a narrow screen they stack rather than shrink the
-     labels: "Run with feature verification" is the longer of the two and must
-     stay readable, because the difference between the buttons is the whole
-     decision the reviewer is making here. */
   flex-wrap: wrap;
 }
 
-/* The verified run sits beside the search, not above it: both are real ways to
-   use the tool, and search-only is still the faster and cheaper one. */
-.verify-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
+/* A floor rather than a fixed width. The label changes with the mode ("Run
+   Novelty Lens" / "Start Advanced Search"), so a pinned width would either pad
+   the short one oddly or truncate the long one; the min-width keeps the button
+   from shrinking to the shorter label and back as the switch is used. */
+.form-actions .primary-action {
+  min-height: 44px;
+  min-width: 208px;
+  font-size: 14px;
 }
 
-.verify-note {
-  margin-top: 14px;
-  max-width: 62ch;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--muted-foreground);
+/* `.verify-action` and `.action-with-hint` were removed with the second button.
+   The hint itself survives -- it moved to the Advanced switch, which is the
+   control it describes. */
+
+.action-hint {
+  display: inline-flex;
+  align-items: center;
+  color: #9aabc0;
+  cursor: help;
+  border-radius: 999px;
 }
+
+.action-hint:hover,
+.action-hint:focus-visible {
+  color: var(--btn-blue);
+}
+
+/* Keyboard focus stays visible: this is reachable by tab, and the hint is the
+   only place the explanation now lives. */
+.action-hint:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(17, 121, 196, 0.22);
+}
+
+:root[data-theme="dark"] .action-hint:hover,
+:root[data-theme="dark"] .action-hint:focus-visible {
+  color: var(--btn-blue-dark);
+}
+
 
 /* Buttons follow the Aramco Pixel component spec: a solid Contained button, an
    Outlined button, and a flat grey disabled state. The previous blue-to-green

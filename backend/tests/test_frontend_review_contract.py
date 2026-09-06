@@ -638,34 +638,90 @@ def test_no_two_codes_translate_to_the_same_words(table):
 # builder rather than against a fixture, so a change to either side fails here.
 
 
-@pytest.mark.parametrize(
-    "gate,server_rules",
-    [("A", "GATE_A_RULES"), ("STRATEGY", "GATE_STRATEGY_RULES")],
-)
-def test_the_screen_glosses_every_rule_the_server_enforces(gate, server_rules):
-    """The rules a reviewer reads are the server's, said in plain words.
+def test_a_broken_rule_is_named_on_screen_rather_than_listed_in_advance():
+    """Replaces `test_the_screen_glosses_every_rule_the_server_enforces`.
 
-    `graph/gates.py` holds the binding list in the machine vocabulary; the screen
-    pairs it one-to-one and in the same order, because a reviewer being held to a
-    condition needs to have been told about it in language they can act on.
+    That test paired the on-screen "What this step requires" list one-to-one
+    with `graph/gates.py`'s `GATE_*_RULES`, by count. **The list was removed at
+    the owner's request**, so there is nothing left to pair against and the test
+    would be asserting a correspondence with something invisible.
 
-    Only the **counts** are compared, which is a deliberately weak check and the
-    strongest one available: the two lists say the same thing in different words,
-    so no textual comparison is possible. What it catches is the failure that
-    actually happens -- a rule added or removed on the server with no
-    corresponding change here, leaving a reviewer held to a condition this screen
-    never states.
+    The concern behind it was real and has not gone away: a reviewer must not be
+    held to a condition nobody told them about. What answers it now is that the
+    violation is named **when it is tripped** rather than recited in advance --
+    `violations()` renders a sentence per broken rule and the approve control
+    stays disabled until that list is empty. This asserts the messages exist and
+    name the thing that is wrong, so a silently-disabled button cannot pass.
+
+    `GATE_A_RULES` / `GATE_STRATEGY_RULES` remain the binding list in
+    `workflow/review.py`; only the recital is gone.
     """
-    gates = read(Path(__file__).resolve().parents[1] / "graph" / "gates.py")
-    server = gates.split(f"{server_rules}: tuple[str, ...] = (", 1)[1].split("\n)", 1)[0]
-    server_count = len([line for line in server.splitlines() if line.strip().startswith('"')])
+    source = read(STAGES)
+    body = source.split("violations(): string[] {", 1)[1].split("\n  }", 1)[0]
 
-    screen = read(STAGES)
-    table = screen.split("export const STAGE_RULES", 1)[1].split("\n};", 1)[0]
-    body = table.split(f"{gate}: [", 1)[1].split("],", 1)[0]
-    screen_count = len([line for line in body.splitlines() if line.strip().startswith("'")])
+    for phrase in ("technical summary", "technical limitation", "search"):
+        assert phrase in body, f"no violation message names {phrase!r}"
 
-    assert server_count == screen_count, (
-        f"{server_rules} has {server_count} rules and the {gate} screen glosses "
-        f"{screen_count}"
+    # The messages are not decorative: this is what actually blocks approval.
+    assert "violations().length === 0" in source
+
+
+def test_every_icon_a_template_asks_for_actually_exists():
+    """**An unknown icon name renders NOTHING, and nothing errors.**
+
+    `shared/icon.ts` looks the name up in `ICON_PATHS` and renders whatever it
+    finds; a name that is not there produces an empty element. So a typo, or a
+    glyph nobody added, is an invisible button — which is exactly what happened
+    to the row-delete control: it asked for `Trash2`, which was never in the set,
+    and shipped as an empty box beside every row.
+
+    Checked from here rather than in a component spec because it is a property of
+    the whole app: every template, against the one table, in one pass.
+
+    **Two passes, because names reach the component two ways.** Literal
+    `name="Foo"` attributes are read straight out of the templates. The four
+    `[name]="..."` bindings cannot be read that way at all -- an expression is
+    not a name -- and the only one of them fed from a data table is
+    `PHASE_ICONS`, which is exactly where this drifts: a phase added to the
+    backend's vocabulary gets a row here, and a glyph nobody drew renders as an
+    empty circle on the running screen. That table is checked directly. The
+    remaining three bindings choose between literals written inline
+    (`Moon`/`Sun`, `Check`) and are covered by the literal pass finding those
+    same names elsewhere in the app -- a genuinely weaker guarantee, and stated
+    rather than papered over.
+    """
+    paths = read(FRONTEND / "shared" / "icon-paths.ts")
+    available = set(re.findall(r"^  ([A-Za-z0-9]+):", paths, re.MULTILINE))
+    assert available, "no icons parsed -- the ICON_PATHS shape changed"
+
+    missing: dict[str, set[str]] = {}
+    for source in FRONTEND.rglob("*.ts"):
+        if source.name.endswith(".spec.ts") or source.name == "icon-paths.ts":
+            continue
+        asked = set(re.findall(r'<app-icon\s+name="([A-Za-z0-9]+)"', read(source)))
+        unknown = asked - available
+        if unknown:
+            missing[source.name] = unknown
+
+    assert not missing, f"templates ask for icons that do not exist: {missing}"
+
+    report = read(FRONTEND / "models" / "report.ts")
+    block = re.search(r"PHASE_ICONS[^{]*\{(.*?)\}", report, re.DOTALL)
+    assert block, "PHASE_ICONS not found -- the running screen's icon table moved"
+    phase_icons = dict(re.findall(r"(\w+):\s*'([A-Za-z0-9]+)'", block.group(1)))
+    assert phase_icons, "no phases parsed out of PHASE_ICONS"
+
+    unknown_phase_icons = {
+        phase: glyph for phase, glyph in phase_icons.items() if glyph not in available
+    }
+    assert not unknown_phase_icons, (
+        f"PHASE_ICONS names icons that do not exist: {unknown_phase_icons}"
     )
+
+
+def test_the_requirements_list_is_gone_from_the_shell():
+    """The block itself, not just its binding: a shell that still rendered it
+    would bring the list back the moment anything passed rules again."""
+    shell = read(SHELL)
+    assert "What this step requires" not in shell
+    assert "gate-rules" not in shell

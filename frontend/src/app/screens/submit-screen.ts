@@ -39,40 +39,93 @@ const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.pdf', '.docx'];
             (input)="descriptionChange.emit($any($event.target).value)"
             maxlength="2000"
             rows="6"
-            placeholder="Describe your invention in plain language: what it does, how it works, and what makes it different from what already exists… or upload a file below."
+            placeholder="Describe your invention in plain language: what it does, how it works, and what makes it different from what already exists…"
           ></textarea>
           <!-- The "n / 2000" counter was removed. maxlength stays: it is the
                actual limit, and dropping it would let the field accept text the
                browser then silently truncates. -->
-        </div>
 
-        <div class="upload-row">
-          <input
-            #fileInput
-            type="file"
-            accept=".txt,.md,.pdf,.docx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            class="visually-hidden"
-            (change)="onFileInputChange($event)"
-          />
-          <button type="button" class="secondary-button upload-button" (click)="fileInput.click()">
-            <app-icon name="Upload" [size]="16" />
-            <span>Upload a file instead (optional)</span>
-          </button>
+          <!--
+            Attach lives INSIDE the box, bottom-left, the way a composer does.
+            It was a full-width outlined button underneath, which gave the form
+            three stacked rows of controls and made attaching look like a step
+            of equal weight to running the search. It is an option on the
+            description, so it sits on the description.
 
-          @if (uploadedFileName(); as name) {
-            <span class="upload-chip">
-              <app-icon name="FileText" [size]="14" />
-              {{ name }}
+            The drop target is still the whole wrap, so dragging a file anywhere
+            over the box works exactly as before.
+          -->
+          <div class="composer-tools">
+            <input
+              #fileInput
+              type="file"
+              accept=".txt,.md,.pdf,.docx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              class="visually-hidden"
+              (change)="onFileInputChange($event)"
+            />
+            <button
+              type="button"
+              class="composer-attach"
+              (click)="fileInput.click()"
+              title="Attach a .txt, .md, .pdf or .docx file, or drag one onto the box"
+            >
+              <app-icon name="Upload" [size]="15" />
+              <span>Attach a file</span>
+            </button>
+
+            @if (uploadedFileName(); as name) {
+              <span class="upload-chip">
+                <app-icon name="FileText" [size]="14" />
+                {{ name }}
+                <button
+                  type="button"
+                  class="upload-chip-remove"
+                  (click)="clearUpload()"
+                  aria-label="Remove uploaded file"
+                >
+                  <app-icon name="X" [size]="12" />
+                </button>
+              </span>
+            }
+
+            <!--
+              Advanced is a MODE on the search, not a second search. It was a
+              second button, which put two actions of equal visual weight on the
+              screen and left the difference between them to be guessed at.
+              Switching it on changes what the one action does, and the button's
+              own label changes with it -- a mode that did not show up in the
+              control it modifies is exactly the kind that gets triggered by
+              accident.
+
+              role="switch" rather than a plain button: it has an on and an off
+              state that a screen reader has to be able to announce, which
+              aria-pressed on a generic button conveys less directly.
+            -->
+            <span class="composer-mode">
               <button
                 type="button"
-                class="upload-chip-remove"
-                (click)="clearUpload()"
-                aria-label="Remove uploaded file"
+                class="composer-toggle"
+                role="switch"
+                [class.is-on]="advanced()"
+                [attr.aria-checked]="advanced()"
+                (click)="advanced.set(!advanced())"
               >
-                <app-icon name="X" [size]="12" />
+                <span class="composer-switch" aria-hidden="true">
+                  <span class="composer-switch-knob"></span>
+                </span>
+                <span>Advanced</span>
               </button>
+
+              <span
+                class="action-hint"
+                tabindex="0"
+                aria-label="What Advanced Search does"
+                title="Advanced Search pauses for your review before it searches: you confirm how the invention was understood, edit the technical elements, then edit and approve the search queries that will run. Nothing is searched for until you approve it."
+              >
+                <app-icon name="Info" [size]="15" />
+              </span>
             </span>
-          }
+          </div>
         </div>
 
         @if (uploadError(); as message) {
@@ -80,27 +133,21 @@ const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.pdf', '.docx'];
         }
 
         <div class="form-actions">
-          <button class="primary-action" (click)="run.emit()" [disabled]="!description().trim()">
-            <app-icon name="Sparkles" [size]="20" fill="currentColor" />
-            <span>Run Novelty Lens</span>
-            <span aria-hidden="true">&rarr;</span>
-          </button>
-          <button
-            class="secondary-button verify-action"
-            type="button"
-            (click)="verify.emit()"
-            [disabled]="!description().trim()"
-          >
-            <app-icon name="ShieldCheck" [size]="20" />
-            <span>Advanced Search</span>
+          <!--
+            One action. Which run it starts is the switch's business, and the
+            label says which one that is, so the button never means something
+            different from what it reads.
+          -->
+          <button class="primary-action" (click)="start()" [disabled]="!description().trim()">
+            @if (advanced()) {
+              <app-icon name="ShieldCheck" [size]="18" />
+              <span>Start Advanced Search</span>
+            } @else {
+              <app-icon name="Sparkles" [size]="18" fill="currentColor" />
+              <span>Run Novelty Lens</span>
+            }
           </button>
         </div>
-        <p class="verify-note">
-          Advanced Search pauses for your review before it searches: you confirm
-          how the invention was understood, edit the technical limitations, then
-          edit and approve the searches that will run. Nothing is searched for
-          until you approve it.
-        </p>
       </section>
 
     </div>
@@ -110,8 +157,30 @@ export class SubmitScreen {
   readonly description = input.required<string>();
   readonly descriptionChange = output<string>();
   readonly run = output<void>();
-  /** A verified run: the four-gate workflow, rather than a search on its own. */
+  /** An Advanced Search run: the guided three-stage flow, rather than a search
+   * on its own. Still a separate output from `run` -- the two are genuinely
+   * different code paths in the shell, and collapsing them into one event with
+   * a boolean would push the branch into `app.ts` for no gain. */
   readonly verify = output<void>();
+
+  /**
+   * Whether the next run is an Advanced Search.
+   *
+   * **Deliberately not persisted.** The sidebar's collapsed state is a
+   * workspace preference and is remembered; this is an intent about one
+   * search. Restoring it would mean a choice made days ago silently changes
+   * what the button does today, and Advanced commits the person to a review
+   * before anything is searched for. The screen is destroyed and rebuilt by
+   * the shell's `@switch` on every visit, so off-by-default costs nothing to
+   * maintain.
+   */
+  readonly advanced = signal(false);
+
+  /** The single action, dispatched by the mode the switch is in. */
+  start() {
+    if (this.advanced()) this.verify.emit();
+    else this.run.emit();
+  }
 
   readonly fileInputRef = viewChild<ElementRef<HTMLInputElement>>('fileInput');
 

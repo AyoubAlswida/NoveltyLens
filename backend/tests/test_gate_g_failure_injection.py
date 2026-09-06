@@ -227,7 +227,8 @@ def test_no_path_to_the_end_of_the_graph_skips_the_two_approvals():
     # The approvals still fence the search: `search_orchestrator` -- the first
     # node that can reach a provider, and therefore the first that can produce
     # anything a result is built from -- is entered either by the search-only
-    # branch or through both gates, and by no third route.
+    # branch or through `prepare_approved_search`, which can only follow both
+    # Advanced Search approvals. There is no third route.
     #
     # Read off the COMPILED graph, not `builder.edges`: the search-only arm is a
     # conditional edge, and an uncompiled builder does not list those, so the
@@ -238,8 +239,9 @@ def test_no_path_to_the_end_of_the_graph_skips_the_two_approvals():
     compiled = {(edge.source, edge.target) for edge in build_graph().get_graph().edges}
     assert {s for s, t in compiled if t == "search_orchestrator"} == {
         "expand_queries",
-        "gate_strategy",
+        "prepare_approved_search",
     }
+    assert ("gate_strategy", "prepare_approved_search") in compiled
 
 
 def test_the_draft_must_exist_before_it_can_be_approved(pg, make_run):

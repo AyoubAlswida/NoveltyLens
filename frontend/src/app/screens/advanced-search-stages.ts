@@ -22,28 +22,31 @@ export interface DraftRow {
 /** Which of the three stages is on screen. */
 export type StageNumber = 1 | 2 | 3;
 
-export const TOTAL_STAGES = 3;
-
 /**
- * What each stage requires, in the reviewer's words.
+ * The three stages, named as the reviewer meets them.
  *
- * **Pairs one-to-one and in the same order with `graph/gates.py`'s
- * `GATE_A_RULES` and `GATE_STRATEGY_RULES`**, which are the binding lists. A
- * reviewer held to a condition has to have been told about it, so the two sides
- * shrink together; `tests/test_frontend_review_contract.py` compares the counts,
- * which is deliberately weak and the strongest check available when the two
- * lists say the same thing in different words.
+ * Not "Results": the third stage approves the searches, and the results come
+ * after the run finishes. Naming a step for the thing that happens next would
+ * promise a stage this flow does not have.
  */
-export const STAGE_RULES: Record<string, string[]> = {
-  A: [
-    'a non-empty technical summary',
-    'at least one technical limitation with text in it',
-  ],
-  STRATEGY: [
-    'at least one search with terms in it',
-  ],
-};
+export const STAGE_NAMES = ['Summary', 'Limitations', 'Queries'];
 
+export const TOTAL_STAGES = STAGE_NAMES.length;
+
+/*
+ * The upfront "What this step requires" list was REMOVED, along with the
+ * `STAGE_RULES` table that fed it.
+ *
+ * The rules are still enforced -- `workflow/review.py` is and always was the
+ * binding check -- and a reviewer who breaks one is still told which one, by
+ * name, at the moment they break it: `violations()` renders a sentence per
+ * broken rule and the approve control stays disabled until it is empty.
+ *
+ * What changed is only that the list is no longer recited before it is needed.
+ * The guarantee that replaced it is narrower and worth stating: a reviewer is
+ * told the rule they tripped, when they trip it, rather than being shown all of
+ * them in advance.
+ */
 /**
  * **Advanced Search: three stages, two approvals, one screen.**
  *
@@ -94,13 +97,14 @@ export const STAGE_RULES: Record<string, string[]> = {
   imports: [FormsModule, Icon, GateShell],
   template: `
     <app-gate-shell
-      [runId]="runId()"
       [gate]="stageGate()"
       [state]="state()"
       [detail]="detail()"
       [title]="stageTitle()"
+      [subtitle]="stageLede()"
+      [steps]="STAGE_NAMES"
+      [current]="stage()"
       [blocking]="blocking()"
-      [rules]="rules()"
       [busy]="state() === 'validating'"
       [canApprove]="violations().length === 0"
       [approveLabel]="stage() === TOTAL_STAGES ? 'Approve and search' : 'Next'"
@@ -108,47 +112,47 @@ export const STAGE_RULES: Record<string, string[]> = {
       (back)="previous()"
       (reload)="load(runId(), gate())"
     >
-      <!-- Rendered text, not an aria-label: a reviewer three screens into a
-           flow needs to see how far along they are. -->
-      <p class="stage-counter">{{ stage() }} / {{ TOTAL_STAGES }}</p>
+      <!-- The stage counter moved into the toolbar's meta line, beside the
+           title, where the report screen puts its own run facts. Still rendered
+           text, not an aria-label: a reviewer three screens into a flow needs to
+           see how far along they are. -->
 
       @switch (stage()) {
         @case (1) {
-          <section class="stage-pane" aria-labelledby="stage1-heading">
-            <h2 id="stage1-heading">Does this describe your invention?</h2>
-
+          <!-- The heading and the explanation live in the header now, so the
+               pane goes straight to the thing being reviewed rather than saying
+               the same sentence twice. -->
+          <section class="stage-pane" [attr.aria-label]="stageTitle()">
             <div class="stage-side-by-side">
               <div>
-                <h3>What you wrote</h3>
+                <h3>Submitted description</h3>
                 <!-- Read-only, always. Never bound to an input. -->
                 <p class="original-description">{{ originalDescription() }}</p>
               </div>
               <div>
-                <h3>How the system understood it</h3>
+                <h3>Technical summary</h3>
                 <label class="sr-only" for="summary-input">Technical summary</label>
-                <textarea
-                  id="summary-input"
-                  class="summary-input"
-                  rows="8"
-                  [ngModel]="summary()"
-                  (ngModelChange)="summary.set($event)"
-                  placeholder="A short technical restatement of the invention."
-                ></textarea>
+                <!-- Wrapped in .textarea-wrap so this box IS the search page's
+                     textarea rather than a copy of its values: same border,
+                     radius, hover fill, focus ring and dark counterparts, from
+                     one rule. Copying the numbers instead would let the two
+                     drift the first time either is touched. -->
+                <div class="textarea-wrap">
+                  <textarea
+                    id="summary-input"
+                    rows="8"
+                    [ngModel]="summary()"
+                    (ngModelChange)="summary.set($event)"
+                    placeholder="A short technical restatement of the invention."
+                  ></textarea>
+                </div>
               </div>
             </div>
           </section>
         }
 
         @case (2) {
-          <section class="stage-pane" aria-labelledby="stage2-heading">
-            <h2 id="stage2-heading">The technical limitations to search for</h2>
-            <p class="pane-note">
-              Each line should be one searchable technical limitation, not a
-              single generic component. Keep interacting parts, triggers, and
-              conditions together. Aim for 4–7 focused limitations; use fewer
-              rather than adding something the invention does not claim.
-            </p>
-
+          <section class="stage-pane" [attr.aria-label]="stageTitle()">
             <ul class="draft-list">
               @for (row of elements(); track row.key; let i = $index) {
                 <li class="draft-row">
@@ -167,7 +171,7 @@ export const STAGE_RULES: Record<string, string[]> = {
                     (click)="removeRow(elements, row.key)"
                     [attr.aria-label]="'Remove technical limitation ' + (i + 1)"
                   >
-                    <app-icon name="Trash2" [size]="16" />
+                    <app-icon name="X" [size]="16" />
                   </button>
                 </li>
               } @empty {
@@ -175,26 +179,19 @@ export const STAGE_RULES: Record<string, string[]> = {
               }
             </ul>
 
-            <button class="btn-outlined" type="button" (click)="addRow(elements, 'E')">
+            <button class="secondary-button" type="button" (click)="addRow(elements, 'E')">
               <app-icon name="Plus" [size]="16" /> Add limitation
             </button>
           </section>
         }
 
         @case (3) {
-          <section class="stage-pane" aria-labelledby="stage3-heading">
-            <h2 id="stage3-heading">The searches that will run</h2>
-            <p class="pane-note">
-              These searches combine the approved limitations from different
-              technical angles. Edit them, add your own, and remove any that are
-              not worth running. Approving this step starts the search.
-            </p>
-
+          <section class="stage-pane" [attr.aria-label]="stageTitle()">
             <ul class="draft-list">
               @for (row of queries(); track row.key; let i = $index) {
                 <li class="draft-row">
                   <label class="sr-only" [attr.for]="'query-' + row.key">
-                    Search {{ i + 1 }}
+                    Search query {{ i + 1 }}
                   </label>
                   <input
                     class="draft-input"
@@ -206,18 +203,18 @@ export const STAGE_RULES: Record<string, string[]> = {
                     class="draft-remove"
                     type="button"
                     (click)="removeRow(queries, row.key)"
-                    [attr.aria-label]="'Remove search ' + (i + 1)"
+                    [attr.aria-label]="'Remove search query ' + (i + 1)"
                   >
-                    <app-icon name="Trash2" [size]="16" />
+                    <app-icon name="X" [size]="16" />
                   </button>
                 </li>
               } @empty {
-                <li class="empty-state">No searches yet. Add the first one.</li>
+                <li class="empty-state">No search queries yet. Add the first one.</li>
               }
             </ul>
 
-            <button class="btn-outlined" type="button" (click)="addRow(queries, 'Q')">
-              <app-icon name="Plus" [size]="16" /> Add search
+            <button class="secondary-button" type="button" (click)="addRow(queries, 'Q')">
+              <app-icon name="Plus" [size]="16" /> Add query
             </button>
           </section>
         }
@@ -243,6 +240,7 @@ export class AdvancedSearchStages {
   readonly resumed = output<WorkflowGate>();
 
   readonly TOTAL_STAGES = TOTAL_STAGES;
+  readonly STAGE_NAMES = STAGE_NAMES;
 
   readonly state = signal<GateState>('loading');
   readonly detail = signal('');
@@ -318,19 +316,26 @@ export class AdvancedSearchStages {
     return this.stage() === TOTAL_STAGES ? 'STRATEGY' : 'A';
   }
 
-  /** The rules for the approval this stage belongs to. */
-  rules(): string[] {
-    return this.stage() === TOTAL_STAGES ? STAGE_RULES['STRATEGY'] : STAGE_RULES['A'];
-  }
-
   stageTitle(): string {
     switch (this.stage()) {
       case 1:
-        return 'Review the understanding';
+        return 'Review invention summary';
       case 2:
         return 'Edit the technical limitations';
       default:
-        return 'Edit and approve the searches';
+        return 'Review search queries';
+    }
+  }
+
+  /** The sentence under the title: what this stage is asking the reviewer for. */
+  stageLede(): string {
+    switch (this.stage()) {
+      case 1:
+        return 'Confirm the technical summary before the search begins.';
+      case 2:
+        return 'Edit the technical limitations to be searched. Add anything missing and remove anything not being claimed.';
+      default:
+        return 'These are the search queries that will run. Approving them starts the search.';
     }
   }
 
@@ -381,7 +386,7 @@ export class AdvancedSearchStages {
       problems.push('At least one technical limitation is needed.');
     }
     if (this.stage() === 3 && !this.nonEmpty(this.queries()).length) {
-      problems.push('At least one search is needed.');
+      problems.push('At least one search query is needed.');
     }
     return problems;
   }
