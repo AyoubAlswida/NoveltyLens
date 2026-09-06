@@ -87,6 +87,44 @@ const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.pdf', '.docx'];
                 </button>
               </span>
             }
+
+            <!--
+              Advanced is a MODE on the search, not a second search. It was a
+              second button, which put two actions of equal visual weight on the
+              screen and left the difference between them to be guessed at.
+              Switching it on changes what the one action does, and the button's
+              own label changes with it -- a mode that did not show up in the
+              control it modifies is exactly the kind that gets triggered by
+              accident.
+
+              role="switch" rather than a plain button: it has an on and an off
+              state that a screen reader has to be able to announce, which
+              aria-pressed on a generic button conveys less directly.
+            -->
+            <span class="composer-mode">
+              <button
+                type="button"
+                class="composer-toggle"
+                role="switch"
+                [class.is-on]="advanced()"
+                [attr.aria-checked]="advanced()"
+                (click)="advanced.set(!advanced())"
+              >
+                <span class="composer-switch" aria-hidden="true">
+                  <span class="composer-switch-knob"></span>
+                </span>
+                <span>Advanced</span>
+              </button>
+
+              <span
+                class="action-hint"
+                tabindex="0"
+                aria-label="What Advanced Search does"
+                title="Advanced Search pauses for your review before it searches: you confirm how the invention was understood, edit the technical elements, then edit and approve the search queries that will run. Nothing is searched for until you approve it."
+              >
+                <app-icon name="Info" [size]="15" />
+              </span>
+            </span>
           </div>
         </div>
 
@@ -95,37 +133,20 @@ const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.pdf', '.docx'];
         }
 
         <div class="form-actions">
-          <button class="primary-action" (click)="run.emit()" [disabled]="!description().trim()">
-            <app-icon name="Sparkles" [size]="18" fill="currentColor" />
-            <span>Run Novelty Lens</span>
+          <!--
+            One action. Which run it starts is the switch's business, and the
+            label says which one that is, so the button never means something
+            different from what it reads.
+          -->
+          <button class="primary-action" (click)="start()" [disabled]="!description().trim()">
+            @if (advanced()) {
+              <app-icon name="ShieldCheck" [size]="18" />
+              <span>Start Advanced Search</span>
+            } @else {
+              <app-icon name="Sparkles" [size]="18" fill="currentColor" />
+              <span>Run Novelty Lens</span>
+            }
           </button>
-
-          <span class="action-with-hint">
-            <button
-              class="secondary-button verify-action"
-              type="button"
-              (click)="verify.emit()"
-              [disabled]="!description().trim()"
-            >
-              <span>Advanced Search</span>
-            </button>
-
-            <!--
-              The explanation was a paragraph under the buttons. It is a hint
-              about ONE of them, so it hangs off that one: the same
-              title-attribute pattern the report screen's risk legend uses.
-              Focusable, so it is reachable without a mouse, and the text is
-              unchanged -- what it says still has to be true.
-            -->
-            <span
-              class="action-hint"
-              tabindex="0"
-              aria-label="What Advanced Search does"
-              title="Advanced Search pauses for your review before it searches: you confirm how the invention was understood, edit the technical elements, then edit and approve the search queries that will run. Nothing is searched for until you approve it."
-            >
-              <app-icon name="Info" [size]="15" />
-            </span>
-          </span>
         </div>
       </section>
 
@@ -136,8 +157,30 @@ export class SubmitScreen {
   readonly description = input.required<string>();
   readonly descriptionChange = output<string>();
   readonly run = output<void>();
-  /** A verified run: the four-gate workflow, rather than a search on its own. */
+  /** An Advanced Search run: the guided three-stage flow, rather than a search
+   * on its own. Still a separate output from `run` -- the two are genuinely
+   * different code paths in the shell, and collapsing them into one event with
+   * a boolean would push the branch into `app.ts` for no gain. */
   readonly verify = output<void>();
+
+  /**
+   * Whether the next run is an Advanced Search.
+   *
+   * **Deliberately not persisted.** The sidebar's collapsed state is a
+   * workspace preference and is remembered; this is an intent about one
+   * search. Restoring it would mean a choice made days ago silently changes
+   * what the button does today, and Advanced commits the person to a review
+   * before anything is searched for. The screen is destroyed and rebuilt by
+   * the shell's `@switch` on every visit, so off-by-default costs nothing to
+   * maintain.
+   */
+  readonly advanced = signal(false);
+
+  /** The single action, dispatched by the mode the switch is in. */
+  start() {
+    if (this.advanced()) this.verify.emit();
+    else this.run.emit();
+  }
 
   readonly fileInputRef = viewChild<ElementRef<HTMLInputElement>>('fileInput');
 
