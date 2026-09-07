@@ -65,6 +65,37 @@ describe('ReportScreen', () => {
     expect(text(fixture)).not.toContain('Match level');
   });
 
+  it('opens the novelty-risk explanation when its information control is clicked', () => {
+    const fixture = mountReport(report());
+    const help = html(fixture).querySelector<HTMLDetailsElement>('.risk-help')!;
+    const control = help.querySelector<HTMLElement>('.risk-legend-help')!;
+
+    expect(help.open).toBe(false);
+    control.click();
+    fixture.detectChanges();
+
+    expect(help.open).toBe(true);
+    expect(help.textContent).toContain('High means stronger overlap');
+  });
+
+  it('groups the right-column summary and concepts into one clearly divided card', () => {
+    const fixture = mountReport(report());
+    const rightColumn = html(fixture).querySelector('.report-col-right')!;
+    const card = rightColumn.querySelector('.summary-card')!;
+    const sectionNames = [...card.querySelectorAll('.summary-section-title')].map((heading) =>
+      heading.textContent?.trim(),
+    );
+
+    expect(rightColumn.querySelectorAll(':scope > article')).toHaveLength(1);
+    expect(card.querySelector('.report-concepts')).not.toBeNull();
+    expect(sectionNames).toEqual([
+      'Key overlap',
+      'Novelty risk',
+      'Overall assessment',
+      'Detected concepts',
+    ]);
+  });
+
   it('renders none of the removed percentage furniture', () => {
     const fixture = mountReport(report());
     const root = html(fixture);

@@ -1233,6 +1233,12 @@ is connection-local and deliberately **not** in the `workflow_event_type` enum.
 - **Leaving the first review is explicit cancellation.** Back opens an in-app confirmation;
   confirming calls the same authenticated delete before returning to the submit screen.
   Dismissing it keeps the reviewer and the run exactly where they were.
+- **A cancellation race never kills the executor.** If deletion wins after a worker acquires
+  the lease but before reconcile reads the run, `_system_get_run` raises `RunNotFoundError`.
+  `run_forever` treats that narrow condition like the existing missing-run foreign-key form:
+  it logs the abandonment and polls again. There is no run left to mark failed and no event
+  log left to append to; turning the disappearance into a failure would fabricate state,
+  while letting it escape would strand every later run in `QUEUED`.
 
 **Two endpoints record a request and do none of the work**, and their `202` is the
 design rather than a courtesy. `POST /api/runs/{id}/candidates` (case T) and
@@ -2205,19 +2211,20 @@ just moved into the UI.
 
 `error` is the newest of the six and the only screen not in the original design handoff.
 A failed run used to fire a native `alert()` and drop the user back on `submit`, which
-threw away everything the stream had already said. `ErrorScreen` now renders the backend's
-`error` detail **verbatim** in a mono block, names the phase it died in, and shows how many
+threw away everything the stream had already said. `ErrorScreen` now renders concise,
+high-level recovery guidance, names the phase it died in, and shows how many
 phases in the selected Quick/Advanced route completed. Retrying preserves that route; an
-Advanced Search failure cannot silently become a Quick Search. **That detail is sanitized server-side before it is streamed**
-(`server.py` passes it through `workflow/redaction.py`'s `safe_detail`; it used to be
-`str(error)`), so what reaches the browser is the provider and the HTTP status rather than a
-provider body — the actionable half of "an HTTP 429, a depleted-credits 402" survives, and the
-credential-bearing half never leaves the process — `startRunning` tracks `lastPhase` in a local declared
+Advanced Search failure cannot silently become a Quick Search. Backend details are still
+sanitized before storage and transport, but the browser treats them as diagnostic data
+(`server.py` passes them through `workflow/redaction.py`'s `safe_detail`). The public
+message comes from the frontend's centralized mapping rather than the provider response or
+workflow exception. `startRunning` tracks `lastPhase` in a local declared
 *outside* the `try` precisely so the `catch` can read it without waiting on a signal update.
-It offers retry and back, and never renders a partial report. Keep it that way: the
-zero-tolerance policy makes the error path a first-class result, not an afterthought, and
-paraphrasing or prettifying the detail string would hide exactly the information (an HTTP
-429, a depleted-credits 402) that tells the user which quota ran out.
+It offers retry and back, and never renders a partial report. Sanitized backend details
+remain diagnostic data for logs and application logic; they are not rendered because
+provider names, HTTP statuses, workflow states and exception classes do not help an end
+user recover. `frontend/src/app/shared/public-errors.ts` is the single source for public
+error copy and maps internal failure codes to short English guidance.
 
 **The zero-tolerance policy applies to this file too.** It used to invent content whenever
 the backend sent nothing: three hardcoded "recommendations" when the list was empty, a

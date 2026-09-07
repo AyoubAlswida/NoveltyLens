@@ -2,6 +2,7 @@ import { Component, ChangeDetectionStrategy, signal, inject, output } from '@ang
 import { Icon } from '../shared/icon';
 import { BrandHeader } from '../shared/chrome';
 import { AuthService } from '../services/auth';
+import { publicSignInError } from '../shared/public-errors';
 
 /**
  * The sign-in gate. There is no signup screen and no link to one: accounts are
@@ -106,9 +107,7 @@ export class LoginScreen {
       this.password.set('');
       this.signedIn.emit();
     } catch (failure) {
-      // Verbatim, like the error screen: "Incorrect email or password." and
-      // "Failed to fetch" mean different things and must stay distinguishable.
-      this.error.set(failure instanceof Error ? failure.message : 'Sign in failed.');
+      this.error.set(publicSignInError(failure));
     } finally {
       this.busy.set(false);
     }

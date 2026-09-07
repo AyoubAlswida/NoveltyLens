@@ -1,6 +1,7 @@
 import { Component, computed, input, output } from '@angular/core';
 import { Icon } from '../shared/icon';
 import { RunApiError } from '../services/runs';
+import { PUBLIC_ERRORS, publicRunError } from '../shared/public-errors';
 
 /**
  * Every state a workflow-gate screen can be in.
@@ -82,6 +83,7 @@ export const STAGE_LABELS: Record<string, string> = {
          included. The browser checks missed it because clicking through the
          DOM does not require an element to be reachable by a person. -->
     <div class="screen screen-scroll gate-screen">
+      @if (state() !== 'resuming') {
       <header class="stage-header glass-card">
         <!-- No back control here. It lives in the footer, labelled, beside the
              action it is an alternative to. A chevron up here as well meant two
@@ -97,12 +99,13 @@ export const STAGE_LABELS: Record<string, string> = {
         <!-- Anchors the right end of the header. Rendered text rather than an
              aria-label: a reviewer three screens into a flow needs to see how
              far along they are. -->
-        @if (state() !== 'resuming' && steps().length > 0) {
+        @if (steps().length > 0) {
           <span class="stage-step-count">
             Step {{ current() }} of {{ steps().length }}
           </span>
         }
       </header>
+      }
 
       @switch (state()) {
         @case ('loading') {
@@ -116,9 +119,7 @@ export const STAGE_LABELS: Record<string, string> = {
           <div class="glass-card gate-card" data-state="forbidden" role="alert">
             <h2><app-icon name="LockKeyhole" /> Not available</h2>
             <p>
-              No run with this identifier was found for your account. It may not
-              exist, or it may belong to someone else — the server deliberately
-              does not distinguish the two, so neither does this screen.
+              {{ unavailableMessage }}
             </p>
           </div>
         }
@@ -127,10 +128,7 @@ export const STAGE_LABELS: Record<string, string> = {
           <div class="glass-card gate-card" data-state="reconnecting" aria-busy="true">
             <h2><app-icon name="RotateCcw" /> Reconnecting…</h2>
             <p>
-              The live connection dropped. <strong>The run is unaffected</strong> —
-              it is executing in a worker that has never heard of this browser.
-              Nothing is lost; everything that happens while you are away is
-              replayed when the connection returns.
+              We lost the connection. We’re trying again now.
             </p>
           </div>
         }
@@ -148,24 +146,29 @@ export const STAGE_LABELS: Record<string, string> = {
             data-state="resuming"
             aria-busy="true"
           >
-            <div class="gate-transition-status">
-              <app-icon name="Check" />
-              <span>Changes saved</span>
+            <div class="gate-transition-icon" aria-hidden="true">
+              <app-icon name="Check" [size]="24" />
             </div>
-            <div class="gate-transition-progress">
-              <span class="spinner" aria-hidden="true"></span>
+            <div class="gate-transition-copy">
+              <span class="gate-transition-status">Changes saved</span>
+              <h1>{{ displayTitle() }}</h1>
               <p>{{ transitionMessage() }}</p>
             </div>
+            <div class="gate-transition-progress" aria-hidden="true">
+              <span></span>
+            </div>
+            <p class="gate-transition-note">
+              No action is needed. The next step will open automatically.
+            </p>
           </div>
         }
 
         @case ('failed') {
           <div class="glass-card gate-card" data-state="failed" role="alert">
             <h2><app-icon name="AlertTriangle" /> This run failed</h2>
-            <pre class="error-detail">{{ detail() }}</pre>
+            <p class="gate-note">{{ detail() }}</p>
             <p class="gate-note">
-              No report was produced, and nothing partial is shown. A partial
-              verification is not a shorter answer — it is a different one.
+              No partial results are shown.
             </p>
           </div>
         }
@@ -173,12 +176,7 @@ export const STAGE_LABELS: Record<string, string> = {
         @case ('stale') {
           <div class="glass-card gate-card" data-state="stale" role="alert">
             <h2><app-icon name="RotateCcw" /> This changed while you were reviewing</h2>
-            <pre class="error-detail">{{ detail() }}</pre>
-            <p class="gate-note">
-              Your decision was <strong>not</strong> applied. You reviewed specific
-              evidence, and reattaching that judgement to different evidence would
-              credit you with having seen something you did not.
-            </p>
+            <p class="gate-note">{{ detail() }}</p>
             <button class="primary-action compact" type="button" (click)="reload.emit()">
               Reload and review again
             </button>
@@ -189,13 +187,12 @@ export const STAGE_LABELS: Record<string, string> = {
           <div class="glass-card gate-card" [attr.data-state]="state()">
             @if (state() === 'blocked') {
               <div class="gate-blocked" role="alert">
-                <h2><app-icon name="AlertTriangle" /> This gate cannot be completed yet</h2>
+                <h2><app-icon name="AlertTriangle" /> Check your changes</h2>
                 <ul class="blocking-list">
                   @for (item of blocking(); track $index) {
                     <li>{{ describe(item) }}</li>
                   }
                 </ul>
-                <p class="gate-note">Every outstanding condition is listed, not just the first.</p>
               </div>
             }
 
@@ -240,6 +237,7 @@ export const STAGE_LABELS: Record<string, string> = {
   `,
 })
 export class GateShell {
+  readonly unavailableMessage = PUBLIC_ERRORS.unavailable;
   readonly gate = input.required<string>();
   readonly title = input.required<string>();
   /** The sentence under the title, saying what this stage is asking for. */
@@ -291,10 +289,11 @@ export class GateShell {
   readonly reload = output<void>();
 
   describe(condition: Record<string, unknown> | string): string {
-    if (typeof condition === 'string') return condition;
-    const reason = condition['reason'] ?? condition['detail'] ?? condition['code'];
-    const subject = condition['cell_id'] ?? condition['publication_number'] ?? '';
-    return [subject, reason].filter(Boolean).join(' — ') || JSON.stringify(condition);
+    const code = typeof condition === 'string' ? condition : condition['code'];
+    if (code === 'NO_SUMMARY') return 'Add a technical summary.';
+    if (code === 'NO_ELEMENTS') return 'Add at least one technical limitation.';
+    if (code === 'NO_QUERIES') return 'Add at least one search query.';
+    return PUBLIC_ERRORS.blocked;
   }
 }
 
@@ -308,10 +307,10 @@ export class GateShell {
  */
 export function classify(error: unknown, detail: { set(value: string): void }): GateState {
   if (!(error instanceof RunApiError)) {
-    detail.set('The request could not be completed.');
+    detail.set(PUBLIC_ERRORS.analysis);
     return 'failed';
   }
-  detail.set(error.failure.detail);
+  detail.set(publicRunError(error.failure.code));
   switch (error.failure.code) {
     case 'RUN_NOT_FOUND':
       return 'forbidden';

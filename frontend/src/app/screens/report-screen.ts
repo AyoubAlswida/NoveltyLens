@@ -55,14 +55,15 @@ import { AnalysisReport, Risk } from '../models/report';
                 <span class="risk-legend-item risk-high"><i></i>High</span>
                 <span class="risk-legend-item risk-medium"><i></i>Medium</span>
                 <span class="risk-legend-item risk-low"><i></i>Low</span>
-                <span
-                  class="risk-legend-help"
-                  title="How closely a candidate's technology overlaps with your invention. High risk means the overlap is large, so it is less likely your idea is novel over that patent."
-                  aria-label="What novelty risk means"
-                  tabindex="0"
-                >
-                  <app-icon name="Info" [size]="14" />
-                </span>
+                <details class="inline-help risk-help">
+                  <summary class="risk-legend-help" aria-label="What novelty risk means">
+                    <app-icon name="Info" [size]="14" />
+                  </summary>
+                  <p class="inline-help-popover">
+                    Novelty risk reflects how closely each patent overlaps with your
+                    invention. High means stronger overlap; Low means more limited overlap.
+                  </p>
+                </details>
               </div>
             </div>
             }
@@ -105,9 +106,8 @@ import { AnalysisReport, Risk } from '../models/report';
 
         <div class="report-col-right">
           <article class="summary-card glass-card">
-            <p class="eyebrow">Closest prior-art match</p>
-
-            <div class="summary-copy">
+            <header class="summary-copy summary-card-header">
+              <p class="eyebrow">Closest prior-art match</p>
               <h2>{{ topPatent()?.title ?? 'No matching prior art indexed' }}</h2>
               <p>
                 {{
@@ -116,45 +116,52 @@ import { AnalysisReport, Risk } from '../models/report';
                     : 'No patent record exceeded the current matching threshold.'
                 }}
               </p>
+            </header>
 
-              <!--
-                Everything below is inside this @if on purpose. With no match
-                there is nothing to rate, and a rating is a claim: printing
-                "Novelty risk: Low" over an empty result set would state a
-                finding the run did not make. The empty case says only that
-                nothing was found.
-              -->
-              @if (topPatent(); as top) {
+            <!--
+              Everything except Detected concepts is inside this @if on purpose.
+              With no match there is nothing to rate, and a rating is a claim:
+              printing "Novelty risk: Low" over an empty result set would state
+              a finding the run did not make.
+            -->
+            @if (topPatent(); as top) {
+              <section class="summary-card-section">
+                <h3 class="summary-section-title">Key overlap</h3>
                 @if (top.key_overlap.length) {
-                  <p class="card-label">Key overlap</p>
                   <div class="overlap-tags">
                     @for (tag of top.key_overlap; track tag) {
                       <span class="overlap-tag">{{ tag }}</span>
                     }
                   </div>
+                } @else {
+                  <span class="empty-state">No key overlaps returned.</span>
                 }
+              </section>
 
-                <p class="card-label">Novelty risk</p>
+              <section class="summary-card-section">
+                <h3 class="summary-section-title">Novelty risk</h3>
                 <div class="risk-pill {{ riskClass(top.risk) }}">
                   <app-icon name="AlertTriangle" [size]="14" />
                   {{ top.risk }}
                 </div>
+              </section>
 
-                <p class="card-label">Overall assessment</p>
+              <section class="summary-card-section">
+                <h3 class="summary-section-title">Overall assessment</h3>
                 <p class="summary-why">{{ top.rationale }}</p>
-              }
-            </div>
-          </article>
+              </section>
+            }
 
-          <article class="concept-card glass-card">
-            <p class="eyebrow">Detected concepts</p>
-            <div class="concept-row report-concepts">
-              @for (concept of data().concepts; track concept) {
-                <span class="concept-chip">{{ concept }}</span>
-              } @empty {
-                <span class="empty-state">No concepts returned.</span>
-              }
-            </div>
+            <section class="summary-card-section summary-concepts-section">
+              <h3 class="summary-section-title">Detected concepts</h3>
+              <div class="concept-row report-concepts">
+                @for (concept of data().concepts; track concept) {
+                  <span class="concept-chip">{{ concept }}</span>
+                } @empty {
+                  <span class="empty-state">No concepts returned.</span>
+                }
+              </div>
+            </section>
           </article>
         </div>
       </section>

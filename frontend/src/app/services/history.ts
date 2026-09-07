@@ -2,6 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { API_BASE_URL } from '../config';
 import { AnalysisReport, HistoryEntry } from '../models/report';
 import { AuthService } from './auth';
+import { PUBLIC_ERRORS } from '../shared/public-errors';
 
 /**
  * Reads `GET /api/history` -- the runs the backend stored in Postgres before
@@ -16,7 +17,7 @@ export class HistoryService {
 
   async list(): Promise<HistoryEntry[]> {
     const response = await this.auth.authorizedFetch(`${API_BASE_URL}/api/history`);
-    if (!response.ok) throw new Error(`History request failed (${response.status}).`);
+    if (!response.ok) throw new Error(PUBLIC_ERRORS.history);
     return (await response.json()) as HistoryEntry[];
   }
 
@@ -30,7 +31,7 @@ export class HistoryService {
     const response = await this.auth.authorizedFetch(`${API_BASE_URL}/api/history`, {
       method: 'DELETE',
     });
-    if (!response.ok) throw new Error(`Clearing history failed (${response.status}).`);
+    if (!response.ok) throw new Error(PUBLIC_ERRORS.clearHistory);
     return ((await response.json()) as { deleted: number }).deleted;
   }
 }

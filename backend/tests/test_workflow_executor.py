@@ -29,6 +29,7 @@ from workflow import attempts, events, lease, store
 from workflow.executor import Executor, GraphAdapter, load_adapter
 from workflow.types import (
     ExecutorUnavailable,
+    RunNotFoundError,
     RunStatus,
     WorkflowGate,
 )
@@ -36,6 +37,39 @@ from workflow.types import (
 pytestmark = pytest.mark.postgres
 
 ACTOR = "testnovelty@gmail.com"
+
+
+def test_a_cancelled_claim_does_not_kill_the_executor_loop(monkeypatch, caplog):
+    """Cancellation may win after claim but before reconcile reads the run.
+
+    The vanished run has no status or event log left to update. It is abandoned,
+    and the same executor must poll again so later runs are not stranded.
+    """
+    stop = threading.Event()
+    executor = Executor(
+        adapter=ADAPTER,
+        checkpointer_factory=checkpointer,
+        owner_id="cancel-race-worker",
+        ttl_seconds=30,
+        heartbeat_seconds=5,
+        poll_interval_seconds=0,
+    )
+    calls = 0
+
+    def claim_once_then_stop():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RunNotFoundError("run cancelled-between-claim-and-reconcile not found")
+        stop.set()
+        return None
+
+    monkeypatch.setattr(executor, "claim_and_run_one", claim_once_then_stop)
+
+    executor.run_forever(stop)
+
+    assert calls == 2, "the executor polled again after the cancelled claim"
+    assert "abandoning it and continuing" in caplog.text
 
 
 # --- the two-node graph under test ---------------------------------------

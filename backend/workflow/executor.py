@@ -60,6 +60,7 @@ from workflow.types import (
     CheckpointUnavailable,
     ExecutorUnavailable,
     FencedError,
+    RunNotFoundError,
     RunStatus,
     WorkflowEventType,
     WorkflowGate,
@@ -223,6 +224,20 @@ class Executor:
                 # to an aggregator.
                 logger.error(
                     "executor cannot reach persistence: %s", redaction.safe_log(error)
+                )
+                claimed = None
+            except RunNotFoundError as error:
+                # Cancellation deletes the run and its lease atomically. If it
+                # lands after acquisition but before reconcile reads the run,
+                # `_system_get_run` reports that expected disappearance with a
+                # domain error rather than the SQL foreign-key form handled
+                # below. There is no run left to fail and no event log left to
+                # write to; abandoning it is the only truthful outcome. Most
+                # importantly, one cancellation must not kill the executor
+                # thread and strand every later run in QUEUED.
+                logger.warning(
+                    "the claimed run no longer exists; abandoning it and continuing: %s",
+                    redaction.safe_log(error),
                 )
                 claimed = None
             except psycopg.errors.ForeignKeyViolation as error:

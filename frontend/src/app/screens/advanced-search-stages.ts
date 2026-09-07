@@ -124,13 +124,21 @@ export const TOTAL_STAGES = STAGE_NAMES.length;
                the same sentence twice. -->
           <section class="stage-pane" [attr.aria-label]="stageTitle()">
             <div class="stage-side-by-side">
-              <div>
-                <h3>Submitted description</h3>
+              <div class="comparison-panel submitted-description-panel">
+                <div class="stage-field-heading">
+                  <h3>Submitted description</h3>
+                  <span class="read-only-label">Original</span>
+                </div>
                 <!-- Read-only, always. Never bound to an input. -->
                 <p class="original-description">{{ originalDescription() }}</p>
               </div>
-              <div>
-                <h3>Technical summary</h3>
+              <div class="comparison-panel editable-summary">
+                <div class="stage-field-heading">
+                  <h3>Technical summary</h3>
+                  <span class="editable-label">
+                    <app-icon name="PenLine" [size]="14" /> Editable
+                  </span>
+                </div>
                 <label class="sr-only" for="summary-input">Technical summary</label>
                 <!-- Wrapped in .textarea-wrap so this box IS the search page's
                      textarea rather than a copy of its values: same border,
@@ -319,7 +327,7 @@ export class AdvancedSearchStages {
   stageTitle(): string {
     switch (this.stage()) {
       case 1:
-        return 'Review invention summary';
+        return 'Review and edit invention summary';
       case 2:
         return 'Edit the technical limitations';
       default:
@@ -331,7 +339,7 @@ export class AdvancedSearchStages {
   stageLede(): string {
     switch (this.stage()) {
       case 1:
-        return 'Confirm the technical summary before the search begins.';
+        return 'This is how Novelty Lens understood your invention. Edit it if needed.';
       case 2:
         return 'Edit the technical limitations to be searched. Add anything missing and remove anything not being claimed.';
       default:

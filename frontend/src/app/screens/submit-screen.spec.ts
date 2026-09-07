@@ -7,11 +7,8 @@ import { SubmitScreen } from './submit-screen';
  *
  * Advanced Search used to be a second button. It is now a switch on the
  * description box, so the single action starts either a quick search or the
- * guided three-stage run -- which makes "which run did that button start?" a
- * behaviour worth pinning rather than a layout detail. Every assertion below is
- * about what the component EMITS and what the button READS, because those two
- * disagreeing is the actual failure mode: a control that silently starts the
- * other kind of run.
+ * guided three-stage run. The primary action keeps one stable product label;
+ * the switch communicates which mode will run.
  */
 
 const DESCRIPTION = 'A bottle that filters and sterilises water as you drink.';
@@ -70,15 +67,24 @@ describe('Submit screen — Advanced is a mode, not a second button', () => {
     expect(emitted).toEqual(['run']);
   });
 
-  /**
-   * The label is the only thing telling a person which run they are about to
-   * start. A switch whose state did not reach the button would be a mode you
-   * trigger by accident -- the whole reason the second button was removed.
-   */
-  it('says which run the button will start, in both modes', () => {
+  it('keeps the Run Novelty Lens label in both modes', () => {
     expect(label(fixture)).toBe('Run Novelty Lens');
     toggle(fixture);
-    expect(label(fixture)).toBe('Start Advanced Search');
+    expect(label(fixture)).toBe('Run Novelty Lens');
+  });
+
+  it('places Advanced directly after Attach a file', () => {
+    const options = fixture.nativeElement.querySelector('.composer-options');
+    const attach = options.querySelector('.composer-attach');
+    const mode = options.querySelector('.composer-mode');
+    expect(attach.nextElementSibling).toBe(mode);
+  });
+
+  it('groups Attach and Advanced in one composer toolbar', () => {
+    const options = fixture.nativeElement.querySelector('.composer-options');
+    expect(options.querySelector('.composer-attach')).not.toBeNull();
+    expect(options.querySelector('.composer-toggle')).not.toBeNull();
+    expect(options.querySelector('.advanced-help')).not.toBeNull();
   });
 
   it('announces its on/off state to assistive technology', () => {
@@ -87,6 +93,18 @@ describe('Submit screen — Advanced is a mode, not a second button', () => {
     expect(t.getAttribute('aria-checked')).toBe('false');
     toggle(fixture);
     expect(t.getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('opens an explanation when the Advanced information control is clicked', () => {
+    const help: HTMLDetailsElement = fixture.nativeElement.querySelector('.advanced-help');
+    const control: HTMLElement = help.querySelector('.action-hint')!;
+
+    expect(help.open).toBe(false);
+    control.click();
+    fixture.detectChanges();
+
+    expect(help.open).toBe(true);
+    expect(help.textContent).toContain('pauses for your review before searching');
   });
 
   /**

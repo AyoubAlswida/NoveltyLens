@@ -2,6 +2,7 @@ import { Injectable, inject, signal } from '@angular/core';
 import { API_BASE_URL } from '../config';
 import { AuthService } from './auth';
 import type { AnalysisReport, StoredGate, StreamEvent, WorkflowGate } from '../models/report';
+import { PUBLIC_ERRORS } from '../shared/public-errors';
 
 /**
  * The verified-run API (backend `api/runs.py`, spec §10).
@@ -35,9 +36,7 @@ export interface RunSummary {
   created_at: string | null;
   updated_at: string | null;
   last_event_id?: number;
-  /** Present only on a FAILED run. Already sanitized server-side
-   *  (`workflow/redaction.py`), so it is rendered verbatim -- paraphrasing it
-   *  would hide exactly the fact that tells the user which quota ran out. */
+  /** Present only on a FAILED run. Diagnostic data; never render it directly. */
   failure_code?: string;
   failure_detail?: string;
 }
@@ -86,7 +85,7 @@ export class RunsService {
     if (!response.ok) {
       let failure: ApiFailure = {
         code: 'UNKNOWN',
-        detail: `The request failed with status ${response.status}.`,
+        detail: PUBLIC_ERRORS.general,
       };
       try {
         const body = await response.json();
@@ -244,7 +243,7 @@ export class RunsService {
     if (!response.ok || !response.body) {
       const failure: ApiFailure = {
         code: 'STREAM_UNAVAILABLE',
-        detail: `The run stream could not be opened (status ${response.status}).`,
+        detail: PUBLIC_ERRORS.connection,
       };
       this.lastFailure.set(failure);
       throw new RunApiError(response.status, failure);
@@ -281,7 +280,7 @@ export class RunsService {
           // rather than skipped.
           throw new RunApiError(200, {
             code: 'SSE_CONTRACT',
-            detail: 'The server sent a frame that was not valid JSON.',
+            detail: PUBLIC_ERRORS.connection,
           });
         }
       }

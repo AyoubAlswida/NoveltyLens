@@ -33,9 +33,8 @@ export class AuthService {
       body: JSON.stringify({ email, password }),
     });
 
-    // The backend's own detail is surfaced verbatim, the same as the error
-    // screen does: "Incorrect email or password." is the message it chose, and
-    // a 500 or a connection failure must not be relabelled as a bad password.
+    // Keep the backend detail here for classification. The login screen maps it
+    // to public copy and preserves only the useful invalid-credentials message.
     if (!response.ok) {
       throw new Error(await this.detailOf(response, 'Sign in failed.'));
     }

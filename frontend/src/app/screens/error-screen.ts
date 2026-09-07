@@ -1,7 +1,6 @@
 import { Component, ChangeDetectionStrategy, input, output, computed } from '@angular/core';
 import { Icon } from '../shared/icon';
 import { Phase, PHASE_LABELS } from '../models/report';
-import { API_BASE_URL } from '../config';
 
 @Component({
   selector: 'app-error-screen',
@@ -13,8 +12,7 @@ import { API_BASE_URL } from '../config';
         <div class="failed-label"><span></span> RUN FAILED</div>
         <h1>The analysis could not be completed</h1>
         <p>
-          No partial results are shown &mdash; the pipeline reports a genuine answer or none at
-          all, so nothing below was estimated or filled in.
+          No partial results are shown.
         </p>
       </section>
 
@@ -24,7 +22,7 @@ import { API_BASE_URL } from '../config';
             <app-icon name="AlertTriangle" [size]="22" [strokeWidth]="2" />
           </div>
           <div>
-            <p class="eyebrow">What the backend reported</p>
+            <p class="eyebrow">What happened</p>
             <h2>{{ heading() }}</h2>
           </div>
         </div>
@@ -64,7 +62,6 @@ export class ErrorScreen {
   readonly retry = output<void>();
   readonly back = output<void>();
 
-  readonly apiBaseUrl = API_BASE_URL;
   readonly totalPhases = computed(() => this.phaseOrder().length);
 
   readonly reachedIndex = computed(() => {

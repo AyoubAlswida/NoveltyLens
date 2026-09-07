@@ -121,7 +121,7 @@ describe('RunsService', () => {
     } catch (error) {
       const failure = error as RunApiError;
       expect(failure.failure.code).toBe('UNKNOWN');
-      expect(failure.failure.detail).toContain('502');
+      expect(failure.failure.detail).toBe('Something went wrong. Please try again.');
     }
   });
 

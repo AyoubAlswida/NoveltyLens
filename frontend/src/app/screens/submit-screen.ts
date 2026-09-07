@@ -14,7 +14,7 @@ const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.pdf', '.docx'];
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [Icon],
   template: `
-    <div class="screen screen-scroll">
+    <div class="screen screen-scroll submit-screen">
       <section class="form-card glass-card" aria-label="Patent search input">
         <div class="field-heading">
           <div class="field-title">
@@ -63,15 +63,56 @@ const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.pdf', '.docx'];
               class="visually-hidden"
               (change)="onFileInputChange($event)"
             />
-            <button
-              type="button"
-              class="composer-attach"
-              (click)="fileInput.click()"
-              title="Attach a .txt, .md, .pdf or .docx file, or drag one onto the box"
-            >
-              <app-icon name="Upload" [size]="15" />
-              <span>Attach a file</span>
-            </button>
+            <div class="composer-options">
+              <button
+                type="button"
+                class="composer-attach"
+                (click)="fileInput.click()"
+                title="Attach a .txt, .md, .pdf or .docx file, or drag one onto the box"
+              >
+                <app-icon name="Upload" [size]="15" />
+                <span>Attach a file</span>
+              </button>
+
+            <!--
+              Advanced is a MODE on the search, not a second search. It was a
+              second button, which put two actions of equal visual weight on the
+              screen and left the difference between them to be guessed at.
+              Its switch sits directly beside Attach so both optional inputs are
+              grouped together. The switch itself communicates the selected mode;
+              the primary action keeps the product's stable Run Novelty Lens label.
+
+              role="switch" rather than a plain button: it has an on and an off
+              state that a screen reader has to be able to announce, which
+              aria-pressed on a generic button conveys less directly.
+            -->
+              <span class="composer-mode">
+                <button
+                  type="button"
+                  class="composer-toggle"
+                  role="switch"
+                  [class.is-on]="advanced()"
+                  [attr.aria-checked]="advanced()"
+                  (click)="advanced.set(!advanced())"
+                >
+                  <span class="composer-switch" aria-hidden="true">
+                    <span class="composer-switch-knob"></span>
+                  </span>
+                  <span>Advanced</span>
+                </button>
+
+                <details class="inline-help advanced-help">
+                  <summary class="action-hint" aria-label="What Advanced Search does">
+                    <app-icon name="Info" [size]="15" />
+                  </summary>
+                  <p class="inline-help-popover">
+                    Advanced Search pauses for your review before searching. You’ll
+                    confirm the invention summary, technical limitations, and search
+                    queries first.
+                  </p>
+                </details>
+              </span>
+            </div>
 
             @if (uploadedFileName(); as name) {
               <span class="upload-chip">
@@ -87,44 +128,6 @@ const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.pdf', '.docx'];
                 </button>
               </span>
             }
-
-            <!--
-              Advanced is a MODE on the search, not a second search. It was a
-              second button, which put two actions of equal visual weight on the
-              screen and left the difference between them to be guessed at.
-              Switching it on changes what the one action does, and the button's
-              own label changes with it -- a mode that did not show up in the
-              control it modifies is exactly the kind that gets triggered by
-              accident.
-
-              role="switch" rather than a plain button: it has an on and an off
-              state that a screen reader has to be able to announce, which
-              aria-pressed on a generic button conveys less directly.
-            -->
-            <span class="composer-mode">
-              <button
-                type="button"
-                class="composer-toggle"
-                role="switch"
-                [class.is-on]="advanced()"
-                [attr.aria-checked]="advanced()"
-                (click)="advanced.set(!advanced())"
-              >
-                <span class="composer-switch" aria-hidden="true">
-                  <span class="composer-switch-knob"></span>
-                </span>
-                <span>Advanced</span>
-              </button>
-
-              <span
-                class="action-hint"
-                tabindex="0"
-                aria-label="What Advanced Search does"
-                title="Advanced Search pauses for your review before it searches: you confirm how the invention was understood, edit the technical elements, then edit and approve the search queries that will run. Nothing is searched for until you approve it."
-              >
-                <app-icon name="Info" [size]="15" />
-              </span>
-            </span>
           </div>
         </div>
 
@@ -133,19 +136,11 @@ const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.pdf', '.docx'];
         }
 
         <div class="form-actions">
-          <!--
-            One action. Which run it starts is the switch's business, and the
-            label says which one that is, so the button never means something
-            different from what it reads.
-          -->
+          <!-- One stable product action. The adjacent switch communicates
+               whether the run uses the guided Advanced Search workflow. -->
           <button class="primary-action" (click)="start()" [disabled]="!description().trim()">
-            @if (advanced()) {
-              <app-icon name="ShieldCheck" [size]="18" />
-              <span>Start Advanced Search</span>
-            } @else {
-              <app-icon name="Sparkles" [size]="18" fill="currentColor" />
-              <span>Run Novelty Lens</span>
-            }
+            <app-icon name="Sparkles" [size]="18" fill="currentColor" />
+            <span>Run Novelty Lens</span>
           </button>
         </div>
       </section>

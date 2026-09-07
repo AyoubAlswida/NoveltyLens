@@ -43,9 +43,8 @@ import { HistoryEntry, Risk } from '../models/report';
           <div class="history-error" role="alert">
             <p>
               <app-icon name="AlertTriangle" [size]="17" [strokeWidth]="2" />
-              <span>Could not load your history.</span>
+              <span>{{ message }}</span>
             </p>
-            <pre class="error-detail">{{ message }}</pre>
           </div>
         } @else if (entries().length === 0) {
           <p class="empty-state padded">

@@ -566,8 +566,24 @@ button {
 }
 
 .running-intro {
-  margin-top: 2px;
-  margin-bottom: 26px;
+  margin: 0 auto 24px;
+}
+
+.running-shell {
+  width: min(860px, 100%);
+  margin: 10px auto 0;
+}
+
+.running-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 4px;
+  color: var(--teal-ink);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .glass-card {
@@ -582,6 +598,16 @@ button {
   margin: 0 auto;
   padding: 30px 34px 28px;
   border-radius: 22px;
+}
+
+.submit-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.submit-screen .form-card {
+  margin: 0;
 }
 
 .field-heading {
@@ -666,14 +692,22 @@ button {
   pointer-events: auto;
 }
 
+.composer-options {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
 .composer-attach {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 6px 11px;
-  border: 1px solid var(--line, #dbe4ea);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.9);
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
   color: var(--navy-soft);
   font-family: inherit;
   font-size: 12.5px;
@@ -684,36 +718,34 @@ button {
 
 .composer-attach:hover {
   color: var(--btn-blue);
-  border-color: var(--btn-blue);
-  background: #fff;
+  background: rgba(17, 121, 196, 0.07);
 }
 
 .composer-attach:focus-visible {
   outline: none;
   color: var(--btn-blue);
-  border-color: var(--btn-blue);
   box-shadow: 0 0 0 3px rgba(17, 121, 196, 0.2);
 }
 
-/* The Advanced switch sits at the right end of the composer row; attach and the
-   uploaded-file chip keep the left. `margin-left: auto` rather than
-   `justify-content: space-between` on the parent, because the chip appears and
-   disappears and space-between would move the switch when it did. */
+/* Advanced sits directly beside Attach: both are optional controls that change
+   the input or how it is processed. The uploaded-file chip follows them. */
 .composer-mode {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
+  margin-left: 3px;
+  padding-left: 6px;
+  border-left: 1px solid var(--line, #dbe4ea);
 }
 
 .composer-toggle {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 11px 6px 8px;
-  border: 1px solid var(--line, #dbe4ea);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.9);
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
   color: var(--navy-soft);
   font-family: inherit;
   font-size: 12.5px;
@@ -724,14 +756,12 @@ button {
 
 .composer-toggle:hover {
   color: var(--btn-blue);
-  border-color: var(--btn-blue);
-  background: #fff;
+  background: rgba(17, 121, 196, 0.07);
 }
 
 .composer-toggle:focus-visible {
   outline: none;
   color: var(--btn-blue);
-  border-color: var(--btn-blue);
   box-shadow: 0 0 0 3px rgba(17, 121, 196, 0.2);
 }
 
@@ -745,7 +775,6 @@ button {
    3:1, and both clear it. */
 .composer-toggle.is-on {
   color: var(--btn-blue-hover);
-  border-color: var(--btn-blue);
   background: rgba(17, 121, 196, 0.08);
 }
 
@@ -779,16 +808,23 @@ button {
 /* Dark counterparts, written here rather than discovered later: every rule
    above that carries a literal colour needs one, or the dark block's
    `:root[data-theme="dark"] .foo` specificity silently erases the state. */
+:root[data-theme="dark"] .composer-options {
+  background: transparent;
+  box-shadow: none;
+}
+
+:root[data-theme="dark"] .composer-mode {
+  border-left-color: rgba(255, 255, 255, 0.16);
+}
+
 :root[data-theme="dark"] .composer-toggle {
-  border-color: rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.06);
+  background: transparent;
   color: #d3d9e0;
 }
 
 :root[data-theme="dark"] .composer-toggle:hover,
 :root[data-theme="dark"] .composer-toggle:focus-visible {
   color: var(--btn-blue-dark);
-  border-color: var(--btn-blue-dark);
   background: rgba(255, 255, 255, 0.1);
 }
 
@@ -796,7 +832,6 @@ button {
    3.82:1 on its own tint, --btn-blue-dark-hover is 4.80:1. */
 :root[data-theme="dark"] .composer-toggle.is-on {
   color: var(--btn-blue-dark-hover);
-  border-color: var(--btn-blue-dark);
   background: rgba(84, 172, 240, 0.16);
 }
 
@@ -826,14 +861,12 @@ button {
 
 
 :root[data-theme="dark"] .composer-attach {
-  border-color: rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.06);
+  background: transparent;
 }
 
 :root[data-theme="dark"] .composer-attach:hover,
 :root[data-theme="dark"] .composer-attach:focus-visible {
   color: var(--btn-blue-dark);
-  border-color: var(--btn-blue-dark);
   background: rgba(255, 255, 255, 0.1);
 }
 
@@ -940,10 +973,8 @@ button {
   flex-wrap: wrap;
 }
 
-/* A floor rather than a fixed width. The label changes with the mode ("Run
-   Novelty Lens" / "Start Advanced Search"), so a pinned width would either pad
-   the short one oddly or truncate the long one; the min-width keeps the button
-   from shrinking to the shorter label and back as the switch is used. */
+/* A floor rather than a fixed width. The stable label keeps the primary action
+   visually consistent while the Advanced switch communicates the mode. */
 .form-actions .primary-action {
   min-height: 44px;
   min-width: 208px;
@@ -957,9 +988,15 @@ button {
 .action-hint {
   display: inline-flex;
   align-items: center;
+  padding: 2px;
   color: #9aabc0;
-  cursor: help;
+  cursor: pointer;
   border-radius: 999px;
+  list-style: none;
+}
+
+.action-hint::-webkit-details-marker {
+  display: none;
 }
 
 .action-hint:hover,
@@ -977,6 +1014,54 @@ button {
 :root[data-theme="dark"] .action-hint:hover,
 :root[data-theme="dark"] .action-hint:focus-visible {
   color: var(--btn-blue-dark);
+}
+
+.inline-help {
+  position: relative;
+  display: inline-flex;
+}
+
+.inline-help-popover {
+  position: absolute;
+  z-index: 20;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  width: min(310px, calc(100vw - 48px));
+  margin: 0;
+  padding: 12px 14px;
+  transform: translateX(-50%);
+  border: 1px solid var(--line, #dbe4ea);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(19, 45, 73, 0.16);
+  color: var(--navy-soft);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.inline-help-popover::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  width: 9px;
+  height: 9px;
+  transform: translateX(-50%) rotate(45deg);
+  border-right: 1px solid var(--line, #dbe4ea);
+  border-bottom: 1px solid var(--line, #dbe4ea);
+  background: #fff;
+}
+
+:root[data-theme="dark"] .inline-help-popover {
+  border-color: var(--border);
+  background: #2b2b2b;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.32);
+}
+
+:root[data-theme="dark"] .inline-help-popover::after {
+  border-color: var(--border);
+  background: #2b2b2b;
 }
 
 
@@ -1061,8 +1146,13 @@ button {
 .progress-card {
   width: min(760px, 100%);
   margin: 0 auto;
-  padding: 20px 32px;
+  padding: 0;
   border-radius: 20px;
+  overflow: hidden;
+}
+
+.progress-list {
+  padding: 10px 28px;
 }
 
 .progress-step {
@@ -1226,56 +1316,60 @@ button {
   min-width: 420px;
 }
 
-/* Sticky rather than independently-scrolling: one scrollbar (the page's) in
-   the common case, and the shorter right column (summary + concepts) rides
-   along pinned near the top of the viewport while the longer left column
-   (patent matches) scrolls underneath it, then unsticks and scrolls away
-   itself once the left column -- which sets .report-columns's overall
-   height -- runs out. align-self: flex-start is required for sticky to size
-   to its own content instead of being stretched to match the left column's
-   height.
-
-   max-height + overflow-y is the fallback for when the sticky column's own
-   content (a long concept list) is taller than the viewport has room for at
-   its stuck position: without a cap, the overflow just renders below the
-   fold with no way to reach it until the column unsticks near the very
-   bottom of the left column's list -- "Detected concepts" would be
-   invisible until you'd scrolled through every patent match. Capped to the
-   viewport, it gets its own scrollbar only when it actually needs one. */
+/* The summary belongs to the page's single scroll. A sticky column with its
+   own max-height trapped the bottom of a long Detected concepts section behind
+   a second, easy-to-miss scrollbar. Let the whole card take its natural height
+   so every section is reached by the same page scroll as the patent list. */
 .report-col-right {
   flex: 1 1 0%;
   min-width: 320px;
   display: flex;
   flex-direction: column;
   gap: 20px;
-  position: sticky;
-  top: 20px;
   align-self: flex-start;
-  max-height: calc(100vh - 40px);
-  overflow-y: auto;
-}
-
-.report-col-right::-webkit-scrollbar {
-  width: 8px;
-}
-
-.report-col-right::-webkit-scrollbar-thumb {
-  background: rgba(17, 91, 176, 0.16);
-  border-radius: 999px;
 }
 
 .summary-card,
-.concept-card,
 .matches-card,
 .recommendations-card {
   border-radius: 20px;
 }
 
 .summary-card {
-  padding: 26px;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 0;
+  overflow: hidden;
+}
+
+.summary-card-header {
+  padding: 26px;
+}
+
+.summary-card-section {
+  padding: 18px 26px 20px;
+  border-top: 1px solid #e2e9ee;
+}
+
+.summary-section-title {
+  margin: 0 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--navy);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.summary-section-title::before {
+  content: '';
+  width: 3px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--teal);
 }
 
 /* `.summary-top`, `.score-ring` (with `.score-track` / `.score-value`) and
@@ -1329,8 +1423,15 @@ button {
 .risk-legend-help {
   display: inline-flex;
   align-items: center;
+  padding: 2px;
   color: #9aabc0;
-  cursor: help;
+  cursor: pointer;
+  border-radius: 999px;
+  list-style: none;
+}
+
+.risk-legend-help::-webkit-details-marker {
+  display: none;
 }
 
 .risk-legend-help:hover,
@@ -1338,27 +1439,48 @@ button {
   color: #687b92;
 }
 
+.risk-legend-help:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(17, 121, 196, 0.22);
+}
+
 /* Shared by the per-row score badge and the summary card's top match. */
 .risk-label {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11px;
+  gap: 7px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  font-size: 11.5px;
   font-weight: 700;
+  line-height: 1;
 }
 
 .risk-label i {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex: 0 0 8px;
+  width: 3px;
+  height: 13px;
+  border-radius: 2px;
+  flex: 0 0 3px;
 }
 
-.risk-label.risk-high { color: #bd3442; }
+.risk-label.risk-high {
+  color: #a92f3b;
+  border-color: rgba(203, 60, 73, 0.22);
+  background: rgba(203, 60, 73, 0.09);
+}
 .risk-label.risk-high i { background: #cb3c49; }
-.risk-label.risk-medium { color: #a96b11; }
+.risk-label.risk-medium {
+  color: #8d590c;
+  border-color: rgba(189, 122, 21, 0.24);
+  background: rgba(189, 122, 21, 0.1);
+}
 .risk-label.risk-medium i { background: #bd7a15; }
-.risk-label.risk-low { color: var(--green-dark); }
+.risk-label.risk-low {
+  color: var(--green-dark);
+  border-color: rgba(8, 168, 115, 0.24);
+  background: rgba(8, 168, 115, 0.09);
+}
 .risk-label.risk-low i { background: var(--green); }
 
 .card-label {
@@ -1432,12 +1554,8 @@ button {
 .risk-pill.risk-medium { color: #9a6514; background: rgba(189, 122, 21, 0.1); }
 .risk-pill.risk-high { color: #b73643; background: rgba(203, 60, 73, 0.09); }
 
-.concept-card {
-  padding: 26px;
-}
-
 .report-concepts {
-  margin-top: 14px;
+  margin-top: 0;
 }
 
 .matches-card {
@@ -1677,11 +1795,6 @@ button {
     width: 100%;
   }
 
-  /* Stacked layout: a sticky column mid-page would pin itself as you scroll
-     past it, which only makes sense in the two-column desktop layout. */
-  .report-col-right {
-    position: static;
-  }
 }
 
 @media (max-width: 720px) {
@@ -1773,6 +1886,10 @@ button {
   .screen {
     padding: 14px 15px 24px;
     background-attachment: scroll;
+  }
+
+  .submit-screen {
+    align-items: flex-start;
   }
 
   .brand-header {
@@ -2617,6 +2734,14 @@ button {
   color: #a7b3c1;
 }
 
+:root[data-theme="dark"] .summary-card-section {
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+
+:root[data-theme="dark"] .summary-section-title::before {
+  background: var(--teal-70);
+}
+
 /* The green-tinted card is gone: dark mode has one card colour now. The green
    heading icon and the numbered list still mark this as the guidance block. */
 :root[data-theme="dark"] .recommendations-card {
@@ -2659,10 +2784,28 @@ button {
   color: #ef7683;
 }
 
+:root[data-theme="dark"] .risk-label.risk-high {
+  border-color: rgba(239, 118, 131, 0.34);
+  background: rgba(226, 82, 96, 0.16);
+}
+
 :root[data-theme="dark"] .risk-pill.risk-medium,
 :root[data-theme="dark"] .risk-label.risk-medium {
   color: #e0a63c;
 }
+
+:root[data-theme="dark"] .risk-label.risk-medium {
+  border-color: rgba(224, 166, 60, 0.34);
+  background: rgba(214, 148, 36, 0.16);
+}
+
+:root[data-theme="dark"] .risk-label.risk-low {
+  color: #47d7a5;
+  border-color: rgba(71, 215, 165, 0.34);
+  background: rgba(22, 201, 141, 0.15);
+}
+
+:root[data-theme="dark"] .risk-label.risk-low i { background: #47d7a5; }
 
 :root[data-theme="dark"] .risk-label.risk-high i { background: #ef7683; }
 :root[data-theme="dark"] .risk-label.risk-medium i { background: #e0a63c; }

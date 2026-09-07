@@ -133,6 +133,11 @@ describe('Advanced Search — stage 1, the understanding', () => {
     const summary = host.querySelector('#summary-input') as HTMLTextAreaElement;
     expect(summary).not.toBeNull();
     expect(summary.value).toContain('UV-C sterilisation');
+    expect(text(fixture)).toContain('Editable');
+    expect(text(fixture)).toContain('This is how Novelty Lens understood your invention');
+    expect(text(fixture)).not.toContain('Your original description, shown for reference.');
+    expect(host.querySelectorAll('.comparison-panel')).toHaveLength(2);
+    expect(text(fixture)).toContain('Original');
   });
 
   it('renders the stage counter as text', async () => {
@@ -419,6 +424,8 @@ describe('Advanced Search — failure states stay distinct', () => {
     });
     await settle(fixture);
     expect(fixture.componentInstance.state()).toBe('forbidden');
+    expect(text(fixture)).toContain('This search is no longer available.');
+    expect(text(fixture)).not.toContain('simulated RUN_NOT_FOUND');
   });
 
   it('renders a dropped stream as reconnecting, never as a run failure', async () => {
@@ -430,6 +437,7 @@ describe('Advanced Search — failure states stay distinct', () => {
     });
     await settle(fixture);
     expect(fixture.componentInstance.state()).toBe('reconnecting');
+    expect(text(fixture)).not.toContain('simulated STREAM_UNAVAILABLE');
   });
 
   it('lists every blocking condition the server returned, not just the first', async () => {
@@ -501,6 +509,8 @@ describe('Advanced Search — the next stage arrives with no page reload', () =>
     expect(transitionText).not.toContain('worker');
     expect(transitionText).not.toContain('poll');
     expect(transitionText).not.toContain('r1');
+    expect(fixture.nativeElement.querySelector('.stage-header')).toBeNull();
+    expect(fixture.nativeElement.querySelector('.gate-transition-progress')).not.toBeNull();
     expect(fixture.nativeElement.querySelector('.gate-head button')).toBeNull();
 
     await arriveAtStrategy(fixture);

@@ -20,6 +20,7 @@ import type { StoredGate } from './models/report';
 import { AnalysisService } from './services/analysis';
 import { AuthService } from './services/auth';
 import { HistoryService, reportFromHistory } from './services/history';
+import { PUBLIC_ERRORS, publicRunError } from './shared/public-errors';
 import {
   ADVANCED_SEARCH_PHASE_ORDER,
   ADVANCED_EXECUTION_PHASE_ORDER,
@@ -244,6 +245,7 @@ const EXAMPLE_DESC =
                 [phaseIdx]="phaseIdx()"
                 [phaseMessages]="phaseMessages()"
                 [phaseOrder]="phaseOrder()"
+                [mode]="runMode()"
               />
             }
             @case ('report') {
@@ -453,7 +455,9 @@ export class App {
       void this.followAdvancedRun(runId);
     } catch (error) {
       this.errorDetail.set(
-        error instanceof Error ? error.message : 'The run could not be started.',
+        error instanceof RunApiError
+          ? publicRunError(error.failure.code)
+          : PUBLIC_ERRORS.analysis,
       );
       this.screen.set('error');
     }
@@ -513,7 +517,7 @@ export class App {
 
             if (event.type === 'error') {
               stoppedByEvent = true;
-              this.errorDetail.set(event.detail || 'The run failed.');
+              this.errorDetail.set(PUBLIC_ERRORS.analysis);
               const phase = event.phase as Phase | undefined;
               this.failedPhase.set(
                 phase && ADVANCED_SEARCH_PHASE_ORDER.includes(phase) ? phase : null,
@@ -549,7 +553,7 @@ export class App {
           return;
         }
         if (run.status === 'FAILED') {
-          this.errorDetail.set(run.failure_detail || 'The run failed.');
+          this.errorDetail.set(PUBLIC_ERRORS.analysis);
           this.screen.set('error');
           this.finishAdvancedRun(runId);
           return;
@@ -597,9 +601,7 @@ export class App {
       this.phaseMessages.set({});
       this.screen.set('submit');
     } catch (error) {
-      this.runExitError.set(
-        error instanceof Error ? error.message : 'The search could not be cancelled.',
-      );
+      this.runExitError.set(PUBLIC_ERRORS.cancel);
     } finally {
       this.cancellingRun.set(false);
     }
@@ -817,11 +819,7 @@ export class App {
       await this.loadHistory();
     } catch (failure) {
       this.confirmingClear.set(false);
-      this.historyError.set(
-        failure instanceof Error && failure.message
-          ? failure.message
-          : 'Clearing the history failed without a readable error.',
-      );
+      this.historyError.set(PUBLIC_ERRORS.clearHistory);
     } finally {
       this.clearing.set(false);
     }
@@ -835,11 +833,7 @@ export class App {
     } catch (failure) {
       // Shown as its own state, never as an empty list -- a database that
       // cannot be read is not the same answer as "you have not searched yet."
-      this.historyError.set(
-        failure instanceof Error && failure.message
-          ? failure.message
-          : 'The history request failed without a readable error.',
-      );
+      this.historyError.set(PUBLIC_ERRORS.history);
     } finally {
       this.historyLoading.set(false);
     }
@@ -879,7 +873,7 @@ export class App {
               }));
             }
           } else if (event.type === 'error') {
-            throw new Error(event.detail || 'Backend query failed');
+            throw new Error(PUBLIC_ERRORS.analysis);
           } else if (event.type === 'result') {
             const backend = event.data;
             finalReport = {
@@ -925,13 +919,7 @@ export class App {
       console.error('Backend connection error:', error);
       // A 401 mid-run already cleared the session in authorizedFetch, so the
       // login screen takes over and this error state is never seen.
-      // The backend's own `error` detail is shown verbatim -- the zero-tolerance
-      // policy means a failed run reports what actually failed, never a guess.
-      this.errorDetail.set(
-        error instanceof Error && error.message
-          ? error.message
-          : 'The analysis stream ended without a readable error.',
-      );
+      this.errorDetail.set(PUBLIC_ERRORS.analysis);
       this.failedPhase.set(lastPhase);
       this.screen.set('error');
     }
