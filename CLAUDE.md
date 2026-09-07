@@ -705,7 +705,12 @@ untrusted exception is scrubbed, *in addition to* whatever the provider did. It 
 SerpAPI quota failure carries the request URL, which carries the key. Credential-bearing URL
 parameters, DSN userinfo, `Authorization` headers, bearer tokens, response bodies and
 tracebacks are all removed; the actionable facts — provider, HTTP status, workflow step —
-survive, because "SerpAPI returned 429" is the whole point of showing the user anything. A
+survive, because "SerpAPI returned 429" is what makes a stored failure diagnosable at all.
+**Those facts no longer reach the end user**: the frontend renders its own copy from
+`shared/public-errors.ts` and treats the sanitized detail as diagnostic data (see the
+`error` screen below). Redaction still matters exactly as much — the detail is persisted to
+`verification_runs.failure_detail`, written into the terminal `error` event, logged, and
+served back by the API, so an unscrubbed credential would reach all four. A
 `WorkflowError` is *trusted* and keeps its (redacted) message, since the SQL functions
 interpolate run ids, statuses and tokens and nothing else; any other exception is **rebuilt**
 from allow-listed facts rather than passed through, because pattern-matching is never
@@ -1713,10 +1718,14 @@ to a separate hosted HTML page. It runs 8-wide in a `ThreadPoolExecutor`; passin
 
 **Never call `response.raise_for_status()` on a SerpAPI response.** SerpAPI authenticates
 by query parameter, and `requests`' `HTTPError` message embeds the full request URL —
-which `search_all_providers_strict` interpolates into `PatentSearchError` and `server.py`
-forwards verbatim to the browser as the SSE `error` detail. A plain 429 therefore printed
-a live API key into the user's devtools console; this was observed for real on an
-exhausted free-tier quota, not theorized. Use `search/google.py`'s `_raise_for_status`
+which `search_all_providers_strict` interpolates into `PatentSearchError`. At the time this
+was found, `server.py` forwarded that string verbatim as the SSE `error` detail, so a plain
+429 printed a live API key into the user's devtools console — observed for real on an
+exhausted free-tier quota, not theorized. **Two layers have been added since and neither
+retires this rule**: `server.py` now sends `safe_detail(error)` rather than the raw string,
+and the frontend renders its own copy instead of the detail. The key would still reach the
+SSE frame, the event log, `failure_detail` and the server log, because the exception is
+built long before either layer sees it. Use `search/google.py`'s `_raise_for_status`
 instead, and see `tests/test_secrets_do_not_leak.py`, which pins both the fix and the
 reason it is needed.
 

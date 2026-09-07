@@ -172,14 +172,66 @@ def test_the_state_union_matches_exactly():
 
 def test_a_dropped_stream_is_reconnecting_and_not_a_run_failure():
     """Gate F item 3. A disconnect is a client problem; saying the run failed
-    would be a claim about a worker the browser cannot see."""
+    would be a claim about a worker the browser cannot see.
+
+    **Asserted on the mapping, not on the sentence.** This used to pin the
+    reassuring prose ("The run is unaffected"), which moved into
+    `shared/public-errors.ts` when the user-facing copy was centralised -- so
+    the test failed while the property it protects was still perfectly intact.
+    Copy is owned by product and will keep changing; what must not change is
+    that a dropped stream classifies as `reconnecting` and that the state the
+    user lands on never tells them the run itself failed.
+    """
     shell = read(SHELL)
-    assert "reconnecting" in shell
-    assert "The run is unaffected" in shell
+    classify = shell.split("export function classify", 1)[1]
+
+    stream_arm = classify.split("case 'STREAM_UNAVAILABLE':", 1)[1].split("case ", 1)[0]
+    assert "return 'reconnecting';" in stream_arm, (
+        "a dropped stream must classify as reconnecting, never as failed"
+    )
+
+    block = shell.split("@case ('reconnecting')", 1)[1].split("@case (", 1)[0]
+    for claim in ("failed", "Failed", "unable to complete", "run failed"):
+        assert claim not in block, (
+            f"the reconnecting state says {claim!r} -- that is a claim about a "
+            "worker the browser cannot see"
+        )
 
 
 def test_access_denial_does_not_guess_which_kind_of_404_it_got():
-    assert "does not distinguish" in read(SHELL)
+    """`RUN_NOT_FOUND` is deliberately identical for "no such run" and "not
+    yours" -- the backend refuses to distinguish them, so the screen must not
+    either.
+
+    Same relocation as above: the old assertion pinned the phrase "does not
+    distinguish", which is now a property of the shared copy rather than a
+    sentence in this file. What is checked is that the arm still lands on
+    `forbidden`, and that neither the state's markup nor the copy it renders
+    names a cause the client cannot know.
+    """
+    shell = read(SHELL)
+    classify = shell.split("export function classify", 1)[1]
+
+    arm = classify.split("case 'RUN_NOT_FOUND':", 1)[1].split("case ", 1)[0]
+    assert "return 'forbidden';" in arm
+
+    block = shell.split("@case ('forbidden')", 1)[1].split("@case (", 1)[0]
+    copy = read(FRONTEND / "shared" / "public-errors.ts")
+    rendered = block + copy
+
+    for guess in (
+        "belongs to someone",
+        "belongs to another",
+        "not authorized",
+        "no permission",
+        "you do not have access",
+        "was deleted",
+        "does not exist",
+    ):
+        assert guess.lower() not in rendered.lower(), (
+            f"the access-denied path claims {guess!r} -- it cannot know which "
+            "of the two causes produced the 404"
+        )
 
 
 def test_a_stale_decision_is_never_resubmitted():
