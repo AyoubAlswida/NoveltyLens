@@ -23,6 +23,23 @@ the upstream step, so this keeps the strongest candidates and drops the long
 tail."""
 
 
+def _collapse_simple_families(candidates: list) -> list:
+    """Keep the strongest already-ranked publication from each known family.
+
+    Missing family metadata is never guessed: those records remain independent.
+    """
+    seen: set[str] = set()
+    collapsed = []
+    for patent in candidates:
+        family_id = patent.family_id.strip()
+        if family_id and family_id in seen:
+            continue
+        if family_id:
+            seen.add(family_id)
+        collapsed.append(patent)
+    return collapsed
+
+
 def validate_node(state: GraphState) -> dict:
     """Filter the candidate set down to the ones an LLM judges relevant.
 
@@ -30,7 +47,7 @@ def validate_node(state: GraphState) -> dict:
     candidate set that survives validation as empty is a genuine answer, the
     same as an empty search.
     """
-    candidates = state["candidates"][:MAX_CANDIDATES]
+    candidates = _collapse_simple_families(state["candidates"][:MAX_CANDIDATES])
     if not candidates:
         return {"validated_patents": [], "candidates": []}
 

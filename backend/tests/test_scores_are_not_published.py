@@ -252,6 +252,30 @@ def test_medium_requires_the_aggregate_score_boundary_and_half_coverage(
     assert match["risk"] == expected
 
 
+def test_three_of_seven_limitations_is_medium_when_similarity_is_meaningful():
+    comparison = ComparisonResult(
+        patent=PatentRecord(id="US5719557A", title="Smoke detector"),
+        similarity_score=0.6972,
+    )
+    match = format_matches(
+        [comparison], ["covers three reviewed limitations"], [[]],
+        [["L1", "L2", "L3"]], 7,
+    )[0]
+    assert match["risk"] == "Medium"
+
+
+def test_two_of_seven_limitations_remains_low_despite_meaningful_similarity():
+    comparison = ComparisonResult(
+        patent=PatentRecord(id="US-NARROW", title="Narrow subsystem"),
+        similarity_score=0.6972,
+    )
+    match = format_matches(
+        [comparison], ["covers only two reviewed limitations"], [[]],
+        [["L1", "L2"]], 7,
+    )[0]
+    assert match["risk"] == "Low"
+
+
 def test_risk_refuses_missing_reviewed_limitations():
     comparison = ComparisonResult(
         patent=PatentRecord(id="US-NO-PROFILE", title="Missing profile"),

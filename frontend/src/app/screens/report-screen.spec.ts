@@ -91,9 +91,12 @@ describe('ReportScreen', () => {
     expect(sectionNames).toEqual([
       'Key overlap',
       'Novelty risk',
-      'Overall assessment',
       'Detected concepts',
     ]);
+    expect(card.querySelector('.summary-why')).toBeNull();
+    expect(html(fixture).querySelector('.patent-summary')?.textContent).toContain(
+      'Overlaps on the treatment mechanism.',
+    );
   });
 
   it('renders none of the removed percentage furniture', () => {

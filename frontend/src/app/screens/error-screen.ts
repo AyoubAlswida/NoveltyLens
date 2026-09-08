@@ -9,7 +9,7 @@ import { Phase, PHASE_LABELS } from '../models/report';
   template: `
     <div class="screen screen-scroll">
       <section class="intro-copy error-intro">
-        <div class="failed-label"><span></span> RUN FAILED</div>
+        <div class="failed-label">RUN FAILED</div>
         <h1>The analysis could not be completed</h1>
         <p>
           No partial results are shown.

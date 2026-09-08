@@ -5,3 +5,5 @@
    `:root[data-theme="dark"] .foo` (0,3,0), comes after the light rules it
    overrides rather than before them. */
 @import './styles/gates.css';
+/* Final dark palette and interaction states; light mode keeps its own styling. */
+@import './styles/dark.css';

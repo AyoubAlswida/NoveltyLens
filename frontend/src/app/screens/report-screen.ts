@@ -173,10 +173,6 @@ import { AnalysisReport, PatentMatch, Risk } from '../models/report';
                 </div>
               </section>
 
-              <section class="summary-card-section">
-                <h3 class="summary-section-title">Overall assessment</h3>
-                <p class="summary-why">{{ top.rationale }}</p>
-              </section>
             }
 
             <section class="summary-card-section summary-concepts-section">

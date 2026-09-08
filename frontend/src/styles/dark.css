@@ -1,0 +1,161 @@
+/* Quiet dark surfaces with the same teal, green and blue accents as light mode. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --rail-black: #090a0b;
+  --aramco-gray: #101214;
+  --aramco-dark-gray: #1a1d20;
+  --background: #101214;
+  --card: #181b1e;
+  --popover: #1a1d20;
+  --input: #111315;
+  --input-background: #111315;
+  --navy: #ededed;
+  --navy-soft: #c2c2c2;
+  --foreground: #ededed;
+  --card-foreground: #ededed;
+  --popover-foreground: #ededed;
+  --ink: #ededed;
+  --fg: #ededed;
+  --muted: #a3a3a3;
+  --muted-foreground: #a3a3a3;
+  --line: #2a2e32;
+  --border: #2a2e32;
+  --secondary: #242424;
+  --secondary-foreground: #d4d4d4;
+  --accent: #292929;
+  --accent-foreground: #ededed;
+  --ring: #a3a3a3;
+  --btn-disabled-bg: #292929;
+  --btn-disabled-fg: #858585;
+  --shadow: none;
+}
+
+:root[data-theme="dark"] .glass-card {
+  border-color: var(--line);
+  border-radius: 16px;
+}
+
+:root[data-theme="dark"] .brand-rail { border-right-color: #242424; }
+:root[data-theme="dark"] .rail-item,
+:root[data-theme="dark"] .rail-mode { color: #c2c2c2; }
+:root[data-theme="dark"] .rail-item-active { color: #f5f5f5; background: #242424; }
+:root[data-theme="dark"] .rail-item-active:hover { background: #2c2c2c; }
+:root[data-theme="dark"] .rail-recent { color: #aaa; }
+:root[data-theme="dark"] .rail-section,
+:root[data-theme="dark"] .rail-clear { color: #929292; }
+
+
+:root[data-theme="dark"] .textarea-wrap textarea,
+:root[data-theme="dark"] .login-field input,
+:root[data-theme="dark"] .draft-input,
+:root[data-theme="dark"] .review-editor,
+:root[data-theme="dark"] .add-row input {
+  background: var(--input);
+  border-color: #363636;
+  color: var(--navy);
+}
+:root[data-theme="dark"] .textarea-wrap textarea { border-radius: 10px; }
+:root[data-theme="dark"] .textarea-wrap textarea:hover,
+:root[data-theme="dark"] .login-field input:hover { background: #181818; border-color: #505050; }
+:root[data-theme="dark"] .textarea-wrap textarea:focus,
+:root[data-theme="dark"] .login-field input:focus,
+:root[data-theme="dark"] .draft-input:focus {
+  background: #181818;
+  border-color: #929292;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.09);
+  outline: none;
+}
+:root[data-theme="dark"] .textarea-wrap textarea::placeholder,
+:root[data-theme="dark"] .login-field input::placeholder { color: #929292; }
+:root[data-theme="dark"] button:focus-visible,
+:root[data-theme="dark"] a:focus-visible {
+  outline: 2px solid #aaa;
+  outline-offset: 3px;
+}
+
+:root[data-theme="dark"] .action-hint,
+:root[data-theme="dark"] .composer-attach { color: #aaa; }
+
+:root[data-theme="dark"] .risk-legend-help,
+:root[data-theme="dark"] .brand-sub { color: #a3a3a3; }
+:root[data-theme="dark"] .patent-detail-section,
+:root[data-theme="dark"] .risk-legend,
+:root[data-theme="dark"] .concept-chip,
+:root[data-theme="dark"] .result-count { background: #242424; border-color: #363636; }
+:root[data-theme="dark"] .gate-transition-icon { box-shadow: none; }
+:root[data-theme="dark"] .draft-input { background: #111315; }
+:root[data-theme="dark"] .draft-input:focus { border-color: #929292; }
+
+/* Report: readable copy on one card surface, with quiet internal dividers. */
+:root[data-theme="dark"] .report-screen .matches-list {
+  background: transparent;
+  padding: 0 20px 20px;
+  gap: 16px;
+}
+:root[data-theme="dark"] .report-screen .patent-card {
+  background: var(--card);
+  border-color: #343a40;
+  padding: 22px;
+  box-shadow: none;
+}
+:root[data-theme="dark"] .report-screen .patent-card[href]:hover {
+  background: #1c2024;
+  border-color: #535c64;
+}
+:root[data-theme="dark"] .report-screen .patent-title {
+  font-size: 16px;
+  line-height: 1.5;
+  display: block;
+  overflow: visible;
+  margin-bottom: 14px;
+}
+:root[data-theme="dark"] .report-screen .patent-detail-section {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+}
+:root[data-theme="dark"] .report-screen .patent-similarity {
+  justify-content: flex-start;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+:root[data-theme="dark"] .report-screen .patent-detail-section .card-label {
+  color: #aeb8c0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .06em;
+}
+:root[data-theme="dark"] .report-screen .patent-summary p:not(.card-label) {
+  color: #d0d5da;
+  font-size: 14px;
+  line-height: 1.75;
+  margin-top: 8px;
+}
+:root[data-theme="dark"] .report-screen .patent-meta,
+:root[data-theme="dark"] .report-screen .report-title-block p { color: #aeb8c0; }
+:root[data-theme="dark"] .report-screen .risk-legend {
+  background: transparent;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  padding: 16px 24px;
+  margin-bottom: 4px;
+  border: 0;
+}
+:root[data-theme="dark"] .report-screen .risk-legend-title { margin: 0; }
+:root[data-theme="dark"] .report-screen .summary-card-header { padding: 22px; }
+:root[data-theme="dark"] .report-screen .summary-copy h2 { font-size: 17px; line-height: 1.5; }
+:root[data-theme="dark"] .report-screen .summary-copy > p:not(.eyebrow) { margin-bottom: 0; }
+:root[data-theme="dark"] .report-screen .summary-card-section { padding: 18px 22px; }
+:root[data-theme="dark"] .report-screen .report-title-block h1 {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+@media (min-width: 1001px) {
+  :root[data-theme="dark"] .report-col-left { flex: 1.9 1 0%; }
+  :root[data-theme="dark"] .report-col-right { flex: 1 1 0%; min-width: 280px; }
+}

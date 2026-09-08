@@ -48,8 +48,8 @@ and an Angular frontend — with no shared tooling; each is run and developed se
   They order the matches and select a per-patent High/Medium/Low **novelty risk** rating,
   then are discarded. `High` requires both an aggregate score of at least 0.75 and direct
   excerpt support for at least 75% of the independently reviewed invention units. `Medium`
-  requires an aggregate score of at least 0.45 and direct excerpt support for at least half
-  the units; narrower or weaker overlap is `Low`. A report with no matches carries **no
+  requires an aggregate score of at least 0.45 and direct excerpt support for at least 40%
+  of the units; narrower or weaker overlap is `Low`. A report with no matches carries **no
   rating at all**.
 
 ## Commands
@@ -266,7 +266,11 @@ enabled* — accurate as design intent, not as what a request currently exercise
   directions — a phase the backend cannot emit stalls the checklist, and one it does emit
   that the frontend omits hides real work.
 
-- `understanding.py` — Query Understanding + Query Expansion, over `llm.py` unchanged.
+- `understanding.py` — Query Understanding + Query Expansion over `llm.py`.
+  Quick Search asks for five deliberately balanced queries: two views of the core
+  mechanism, one distinctive-feature query, one combined-interaction query, and one
+  broader patent-wording query that retains a concrete core feature. This is prompt
+  guidance rather than a brittle lexical rejection rule, and adds no LLM or Lens call.
   Contains no `except`: a failed or malformed LLM response fails the request.
 - `searching.py` — Search Orchestrator, Keyword Search, and Semantic Search. Keyword search
   fails the whole request if any one provider fails, via `search_all_providers_strict` in
@@ -286,7 +290,9 @@ enabled* — accurate as design intent, not as what a request currently exercise
   needs no change either way.
 - `validation.py` — Validation. One batched LLM call (`llm.validate_relevance`) judges
   relevance over the top of the candidate set (capped at `MAX_CANDIDATES = 30`, to keep the
-  prompt bounded). No `except`: a missing or malformed verdict for any candidate fails the
+  prompt bounded). Before that call, publications sharing a provider-backed Lens simple-
+  family id collapse to their strongest already-ordered representative; missing family
+  metadata is never inferred. No `except`: a missing or malformed verdict for any candidate fails the
   request rather than being treated as an implicit keep or drop. An empty candidate set
   skips the LLM call entirely rather than validating nothing.
 - `ranking.py` — Ranking + Explanation. Calls `compare.py`'s embedding-based scoring (no
@@ -297,18 +303,24 @@ enabled* — accurate as design intent, not as what a request currently exercise
   that window, 60% is the mean of each invention unit's best chunk match, 25% is the mean
   of the three strongest chunk-pair matches, and 15% is the best invention-unit match
   against the patent's title plus abstract. Risk uses structured covered/missing limitation
-  ids returned by the same excerpt-grounded explanation call (no additional LLM request):
-  `High` requires at least 75% direct coverage plus the 0.75 aggregate floor; `Medium`
-  requires at least 50% direct coverage plus the 0.45 aggregate floor; otherwise narrow or
+  ids returned by the same excerpt-grounded explanation call (no additional LLM request).
+  That call receives both the patent abstract and the tail claim/description excerpt: neither
+  source may displace the other, because compact structural disclosure often appears only in
+  the abstract. `High` requires at least 75% direct coverage plus the 0.75 aggregate floor;
+  `Medium`
+  requires at least 40% direct coverage plus the 0.45 aggregate floor; otherwise narrow or
   weak overlap is `Low`. Advanced Search supplies its reviewer-approved technical limitations as
   the invention units; Quick Search uses the technical concepts returned by its existing
   understanding call, falling back to 180-word chunks only when that list is empty.
-  Patent chunks and the title/abstract texts share one batched embedding call, so the new
+  Each chunked document includes title, abstract, and available full text; full text never
+  displaces the denser abstract. Patent chunks and the title/abstract texts share one batched embedding call, so the new
   signal adds one vector per patent but no extra sequential embedding round trip. The
   displayed score is the real one, truncated and clamped to 0–100 and nothing else — a
   dissimilar patent shows an honest `0`. Also holds `format_matches` and `verdict_for`,
   which builds the `patents[]` entries. Split into two node
-  functions, `rank_node` (phase `compare`) and `explain_node` (phase `analyze`).
+  functions, `rank_node` (phase `compare`) and `explain_node` (phase `analyze`). Ranking
+  still scores every surviving family representative, then detailed analysis is capped at
+  the eight strongest results.
 
 - `pipeline.py` — graph assembly (`build_graph`), the terminal `result` event, and
   `run_graph_pipeline`, the generator `server.py` consumes. **It catches nothing**: a
@@ -1514,6 +1526,14 @@ into overlapping word-count windows (capped at `MAX_CHUNKS_PER_DOCUMENT`), used 
 feature-extraction endpoint and reads its bare vector array. Response counts, dimensions,
 and numeric contents are validated before anything is scored.
 
+Exact embedding responses are cached in a separate Qdrant collection whose name and point
+keys include the model, wire protocol, and normalized endpoint identity. A changed embedding
+identity therefore creates a clean cache namespace rather than reusing incompatible vectors.
+Only hashes are stored as payload (never invention or patent text). Cache reads, writes, and
+collection creation remain strict dependencies: an unreachable Qdrant raises instead of
+silently reverting to paid embedding calls. The `test` deployment profile bypasses this
+external cache boundary so the credential-free unit suite remains hermetic.
+
 **The current model is `BAAI/bge-large-en-v1.5` at 1024 dimensions, and that width is
 load-bearing.** Qdrant fixes a collection's vector size at creation, so any `patents`
 collection created with the previous 2560-dimensional Qwen3 model is **incompatible and has
@@ -2168,10 +2188,20 @@ keeps its glass, shadows and gradients. The
 screen, along with their CSS and the `Clock3` icon. (`LockKeyhole` went too, then came
 back for the login screen.)
 
-**Dark mode is flat, and that is a requirement, not a style opinion.** It was reshaped to
-match aramcoMETABRAIN: a **black** rail (`--rail-black: #000`), a plain grey page
-(`--aramco-gray: #2b2b2b`), and cards exactly one step lighter (`--card: #353535`) with a
-1px hairline border. Three surface values, no fourth. Rail labels are **plain `#fff`**.
+**Dark mode uses quiet near-black surfaces with light-mode brand accents (owner direction,
+2026-09-08).** `frontend/src/styles/dark.css`, imported after `gates.css`, owns the
+final surfaces: rail `#090a0b`, page `#101214`, cards `#181b1e`, and inset inputs
+`#111315`, separated by subtle borders. Teal icons, green status indicators, blue actions
+and the original brand mark retain their colors consistently with light mode. The earlier
+monochrome treatment was withdrawn by the owner. No surface gradients, blur or decorative
+shadows; keyboard focus rings and loading animation remain. Light mode is unchanged.
+Older references below to the three-value METABRAIN surface palette are superseded.
+
+The dark report uses readable light body copy and flat patent cards with internal dividers
+instead of nested tinted boxes. The patent list takes more width on desktop; narrow screens
+retain the stacked layout. The sidebar shows the closest match, overlap tags, risk and
+concepts. Its duplicate "Overall assessment" paragraph is removed in both themes: the
+full rationale remains under the corresponding patent's Overlap summary, once.
 
 Because the labels are white, the rail's active state cannot be carried by colour: dark
 gives `.rail-item-active` a flat `rgba(255,255,255,0.12)` fill, with an explicit
@@ -2346,13 +2376,11 @@ Three things worth knowing before optimizing further:
   corpus for *later* requests. Moving it behind the `result` event was considered and
   rejected: truncation already took it from 21.8s to ~8s, which does not justify a
   zero-tolerance exception for a write whose failure nobody would see.
-- **There is no caching of any kind.** Repeat the identical search and it costs the full
-  pipeline again: ~5 SerpAPI searches, ~20 Details calls, ~20 description-page fetches,
-  multiple LLM calls, and several embedding round trips. Advanced Search now intentionally
-  spends separate calls on summary generation and limitation generation so the latter can
-  use the human-approved summary; do not collapse them to save one call. This is the single largest remaining
-  source of avoidable work, and it is a deliberate open question rather than an oversight
-  (the Postgres layer that used to do it was removed on purpose).
+- **Embedding responses now have an exact Qdrant cache.** A cold search still pays the full
+  embedding cost, while repeated text skips those provider round trips. Lens search,
+  enrichment, and LLM calls are not cached. Advanced Search intentionally spends separate
+  calls on summary generation and limitation generation so the latter can use the human-
+  approved summary; do not collapse them to save one call.
 
 ### Migration status and standing constraints (see `docs/`)
 
@@ -2368,8 +2396,8 @@ open item when the frontend was still React and called the non-streaming endpoin
 gap is closed. The full outage-injection failure-path test matrix (Qdrant down,
 single-provider-down, etc., beyond the handful of focused tests that exist per agent) is
 still open. **Phase 2 is now half-landed**: persisted history is live (Postgres,
-`reports.py`, `GET /api/history`, the History screen), caching is not and is deliberately
-open — see the Persistence section above for the line between them. Two constraints govern
+`reports.py`, `GET /api/history`, the History screen), and exact embedding caching is live
+in Qdrant; full search-result or LLM-output caching is not. Two constraints govern
 all of it:
 
 - **Zero-tolerance failure policy**: no fallback, ever. If a step can't produce a genuine

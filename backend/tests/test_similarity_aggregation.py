@@ -9,9 +9,23 @@ import pytest
 from compare import (
     _aggregate_similarity,
     _coherent_similarity_window,
+    _document_text,
     compare_invention_to_patents,
 )
 from models import PatentRecord
+
+
+def test_full_text_ranking_keeps_the_patent_abstract():
+    patent = PatentRecord(
+        id="US1",
+        title="Detector",
+        abstract="exact structural arrangement",
+        full_text="background and claims",
+    )
+
+    assert _document_text(patent) == (
+        "Detector exact structural arrangement background and claims"
+    )
 
 
 def test_broad_coverage_beats_one_isolated_perfect_match():

@@ -194,15 +194,31 @@ ${forWord ? "</div>" : ""}
     const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
     const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
-    const margin = 18;
+    const margin = 16;
     const contentWidth = pageWidth - margin * 2;
-    const footerSpace = 16;
+    const footerSpace = 18;
     let y = margin;
 
-    const ensureSpace = (height: number) => {
-      if (y + height <= pageHeight - margin - footerSpace) return;
+    const addPage = (continuedSection?: string) => {
       pdf.addPage();
       y = margin;
+      if (continuedSection) {
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(8);
+        pdf.setTextColor(102, 117, 141);
+        pdf.text(`${continuedSection.toUpperCase()} - CONTINUED`, margin, y);
+        y += 8;
+      }
+    };
+    const ensureSpace = (height: number, continuedSection?: string) => {
+      if (y + height <= pageHeight - margin - footerSpace) return;
+      addPage(continuedSection);
+    };
+
+    const lineHeight = (size: number) => size * 0.44;
+    const linesFor = (value: string, size: number, width = contentWidth) => {
+      pdf.setFontSize(size);
+      return pdf.splitTextToSize(value, width) as string[];
     };
 
     const writeLines = (
@@ -220,15 +236,14 @@ ${forWord ? "</div>" : ""}
       pdf.setFont('helvetica', options.bold ? 'bold' : 'normal');
       pdf.setFontSize(size);
       pdf.setTextColor(...(options.color ?? [16, 35, 74]));
-      const lines = pdf.splitTextToSize(value, contentWidth - indent);
-      const lineHeight = size * 0.42;
-      ensureSpace(lines.length * lineHeight + (options.gapAfter ?? 0));
+      const lines = linesFor(value, size, contentWidth - indent);
+      ensureSpace(lines.length * lineHeight(size) + (options.gapAfter ?? 0));
       pdf.text(lines, margin + indent, y);
-      y += lines.length * lineHeight + (options.gapAfter ?? 0);
+      y += lines.length * lineHeight(size) + (options.gapAfter ?? 0);
     };
 
     const sectionHeading = (value: string) => {
-      ensureSpace(12);
+      ensureSpace(12, value);
       y += 3;
       pdf.setDrawColor(8, 140, 99);
       pdf.setLineWidth(0.7);
@@ -238,76 +253,151 @@ ${forWord ? "</div>" : ""}
         color: [8, 140, 99],
         bold: true,
         indent: 3,
-        gapAfter: 3,
+        gapAfter: 5,
       });
     };
 
-    writeLines(data.title, { size: 18, bold: true, gapAfter: 2 });
+    const headerTop = y;
+    pdf.setFillColor(8, 127, 123);
+    pdf.roundedRect(margin, headerTop, 5, 5, 1.2, 1.2, 'F');
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(8);
+    pdf.setTextColor(8, 127, 123);
+    pdf.text('NOVELTY LENS', margin + 8, headerTop + 4);
+    y = headerTop + 14;
+    writeLines(data.title, { size: 18, bold: true, gapAfter: 3 });
     writeLines(
       `Novelty Lens - Submitted ${data.date} - ${data.query_count} queries - ${this.familySummary(data.patents)}`,
-      { size: 9, color: [102, 117, 141], gapAfter: 5 },
+      { size: 9, color: [102, 117, 141], gapAfter: 4 },
     );
+    pdf.setDrawColor(226, 233, 238);
+    pdf.setLineWidth(0.25);
+    pdf.line(margin, y, pageWidth - margin, y);
+    y += 7;
 
     if (data.patents[0]) {
-      sectionHeading('Closest-match novelty risk');
+      const summaryHeight = 17;
+      ensureSpace(summaryHeight + 5);
       const riskColor: [number, number, number] =
         data.patents[0].risk === 'High'
           ? [169, 47, 59]
           : data.patents[0].risk === 'Medium'
             ? [141, 89, 12]
             : [8, 140, 99];
-      writeLines(data.patents[0].risk, { size: 16, color: riskColor, bold: true, gapAfter: 2 });
+      const summaryTop = y;
+      pdf.setFillColor(243, 248, 248);
+      pdf.roundedRect(margin, summaryTop, contentWidth, summaryHeight, 2.5, 2.5, 'F');
+      pdf.setFillColor(...riskColor);
+      pdf.roundedRect(margin, summaryTop, 3.5, summaryHeight, 2.5, 2.5, 'F');
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(8);
+      pdf.setTextColor(102, 117, 141);
+      pdf.text('CLOSEST PRIOR-ART MATCH', margin + 7, summaryTop + 6);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(9);
+      pdf.setTextColor(74, 91, 116);
+      pdf.text('Novelty risk assessment', margin + 7, summaryTop + 11.5);
+
+      const riskLabel = data.patents[0].risk.toUpperCase();
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(12);
+      const riskWidth = pdf.getTextWidth(riskLabel) + 12;
+      const riskLeft = margin + contentWidth - riskWidth - 5;
+      pdf.setFillColor(...riskColor);
+      pdf.roundedRect(riskLeft, summaryTop + 4.2, riskWidth, 8.5, 2, 2, 'F');
+      pdf.setTextColor(255, 255, 255);
+      pdf.text(riskLabel, riskLeft + riskWidth / 2, summaryTop + 10.25, { align: 'center' });
+      y = summaryTop + summaryHeight + 5;
     }
 
     sectionHeading('Key concepts');
-    writeLines(data.concepts.length ? data.concepts.join(' | ') : 'None extracted', {
-      size: 9,
-      color: [74, 91, 116],
-      gapAfter: 3,
+    if (!data.concepts.length) {
+      writeLines('None extracted', { size: 9, color: [102, 117, 141], gapAfter: 3 });
+    }
+    data.concepts.forEach((concept) => {
+      const size = 9;
+      const indent = 5;
+      const lines = linesFor(concept, size, contentWidth - indent);
+      ensureSpace(lines.length * lineHeight(size) + 4, 'Key concepts');
+      pdf.setFillColor(8, 140, 99);
+      pdf.circle(margin + 1.5, y - 1.1, 0.9, 'F');
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(size);
+      pdf.setTextColor(74, 91, 116);
+      pdf.text(lines, margin + indent, y);
+      y += lines.length * lineHeight(size) + 3;
     });
+    y += 1;
 
-    sectionHeading('Prior-art matches');
+    sectionHeading(`Prior-art matches (${data.patents.length})`);
     if (!data.patents.length) {
       writeLines('No matching patent records were returned.', {
         color: [102, 117, 141],
       });
     }
     for (const family of this.patentFamilies(data.patents)) {
-      if (family.identified && (family.members.length > 1 || family.totalSize > 1)) {
-        ensureSpace(10);
-        writeLines(
-          `PATENT FAMILY - ${family.members.length} MATCHED ${family.members.length === 1 ? 'PUBLICATION' : 'PUBLICATIONS'}${family.totalSize > family.members.length ? ` - ${family.totalSize} TOTAL REPORTED` : ''}`,
-          { size: 8, color: [8, 127, 123], bold: true, gapAfter: 3 },
-        );
-      }
-    for (const patent of family.members) {
-      ensureSpace(34);
-      pdf.setDrawColor(197, 225, 215);
-      pdf.setLineWidth(0.35);
-      pdf.line(margin, y - 3, pageWidth - margin, y - 3);
+      for (const patent of family.members) {
+        const innerWidth = contentWidth - 12;
+        const titleLines = linesFor(patent.title, 11, innerWidth);
+        const rationaleLines = linesFor(patent.rationale, 9, innerWidth);
+        const familyLabel =
+          family.identified && (family.members.length > 1 || family.totalSize > 1)
+            ? `FAMILY: ${family.members.length} MATCHED ${family.members.length === 1 ? 'PUBLICATION' : 'PUBLICATIONS'}${family.totalSize > family.members.length ? ` - ${family.totalSize} REPORTED` : ''}`
+            : '';
+        const cardPadding = 6;
+        const metaHeight = lineHeight(8);
+        const titleHeight = titleLines.length * lineHeight(11);
+        const rationaleHeight = rationaleLines.length * lineHeight(9);
+        const cardHeight =
+          cardPadding +
+          metaHeight +
+          1.5 +
+          (familyLabel ? metaHeight + 2 : 0) +
+          titleHeight +
+          3 +
+          metaHeight +
+          2 +
+          metaHeight +
+          1 +
+          rationaleHeight +
+          cardPadding;
+        ensureSpace(cardHeight + 4, 'Prior-art matches');
+        const cardTop = y;
+        pdf.setFillColor(250, 252, 252);
+        pdf.setDrawColor(211, 226, 225);
+        pdf.setLineWidth(0.3);
+        pdf.roundedRect(margin, cardTop, contentWidth, cardHeight, 2.5, 2.5, 'FD');
 
-      writeLines(`${patent.num} - ${patent.source}`, {
-        size: 8,
-        color: [8, 140, 99],
-        bold: true,
-        gapAfter: 1,
-        indent: 3,
-      });
-      writeLines(patent.title, { size: 11, bold: true, gapAfter: 2, indent: 3 });
-      writeLines(`Novelty risk: ${patent.risk}`, {
-        size: 9,
-        bold: true,
-        gapAfter: 1,
-        indent: 3,
-      });
-      writeLines(`Overlap summary: ${patent.rationale}`, {
-        size: 9,
-        color: [74, 91, 116],
-        gapAfter: 3,
-        indent: 3,
-      });
-      y += 3;
-    }
+        let cardY = cardTop + cardPadding;
+        const writeCardText = (
+          value: string | string[],
+          size: number,
+          color: [number, number, number],
+          bold = false,
+          gapAfter = 0,
+        ) => {
+          const lines = Array.isArray(value) ? value : linesFor(value, size, innerWidth);
+          pdf.setFont('helvetica', bold ? 'bold' : 'normal');
+          pdf.setFontSize(size);
+          pdf.setTextColor(...color);
+          pdf.text(lines, margin + 6, cardY);
+          cardY += lines.length * lineHeight(size) + gapAfter;
+        };
+
+        writeCardText(`${patent.num} - ${patent.source}`, 8, [8, 127, 123], true, 1.5);
+        if (familyLabel) writeCardText(familyLabel, 8, [102, 117, 141], true, 2);
+        writeCardText(titleLines, 11, [16, 35, 74], true, 3);
+        const riskColor: [number, number, number] =
+          patent.risk === 'High'
+            ? [169, 47, 59]
+            : patent.risk === 'Medium'
+              ? [141, 89, 12]
+              : [8, 140, 99];
+        writeCardText(`NOVELTY RISK - ${patent.risk.toUpperCase()}`, 8, riskColor, true, 2);
+        writeCardText('OVERLAP SUMMARY', 8, [102, 117, 141], true, 1);
+        writeCardText(rationaleLines, 9, [74, 91, 116]);
+        y = cardTop + cardHeight + 4;
+      }
     }
 
     sectionHeading('Recommendations');
@@ -315,12 +405,25 @@ ${forWord ? "</div>" : ""}
       writeLines('No recommendations were generated.', { color: [102, 117, 141] });
     }
     data.recommendations.forEach((recommendation, index) => {
-      writeLines(`${index + 1}. ${recommendation}`, {
-        size: 9,
-        color: [74, 91, 116],
-        indent: 2,
-        gapAfter: 2,
-      });
+      const size = 9;
+      const badgeSize = 5;
+      const indent = 10;
+      const lines = linesFor(recommendation, size, contentWidth - indent);
+      const textHeight = lines.length * lineHeight(size);
+      const rowHeight = Math.max(badgeSize, textHeight) + 4;
+      ensureSpace(rowHeight, 'Recommendations');
+      const rowTop = y;
+      pdf.setFillColor(8, 127, 123);
+      pdf.roundedRect(margin, rowTop, badgeSize, badgeSize, 1.2, 1.2, 'F');
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(7);
+      pdf.setTextColor(255, 255, 255);
+      pdf.text(String(index + 1), margin + badgeSize / 2, rowTop + 3.6, { align: 'center' });
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(size);
+      pdf.setTextColor(74, 91, 116);
+      pdf.text(lines, margin + indent, rowTop + 3.8);
+      y = rowTop + rowHeight;
     });
 
     const pages = pdf.getNumberOfPages();

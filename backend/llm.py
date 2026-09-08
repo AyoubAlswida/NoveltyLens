@@ -568,12 +568,13 @@ Search query guidelines:
 - Prioritize the core invention over enabling technologies.
 - Do NOT build queries around generic implementation details such as AI, cloud, encryption, Bluetooth, IoT, APIs, databases, or sensors unless they are the novel aspect of the invention.
 - Use terminology that is commonly found in patent titles, abstracts, and claims - where a keyword has a more common patent-literature term or synonym, prefer that term over the user's own wording.
-- Generate the 5 queries from different, deliberately distinct angles:
-  1. Functional - what the invention does.
-  2. Structural - what it's made of or how its components are arranged.
-  3. Application/industry - the domain or use case it's deployed in.
-  4. Broader technical classification - describe the invention the way a patent examiner would name its general technology category, not its specific implementation (this is the query most likely to surface prior art that solves the same problem with different vocabulary).
-  5. Common patent wording - phrasing typical of how patents in this field are actually titled.
+- Balance the 5 queries instead of letting a distinctive addition crowd out the underlying mechanism:
+  1. Structural core - the concrete component arrangement or physical mechanism.
+  2. Functional core - what that same underlying mechanism does, using alternate patent terminology.
+  3. Distinctive feature - the least conventional additional feature or subsystem.
+  4. Combined interaction - how the core mechanism and distinctive feature work together.
+  5. Broader patent wording - the examiner-style category, but retain at least one concrete core feature so the query is not merely a generic field label.
+- If the description explicitly labels an addition, treat text before that label as the core mechanism and text after it as the distinctive feature. Do not spend most queries on the addition.
 - Keep each query between 3 and 8 words.
 - Avoid repeating nearly identical queries.
 
@@ -613,15 +614,21 @@ blowing up prompt size across up to MAX_CANDIDATES patents in one batched call."
 
 
 def _rationale_source_text(patent: PatentRecord) -> str:
-    """The text this prompt reasons about for one patent: the tail of full
-    text (claims) when available, else the abstract as a last resort - never
-    both truncated together, since that would dilute the claims with however
-    much of the description fits first."""
-    if not patent.full_text:
-        return patent.abstract
-    if len(patent.full_text) <= CLAIMS_EXCERPT_CHARS:
-        return patent.full_text
-    return patent.full_text[-CLAIMS_EXCERPT_CHARS:]
+    """Return complementary abstract and claim evidence for a patent.
+
+    An abstract cannot be omitted merely because full text exists: it is often
+    the only compact, explicit statement of a component relationship, while a
+    claim excerpt refers to that relationship indirectly.
+    """
+    parts: list[str] = []
+    if patent.abstract.strip():
+        parts.append(f"Abstract: {patent.abstract.strip()}")
+    if patent.full_text.strip():
+        excerpt = patent.full_text.strip()
+        if len(excerpt) > CLAIMS_EXCERPT_CHARS:
+            excerpt = excerpt[-CLAIMS_EXCERPT_CHARS:]
+        parts.append(f"Description and claims excerpt: {excerpt}")
+    return "\n".join(parts)
 
 
 def analyze_all_matches(

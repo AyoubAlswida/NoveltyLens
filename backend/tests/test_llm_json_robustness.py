@@ -14,7 +14,7 @@ import pytest
 import config
 import llm
 from deployment import LLMTarget, Profile, Provider
-from llm import LLMResponseError, LLMTruncatedError
+from llm import LLMResponseError, LLMTruncatedError, _rationale_source_text
 from models import PatentRecord
 
 
@@ -46,6 +46,20 @@ GOOD_UNDERSTANDING = json.dumps({
     "concepts": ["c1"], "keywords": ["k1"],
     "queries": ["q1", "q2", "q3", "q4", "q5"],
 })
+
+
+def test_quick_search_prompt_balances_core_and_distinctive_feature_queries():
+    with patch("llm._llm_json", return_value=json.loads(GOOD_UNDERSTANDING)) as call:
+        llm.understand_invention(
+            "A concrete optical mechanism. UNIQUE ADDITION: a thermal subsystem."
+        )
+
+    prompt = call.call_args.args[0]
+    assert "Structural core" in prompt
+    assert "Functional core" in prompt
+    assert "Distinctive feature" in prompt
+    assert "Combined interaction" in prompt
+    assert "Do not spend most queries on the addition" in prompt
 
 
 def _response(content: str, finish_reason: str = "stop") -> object:
@@ -180,6 +194,21 @@ def test_overlap_and_recommendation_prompt_requires_grounded_gaps():
     assert result.rationales[0].endswith("spectral nutrient diagnosis.")
     assert result.covered_limitation_ids == [["L1"]]
     assert result.missing_limitation_ids == [["L2"]]
+
+
+def test_rationale_evidence_keeps_abstract_alongside_full_text_claims():
+    patent = PatentRecord(
+        id="US1",
+        title="Detector",
+        abstract="A shielded photodiode detects smoke-scattered light.",
+        full_text="x" * 2000 + "A claim recites a detector housing.",
+    )
+
+    evidence = _rationale_source_text(patent)
+
+    assert "Abstract: A shielded photodiode detects smoke-scattered light." in evidence
+    assert "Description and claims excerpt: " in evidence
+    assert evidence.endswith("A claim recites a detector housing.")
 
 
 # --------------------------------------------------------------------------

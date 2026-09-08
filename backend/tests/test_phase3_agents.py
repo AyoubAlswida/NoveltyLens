@@ -386,6 +386,23 @@ def test_validate_node_drops_patents_the_llm_marks_irrelevant():
     assert result["candidates"] == result["validated_patents"]
 
 
+def test_validate_node_checks_only_the_strongest_publication_per_known_family():
+    candidates = [
+        PatentRecord(id="US-A", title="Strongest", family_id="family-1"),
+        PatentRecord(id="EP-A", title="Same family", family_id="family-1"),
+        PatentRecord(id="US-B", title="No metadata"),
+        PatentRecord(id="EP-B", title="Also no metadata"),
+    ]
+    state = {"invention_text": "a widget", "candidates": candidates}
+
+    with patch("graph.validation.emit_progress"), \
+         patch("graph.validation.validate_relevance", return_value=[True, True, True]) as validate:
+        result = validate_node(state)
+
+    assert [patent.id for patent in validate.call_args.args[1]] == ["US-A", "US-B", "EP-B"]
+    assert [patent.id for patent in result["validated_patents"]] == ["US-A", "US-B", "EP-B"]
+
+
 def test_validate_node_skips_the_llm_call_when_nothing_was_fused():
     state = {"invention_text": "a widget", "candidates": []}
 

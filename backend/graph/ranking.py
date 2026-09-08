@@ -30,13 +30,13 @@ from compare import compare_invention_to_patents
 from llm import analyze_all_matches
 from models import ComparisonResult
 
-MAX_RESULTS = 15
-"""Matches the cap the legacy pipeline applies in ``backend/server.py``."""
+MAX_RESULTS = 8
+"""Detailed analysis is limited to the eight strongest distinct families."""
 
 HIGH_SCORE_THRESHOLD = 0.75
 MEDIUM_SCORE_THRESHOLD = 0.45
 HIGH_COVERAGE_RATIO = 0.75
-MEDIUM_COVERAGE_RATIO = 0.50
+MEDIUM_COVERAGE_RATIO = 0.40
 
 
 def _risk_for(
@@ -64,7 +64,9 @@ def _risk_for(
         return "High"
     # A strong hit on one isolated subsystem is still narrow prior art. Medium
     # requires both meaningful aggregate similarity and coverage of at least
-    # half of the independently approved limitations.
+    # two fifths of the independently approved limitations. This avoids a
+    # granularity cliff where the same disclosure moves from Medium to Low
+    # merely because one compound limitation was reviewed as two atomic ones.
     if result.similarity_score < MEDIUM_SCORE_THRESHOLD:
         return "Low"
     if coverage_ratio < MEDIUM_COVERAGE_RATIO:
@@ -89,7 +91,7 @@ def format_matches(
     The aggregate embedding score and the excerpt-grounded structured coverage
     are read here and published nowhere. High requires both ``>= 75`` and broad
     support in the same patent excerpt. Medium requires both ``>= 45`` aggregate
-    similarity and coverage of at least half the limitations. Narrow subsystem
+    similarity and coverage of at least two fifths of the limitations. Narrow subsystem
     overlap is Low regardless of how strongly that isolated subsystem matches.
     """
     scored: list[tuple[float, dict[str, object]]] = []

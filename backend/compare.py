@@ -17,7 +17,15 @@ COHERENT_WINDOW_CHUNKS = 3
 
 
 def _document_text(patent: PatentRecord) -> str:
-    return f"{patent.title} {patent.full_text or patent.abstract}".strip()
+    # The abstract is the patent's densest statement of its mechanism. Keep it
+    # even when full text is available: choosing full_text *instead* discarded
+    # exact structural language and let a related patent's background section
+    # outrank the patent that actually disclosed the arrangement.
+    return " ".join(
+        part.strip()
+        for part in (patent.title, patent.abstract, patent.full_text)
+        if part.strip()
+    )
 
 
 def _dot(a: list[float], b: list[float]) -> float:

@@ -13,6 +13,8 @@ from concurrent.futures import ThreadPoolExecutor
 import requests
 
 from config import settings
+from embedding_cache import get_many as get_cached_embeddings
+from embedding_cache import put_many as put_cached_embeddings
 from tracing import trace
 
 logger = logging.getLogger(__name__)
@@ -172,15 +174,30 @@ def embed_texts(texts: list[str], batch_size: int = BATCH_SIZE) -> list[list[flo
     """
     if not texts:
         return []
-    trace("embeddings.embed_texts.start", total_texts=len(texts), batch_size=batch_size)
-    batches = [texts[start : start + batch_size] for start in range(0, len(texts), batch_size)]
+    cached = get_cached_embeddings(texts)
+    missing_texts = list(dict.fromkeys(text for index, text in enumerate(texts) if index not in cached))
+    trace(
+        "embeddings.embed_texts.start",
+        total_texts=len(texts),
+        cache_hits=len(cached),
+        unique_cache_misses=len(missing_texts),
+        batch_size=batch_size,
+    )
+    if not missing_texts:
+        return [cached[index] for index in range(len(texts))]
+
+    batches = [missing_texts[start : start + batch_size] for start in range(0, len(missing_texts), batch_size)]
 
     if len(batches) == 1:
-        vectors = _embed_batch(batches[0])
+        fresh_vectors = _embed_batch(batches[0])
     else:
         with ThreadPoolExecutor(max_workers=min(len(batches), MAX_BATCH_WORKERS)) as executor:
             # map() preserves input order; list() forces the first failure to surface here.
-            vectors = [vector for batch in executor.map(_embed_batch, batches) for vector in batch]
+            fresh_vectors = [vector for batch in executor.map(_embed_batch, batches) for vector in batch]
+
+    put_cached_embeddings(missing_texts, fresh_vectors)
+    fresh_by_text = dict(zip(missing_texts, fresh_vectors, strict=True))
+    vectors = [cached[index] if index in cached else fresh_by_text[text] for index, text in enumerate(texts)]
 
     trace("embeddings.embed_texts.done", total_vectors=len(vectors))
     return vectors

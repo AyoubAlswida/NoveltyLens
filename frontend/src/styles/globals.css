@@ -1266,13 +1266,11 @@ button {
 
 .report-title-block h1 {
   margin: 0;
-  overflow: hidden;
   color: var(--navy);
   font-family: var(--font-display);
   font-size: 17px;
-  line-height: 1.3;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .report-title-block p {
@@ -1304,7 +1302,7 @@ button {
 .report-col-left {
   /* Scales with the viewport instead of a fixed pixel width - 600px was only
      ever what this worked out to at the old 1120px container cap. */
-  flex: 1.5 1 0%;
+  flex: 1.9 1 0%;
   min-width: 420px;
 }
 
@@ -1314,7 +1312,7 @@ button {
    so every section is reached by the same page scroll as the patent list. */
 .report-col-right {
   flex: 1 1 0%;
-  min-width: 320px;
+  min-width: 280px;
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -1347,11 +1345,11 @@ button {
 }
 
 .summary-card-header {
-  padding: 26px;
+  padding: 22px;
 }
 
 .summary-card-section {
-  padding: 18px 26px 20px;
+  padding: 18px 22px;
   border-top: 1px solid #e2e9ee;
 }
 
@@ -1383,12 +1381,17 @@ button {
    copy, and the rating rides on `.risk-pill` / `.risk-label` below. */
 
 .risk-legend {
-  padding: 4px 24px 18px;
-  border-bottom: 1px solid #e2e9ee;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  padding: 16px 24px;
+  margin-bottom: 4px;
+  border: 0;
 }
 
 .risk-legend-title {
-  margin: 0 0 8px;
+  margin: 0;
   color: #7b8ba0;
   font-family: var(--font-mono);
   font-size: 10px;
@@ -1523,11 +1526,12 @@ button {
 }
 
 .summary-copy h2 {
-  font-size: 20px;
+  font-size: 17px;
+  line-height: 1.5;
 }
 
 .summary-copy > p:not(.eyebrow) {
-  margin: 7px 0 14px;
+  margin: 7px 0 0;
   color: #677991;
   font-size: 13px;
 }
@@ -1568,9 +1572,9 @@ button {
 
 .matches-list {
   display: grid;
-  gap: 14px;
-  padding: 16px;
-  background: #f6f9fa;
+  gap: 16px;
+  padding: 0 20px 20px;
+  background: transparent;
 }
 
 .patent-family {
@@ -1645,11 +1649,11 @@ button {
 
 .patent-card {
   display: block;
-  padding: 20px;
-  border: 1px solid #dbe5ea;
+  padding: 22px;
+  border: 1px solid #dce5e9;
   border-radius: 12px;
   background: #fff;
-  box-shadow: 0 3px 10px rgba(20, 48, 72, 0.055);
+  box-shadow: none;
   color: inherit;
   text-decoration: none;
   cursor: pointer;
@@ -1657,8 +1661,8 @@ button {
 }
 
 .patent-card:hover {
-  background: rgba(38, 168, 171, 0.06);
-  border-color: rgba(38, 168, 171, 0.34);
+  background: #f7fbfb;
+  border-color: rgba(38, 168, 171, 0.46);
 }
 
 .patent-card:hover .patent-title {
@@ -1693,16 +1697,12 @@ button {
 }
 
 .patent-title {
-  margin: 6px 0 16px;
+  margin: 6px 0 14px;
   color: var(--navy);
   font-family: var(--font-display);
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
-  line-height: 1.35;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  line-height: 1.5;
 }
 
 .patent-details {
@@ -1712,16 +1712,16 @@ button {
 }
 
 .patent-detail-section {
-  padding: 12px 14px;
-  border: 1px solid rgba(8, 168, 115, 0.18);
-  border-left: 3px solid var(--green-dark);
-  border-radius: 8px;
-  background: rgba(8, 168, 115, 0.035);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .patent-detail-section .card-label {
-  color: var(--green-dark);
-  font-weight: 700;
+  color: #557188;
+  font-weight: 600;
+  letter-spacing: .06em;
 }
 
 /* A dedicated section: the "Novelty risk" label on the left, the semantic
@@ -1729,9 +1729,11 @@ button {
    the badge keeps red/amber/green because its colour communicates risk. */
 .patent-similarity {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
   gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #e2e9ee;
 }
 
 .patent-similarity .card-label,
@@ -1759,10 +1761,10 @@ button {
 }
 
 .patent-summary p:not(.card-label) {
-  margin: 7px 0 0;
-  color: #687b92;
-  font-size: 12.5px;
-  line-height: 1.55;
+  margin: 8px 0 0;
+  color: #42576b;
+  font-size: 14px;
+  line-height: 1.75;
 }
 
 .patent-action {
@@ -2019,22 +2021,11 @@ button {
 }
 
 .failed-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
   color: #a82f3c;
   font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.1em;
-}
-
-.failed-label span {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #cb3c49;
-  box-shadow: 0 0 0 5px rgba(203, 60, 73, 0.1);
 }
 
 .error-card {
@@ -2738,15 +2729,14 @@ button {
   border-left-color: #3a424c;
 }
 
-/* Buttons */
-/* The Outlined button keeps its blue on dark, lifted for contrast rather than
-   flattened to grey -- otherwise it stops reading as the Pixel outlined variant. */
+/* Buttons use the same blue token in both themes, so the primary action keeps
+   one visual identity while only the surrounding surface changes. */
 :root[data-theme="dark"] .primary-action {
-  background: var(--btn-blue-dark);
+  background: var(--btn-blue);
 }
 
 :root[data-theme="dark"] .primary-action:hover:not(:disabled) {
-  background: var(--btn-blue-dark-hover);
+  background: var(--btn-blue-hover);
 }
 
 :root[data-theme="dark"] .primary-action:disabled {
@@ -2939,12 +2929,6 @@ button {
 
 :root[data-theme="dark"] .failed-label {
   color: #ef7683;
-}
-
-/* The light block gives this dot a 5px red halo. */
-:root[data-theme="dark"] .failed-label span {
-  background: #ef7683;
-  box-shadow: none;
 }
 
 :root[data-theme="dark"] .error-actions .secondary-button {
