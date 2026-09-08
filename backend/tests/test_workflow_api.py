@@ -69,24 +69,29 @@ def paused_run(pg, make_run):
 
 SUMMARY = "A closed-loop controller recovers exhaust heat via a duct-mounted exchanger."
 ELEMENTS = ["a heat exchanger in the exhaust duct"]
-"""The flat understanding body (spec section 4.2.1).
+"""The two flat Gate-A artifacts (spec section 4.2.1).
 
-A technical summary and a list of element **strings**. No version, no capability
-objects, no `core`, no relationships and no per-element ids: the version is
-minted by the endpoint and the ids on write.
+The summary is approved first. A later request approves the list of limitation
+strings. Neither request accepts a version, capability objects, `core`,
+relationships, or per-element ids: the graph state supplies the version and the
+ids are minted on write.
 """
 
 
 def approve(client, run_id: str, key: str, *, summary=None, elements=None):
-    return client.post(
-        f"/api/runs/{run_id}/gates/A/approve",
-        json={
-            "idempotency_key": key,
-            "technical_summary": SUMMARY if summary is None else summary,
-            "technical_elements": ELEMENTS if elements is None else elements,
-        },
-        headers=auth(),
-    )
+    with patch(
+        "workflow.gate_state.read_state",
+        return_value={"understanding_review_stage": "summary", "understanding_version": 1},
+    ):
+        return client.post(
+            f"/api/runs/{run_id}/gates/A/approve",
+            json={
+                "idempotency_key": key,
+                "review_stage": "summary",
+                "technical_summary": SUMMARY if summary is None else summary,
+            },
+            headers=auth(),
+        )
 
 
 # --- the approval never resumes the graph ----------------------------------
@@ -156,7 +161,7 @@ def test_a_duplicate_approval_produces_one_mutation_and_replays_the_response(
     assert len(resumed) == 1, "a duplicate approval must not append a second event"
 
     versions = pg.execute(
-        "SELECT count(*) FROM feature_decompositions WHERE run_id = %s", (paused_run,)
+        "SELECT count(*) FROM approved_understandings WHERE run_id = %s", (paused_run,)
     ).fetchone()[0]
     assert versions == 1, "a duplicate approval must not write a second version"
 
@@ -175,7 +180,7 @@ def test_a_mutating_request_without_an_idempotency_key_is_422(client, paused_run
     """A server-generated key would make every retry a new mutation."""
     response = client.post(
         f"/api/runs/{paused_run}/gates/A/approve",
-        json={"technical_summary": SUMMARY, "technical_elements": ELEMENTS},
+        json={"review_stage": "summary", "technical_summary": SUMMARY},
         headers=auth(),
     )
     assert response.status_code == 422
@@ -190,10 +195,14 @@ def test_a_mutating_request_without_an_idempotency_key_is_422(client, paused_run
 # three of eight. `test_the_list_above_is_actually_every_mutating_route` now
 # fails if a new route is added without being listed here.
 MUTATING_ROUTES = [
-    ("gates/A/approve", {"technical_summary": SUMMARY, "technical_elements": ELEMENTS}),
+    ("gates/A/approve", {"review_stage": "summary", "technical_summary": SUMMARY}),
     ("gates/STRATEGY/approve", {"queries": ["a query"]}),
 ]
-"""Two approvals, and that is the entire mutating surface of a run.
+"""Two approval endpoints, and that is the entire mutating surface of a run.
+
+Gate A is intentionally called twice with different ``review_stage`` values:
+once for the summary and once for limitations. The strategy endpoint is the
+third human approval.
 
 It was eleven. The nine that went -- Gate B/C/D, both regeneration routes, the
 candidate route and the three cell routes -- were removed with feature

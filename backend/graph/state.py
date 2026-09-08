@@ -44,6 +44,14 @@ class GraphState(TypedDict, total=False):
     text the ranking stage scores patents against, kept in state so ranking does
     not need to know how it was assembled."""
 
+    similarity_units: list[str]
+    """Independently approved limitations used to measure coverage.
+
+    Present on Advanced Search runs only. Quick Search deliberately leaves it
+    absent, so ranking derives units by chunking ``invention_text`` instead of
+    pretending that machine-extracted concepts were human-approved limits.
+    """
+
     # --- Query Expansion (P1.2) ---
     queries: list[str]
     """The search queries actually dispatched.  Distinct from
@@ -130,7 +138,7 @@ class GraphState(TypedDict, total=False):
     """Whether this run goes through the Advanced Search branch at all.
 
     Advanced Search is a standard prior-art search preceded by guided editing:
-    the run pauses twice for a person (the understanding, then the search
+    the run pauses three times for a person (summary, limitations, then search
     queries) and then executes the ordinary search pipeline. It performs no
     evidence verification and reaches no legal conclusion.
 
@@ -187,6 +195,14 @@ class GraphState(TypedDict, total=False):
     """What the inventor said the system misunderstood, carried into a
     regeneration and cleared by the node that consumes it. Left set, it would
     silently re-apply to a version it was never about."""
+
+    understanding_review_stage: str
+    """Which independently reviewed understanding artifact is currently shown.
+
+    ``summary`` is proposed and approved first. Only then may ``limitations``
+    be generated from that approved text. Both pauses use durable Workflow Gate
+    A, while this state value keeps their business meaning unambiguous.
+    """
 
     candidate_search_strategy: dict | None
     """The queries an LLM proposed for the **approved** understanding, from

@@ -113,8 +113,6 @@ def decompose_features_node(state: GraphState) -> dict[str, Any]:
     `llm.DECOMPOSITION_COMPONENT`, because spec section 16 decision 8 leaves the
     owner of this step open and an unnamed component cannot be assigned one.
     """
-    from graph.limits import MAX_PROPOSED_SEARCH_LIMITATIONS
-
     # Advanced Search reaches this node directly, before the Quick Search
     # understanding call. Claims are still part of what the reviewer must
     # approve, so include them explicitly instead of depending on
@@ -130,16 +128,14 @@ def decompose_features_node(state: GraphState) -> dict[str, Any]:
     feedback = str(state.get("understanding_feedback") or "")
     emit_progress(
         "decompose",
-        "Re-analysing the invention…" if feedback else "Analysing the invention…",
+        "Revising the technical summary…" if feedback else "Preparing the technical summary…",
     )
 
-    proposal = llm.propose_understanding(
+    summary = llm.propose_technical_summary(
         invention,
         problem_solved=str(state.get("problem_solved") or ""),
         novelty_statement=str(state.get("inventor_novelty_statement") or ""),
         feedback=feedback,
-        max_features=1,
-        max_elements_per_feature=MAX_PROPOSED_SEARCH_LIMITATIONS,
     )
 
     run_id = str(state.get("run_id") or "").strip()
@@ -159,8 +155,8 @@ def decompose_features_node(state: GraphState) -> dict[str, Any]:
                 run_id=run_id,
                 version=version,
                 source=understanding_store.SOURCE_LLM,
-                summary=proposal["summary"],
-                features=proposal["features"],
+                summary=summary,
+                features=[],
                 created_by=str(state.get("created_by") or ""),
                 feedback=feedback,
             )
@@ -168,14 +164,50 @@ def decompose_features_node(state: GraphState) -> dict[str, Any]:
     return {
         "candidate_decomposition": {
             "component": llm.DECOMPOSITION_COMPONENT,
-            "summary": proposal["summary"],
-            "features": proposal["features"],
+            "summary": summary,
+            "features": [],
             "version": version,
         },
         "understanding_version": version,
+        "understanding_review_stage": "summary",
         # Cleared so a later recovery of this run does not silently re-apply
         # feedback the inventor gave about a version that has since been replaced.
         "understanding_feedback": "",
+    }
+
+
+def propose_limitations_node(state: GraphState) -> dict[str, Any]:
+    """Generate Stage-2 limitations from the approved Stage-1 summary only."""
+    from graph.limits import MAX_PROPOSED_SEARCH_LIMITATIONS
+
+    summary = str(state.get("approved_summary") or "").strip()
+    if not summary:
+        raise UnapprovedArtifactError(
+            "technical limitations cannot be generated before the summary is approved"
+        )
+    emit_progress("decompose", "Generating technical limitations from your approved summary…")
+    features = llm.propose_technical_limitations(
+        summary, max_elements=MAX_PROPOSED_SEARCH_LIMITATIONS
+    )
+    run_id = str(state.get("run_id") or "").strip()
+    version = int(state.get("understanding_version") or 0)
+    if run_id:
+        with db.connect() as conn:
+            understanding_store.attach_features_to_proposal(
+                conn,
+                run_id=run_id,
+                version=version,
+                source=understanding_store.SOURCE_LLM,
+                features=features,
+            )
+    return {
+        "candidate_decomposition": {
+            "component": llm.DECOMPOSITION_COMPONENT,
+            "summary": summary,
+            "features": features,
+            "version": version,
+        },
+        "understanding_review_stage": "limitations",
     }
 
 

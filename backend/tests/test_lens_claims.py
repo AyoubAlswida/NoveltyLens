@@ -7,7 +7,7 @@ its own number - plus the multi-language bug that flattening hid.
 
 import pytest
 
-from models import PatentClaim
+from models import PatentClaim, PatentRecord
 from search.lens import ClaimNumberingError, _parse_claims, _to_patent_record
 
 
@@ -115,6 +115,51 @@ def test_claims_are_empty_not_absent_for_a_patent_lens_returned_none_for():
 
     assert record.claims == []
     assert record.full_text == "A description."
+
+
+def test_simple_family_metadata_is_provider_backed_and_stable():
+    item = {
+        "lens_id": "222",
+        "jurisdiction": "US",
+        "doc_number": "123",
+        "kind": "A1",
+        "families": {
+            "simple_family": {
+                "size": 3,
+                "members": [{"lens_id": "333"}, {"lens_id": "111"}, {"lens_id": "222"}],
+            }
+        },
+    }
+    first = _to_patent_record(item)
+    item["families"]["simple_family"]["members"].reverse()
+    second = _to_patent_record(item)
+
+    assert first.family_id == second.family_id
+    assert first.family_id.startswith("lens-simple-")
+    assert first.family_size == 3
+
+
+def test_family_metadata_reaches_the_public_match_payload():
+    from graph.ranking import format_matches
+    from models import ComparisonResult
+
+    patent = PatentRecord(
+        id="US123A1",
+        title="A family member",
+        family_id="lens-simple-family-one",
+        family_size=6,
+    )
+    comparison = ComparisonResult(
+        patent=patent,
+        similarity_score=0.8,
+        unit_similarity_scores=[0.8],
+    )
+
+    match = format_matches(
+        [comparison], ["grounded overlap"], [["shared control"]], [["L1"]], 1
+    )[0]
+    assert match["family_id"] == "lens-simple-family-one"
+    assert match["family_size"] == 6
 
 
 # --------------------------------------------------------------------------

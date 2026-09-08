@@ -198,7 +198,7 @@ def test_an_unresolved_unclear_requirement_blocks_gate_c(pg, make_run):
 # --- row 132: no final report before the required gates complete --------------
 
 
-def test_no_path_to_the_end_of_the_graph_skips_the_two_approvals():
+def test_no_path_to_the_end_of_the_graph_skips_the_three_approvals():
     """A `result` cannot be produced while a mandatory gate is outstanding.
 
     Asserted on the topology rather than by running a graph: the property is
@@ -209,7 +209,7 @@ def test_no_path_to_the_end_of_the_graph_skips_the_two_approvals():
     withdrawn, `END` is reached from `explain` -- the ordinary end of the search
     pipeline -- for both kinds of run. The gate that guarded the exit is gone, so
     the property is re-expressed where it still bites: on an Advanced Search run
-    the only route into the search half of the graph passes both approvals, so no
+    the only route into the search half of the graph passes all three approvals, so no
     terminal result exists that skipped them. `explain` reaching END is not a
     bypass; it is the pipeline finishing.
     """

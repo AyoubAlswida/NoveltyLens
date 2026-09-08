@@ -73,7 +73,7 @@ export class ErrorScreen {
     const phase = this.failedPhase();
     return phase
       ? `Failed during “${PHASE_LABELS[phase].replace(/…$/, '')}”`
-      : 'Failed before the first phase reported';
+      : 'The failing phase could not be identified';
   });
 
   readonly pips = computed(() => {

@@ -118,6 +118,50 @@ def test_the_report_publishes_no_score_or_verdict(client, pg, make_run):
     assert _offending(body) == []
 
 
+def test_patent_family_metadata_round_trips_through_history(pg):
+    from models import PatentRecord
+    from reports import list_history, save_report
+
+    patent = PatentRecord(
+        id="USFAMILY1A1",
+        title="A family member",
+        source="Lens.org",
+        family_id="lens-simple-family-one",
+        family_size=8,
+    )
+    match = {
+        "num": patent.id,
+        "title": patent.title,
+        "risk": "Medium",
+        "rationale": "It shares one mechanism but not the claimed combination.",
+        "key_overlap": ["shared mechanism"],
+        "source": patent.source,
+        "url": "",
+        "family_id": patent.family_id,
+        "family_size": patent.family_size,
+    }
+    stored_id = save_report(
+        pg,
+        description="family persistence test",
+        claims=None,
+        concepts=[],
+        query_count=1,
+        recommendations=["Preserve the distinguishing combination."],
+        matches=[match],
+        patents=[patent],
+    )
+    try:
+        stored_run = next(
+            item for item in list_history(pg) if item["description"] == "family persistence test"
+        )
+        stored_match = stored_run["patents"][0]
+        assert stored_match["family_id"] == "lens-simple-family-one"
+        assert stored_match["family_size"] == 8
+    finally:
+        pg.execute("DELETE FROM search_runs WHERE id = %s", (stored_id,))
+        pg.execute("DELETE FROM patents WHERE id = %s", (patent.id,))
+
+
 # --- every other status names itself ----------------------------------------
 
 
@@ -223,6 +267,7 @@ def _final_state() -> dict:
                     url="https://example.invalid/1",
                 ),
                 similarity_score=0.42,
+                unit_similarity_scores=[0.42],
             )
         ]
     }

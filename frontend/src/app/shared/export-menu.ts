@@ -51,7 +51,7 @@ export class ExportMenu {
   readonly open = signal(false);
 
   readonly options = [
-    { key: 'pdf', label: 'PDF', hint: 'Opens the print dialog', icon: 'FileText' },
+    { key: 'pdf', label: 'PDF', hint: 'Downloads a .pdf file', icon: 'FileText' },
     { key: 'word', label: 'Word', hint: 'Downloads a .doc file', icon: 'FileType2' },
     { key: 'json', label: 'JSON', hint: 'Raw report data', icon: 'FileJson' },
   ] as const;
@@ -74,7 +74,11 @@ export class ExportMenu {
   choose(key: 'pdf' | 'word' | 'json') {
     this.open.set(false);
     const report = this.data();
-    if (key === 'pdf') this.exporter.exportReportPdf(report);
+    if (key === 'pdf') {
+      void this.exporter.exportReportPdf(report).catch(() => {
+        alert('PDF export failed. Please try again.');
+      });
+    }
     else if (key === 'word') this.exporter.exportReportWord(report);
     else this.exporter.downloadReportJson(report);
   }

@@ -44,6 +44,10 @@ def understand_node(state: GraphState) -> dict:
             f"{description} {claims or ''} "
             f"{' '.join(analysis.concepts)} {' '.join(analysis.keywords)}"
         ),
+        # Quick Search has no reviewed limitation list, but its existing LLM
+        # call already returns technical concepts. Preserve those boundaries so
+        # breadth-aware risk is generic across both search modes.
+        "similarity_units": analysis.concepts,
     }
 
 
@@ -109,6 +113,10 @@ def prepare_approved_search_node(state: GraphState) -> dict:
             concepts=limitations,
         ),
         "invention_text": invention_text,
+        # Preserve the reviewer-approved boundaries. Ranking can now reward a
+        # patent for covering the invention broadly instead of letting one
+        # strongly matching paragraph stand in for every limitation.
+        "similarity_units": limitations,
     }
 
 

@@ -58,7 +58,7 @@ def read_state(run_id: str) -> Optional[dict[str, Any]]:
 
 
 def gate_a_payload(state: dict[str, Any]) -> dict[str, Any]:
-    """What the Invention Understanding stage shows.
+    """What the current summary-or-limitations review shows.
 
     The field is called `candidate_decomposition` and not `decomposition`, here
     and in the graph, because the name is the guard: `verify_features_node` reads
@@ -71,10 +71,17 @@ def gate_a_payload(state: dict[str, Any]) -> dict[str, Any]:
     the inventor wrote, and the whole point of this screen is that they are two
     different things a person can compare.
     """
+    review_stage = str(state.get("understanding_review_stage") or "summary")
     return {
         "original_description": state.get("description") or "",
         "technical_summary": _candidate_summary(state),
-        "technical_elements": _candidate_elements(state),
+        # A legacy or malformed checkpoint may still carry elements beside a
+        # summary proposal. Do not expose them before the summary is approved:
+        # Stage 2 must be generated from the exact approved text, not previewed
+        # from an earlier machine draft.
+        "technical_elements": (
+            _candidate_elements(state) if review_stage == "limitations" else []
+        ),
     }
 
 

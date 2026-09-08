@@ -63,6 +63,8 @@ __all__ = [
     "require_approved_decompositions",
     "require_approved_candidate_set",
     "approve_understanding_by_owner",
+    "approve_summary_by_owner",
+    "approve_limitations_by_owner",
     "latest_approved_understanding_version",
     "load_approved_understanding",
     "require_approved_understanding",
@@ -556,7 +558,66 @@ def require_approved_candidate_set(
     return load_approved_candidate_set(conn, run_id=run_id, version=version)
 
 
-# --- The invention understanding: summary and decomposition, one act ---------
+# --- The invention understanding: summary first, limitations second ----------
+
+
+def approve_summary_by_owner(
+    conn: psycopg.Connection,
+    *,
+    run_id: str,
+    actor_email: str,
+    version: int,
+    summary: str,
+    approved_at: str,
+) -> int:
+    """Approve Stage 1 without manufacturing a decomposition beside it."""
+    _require_approver(actor_email, approved_at)
+    cleaned = (summary or "").strip()
+    if not cleaned:
+        raise UnapprovedArtifactError("an approved technical summary cannot be empty")
+    _require_owner(conn, run_id=run_id, actor_email=actor_email)
+    conn.execute(
+        """
+        INSERT INTO approved_understandings
+            (run_id, version, summary, is_approved, approved_by, approved_at)
+        VALUES (%s, %s, %s, TRUE, %s, %s)
+        """,
+        (run_id, version, cleaned, actor_email, approved_at),
+    )
+    return version
+
+
+def approve_limitations_by_owner(
+    conn: psycopg.Connection,
+    *,
+    run_id: str,
+    actor_email: str,
+    version: int,
+    features: Sequence[dict[str, Any]],
+    approved_at: str,
+) -> int:
+    """Approve Stage 2 only when the same version's summary is approved."""
+    _require_approver(actor_email, approved_at)
+    if not features:
+        raise UnapprovedArtifactError("at least one technical limitation is required")
+    _require_owner(conn, run_id=run_id, actor_email=actor_email)
+    approved = require_approved_understanding(conn, run_id=run_id, version=version)
+    if any(
+        str(feature.get("feature_text") or "").strip() != approved["summary"]
+        for feature in features
+    ):
+        raise UnapprovedArtifactError(
+            "technical limitations must remain attached to the approved summary "
+            "at the same version"
+        )
+    return _write_decomposition(
+        conn,
+        run_id=run_id,
+        version=version,
+        features=features,
+        approved_by=actor_email,
+        approved_at=approved_at,
+    )
 
 
 def approve_understanding_by_owner(

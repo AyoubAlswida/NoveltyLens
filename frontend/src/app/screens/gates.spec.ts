@@ -22,7 +22,10 @@ const UNDERSTANDING = {
   technical_elements: ['a graphene-oxide membrane', 'a UV-C emitter'],
   editable: true,
   completion_rules: [],
+  review_stage: 'summary',
 };
+
+const LIMITATIONS = { ...UNDERSTANDING, review_stage: 'limitations' };
 
 const STRATEGY = {
   queries: ['graphene oxide membrane water filter', 'uv-c sterilisation drinking bottle'],
@@ -32,6 +35,7 @@ const STRATEGY = {
 
 class FakeRuns {
   gateAPayload: unknown = UNDERSTANDING;
+  readonly gateAResponses: unknown[] = [];
   gateStrategyPayload: unknown = STRATEGY;
 
   failWith: RunApiError | null = null;
@@ -45,13 +49,19 @@ class FakeRuns {
     return `key-${this.sent.length + 1}`;
   }
   gateA() {
-    return this.maybeFail(this.gateAPayload as Record<string, unknown>);
+    const payload = this.gateAResponses.shift() ?? this.gateAPayload;
+    return this.maybeFail(payload as Record<string, unknown>);
   }
   gateStrategy() {
     return this.maybeFail(this.gateStrategyPayload as Record<string, unknown>);
   }
-  approveGateA(...args: unknown[]) {
-    this.sent.push({ method: 'approveGateA', args });
+  approveGateSummary(...args: unknown[]) {
+    this.sent.push({ method: 'approveGateSummary', args });
+    this.gateAPayload = { ...LIMITATIONS, technical_summary: String(args[1] ?? '') };
+    return this.maybeFail({});
+  }
+  approveGateLimitations(...args: unknown[]) {
+    this.sent.push({ method: 'approveGateLimitations', args });
     return this.maybeFail({});
   }
   approveGateStrategy(...args: unknown[]) {
@@ -160,14 +170,40 @@ describe('Advanced Search — stage 1, the understanding', () => {
     expect(component.violations()).toEqual([]);
   });
 
-  it('calls no approval endpoint moving from stage 1 to stage 2', async () => {
+  it('approves the summary before stage 2 is shown', async () => {
     const fixture = await atStageOne(runs);
     await fixture.componentInstance.next();
     await settle(fixture);
 
     expect(fixture.componentInstance.stage()).toBe(2);
-    // The whole point: "Next" is not an approval anybody would recognise as one.
-    expect(runs.sent).toEqual([]);
+    expect(runs.sent[0].method).toBe('approveGateSummary');
+  });
+
+  it('names the work between summary approval and limitations review', async () => {
+    const fixture = await atStageOne(runs);
+    fixture.componentInstance.state.set('resuming');
+    fixture.detectChanges();
+
+    const transition = text(fixture).toLowerCase();
+    expect(transition).toContain('preparing your technical limitations');
+    expect(transition).toContain('approved invention summary');
+    expect(transition).not.toContain('search strategy');
+  });
+
+  it('waits through the intermediate limitations checkpoint until elements exist', async () => {
+    const fixture = await atStageOne(runs);
+    runs.gateAResponses.push(
+      { ...LIMITATIONS, technical_elements: [] },
+      LIMITATIONS,
+    );
+
+    await fixture.componentInstance.next();
+    await settle(fixture);
+
+    expect(fixture.componentInstance.stage()).toBe(2);
+    expect(fixture.componentInstance.elements().map((row) => row.text)).toEqual(
+      LIMITATIONS.technical_elements,
+    );
   });
 });
 
@@ -249,16 +285,15 @@ describe('Advanced Search — stage 2, the technical elements', () => {
     const fixture = await atStageTwo();
     const component = fixture.componentInstance;
 
-    component.summary.set('  an edited summary  ');
     component.editRow(component.elements, component.elements()[0].key, '  an edited element  ');
     await component.next();
     await settle(fixture);
 
-    expect(runs.sent).toHaveLength(1);
-    const [runId, summary, elements] = runs.sent[0].args as [string, string, string[]];
-    expect(runs.sent[0].method).toBe('approveGateA');
+    expect(runs.sent).toHaveLength(2);
+    const limitationCall = runs.sent.find((call) => call.method === 'approveGateLimitations')!;
+    const [runId, elements] = limitationCall.args as [string, string[]];
+    expect(limitationCall.method).toBe('approveGateLimitations');
     expect(runId).toBe('r1');
-    expect(summary).toBe('an edited summary');
     expect(elements).toEqual(['an edited element', 'a UV-C emitter']);
   });
 });
@@ -338,7 +373,7 @@ describe('Advanced Search — navigation preserves every edit', () => {
     const component = fixture.componentInstance;
 
     component.summary.set('my summary');
-    await component.next(); // 1 -> 2, no server call
+    await component.next(); // approve summary, then load generated limitations
     component.editRow(component.elements, component.elements()[0].key, 'my element');
     await component.next(); // 2 -> 3, approves the understanding
     await settle(fixture);
@@ -379,11 +414,11 @@ describe('Advanced Search — navigation preserves every edit', () => {
     const fixture = await atStageOne(runs);
     const component = fixture.componentInstance;
 
-    await component.next(); // 1 -> 2
+    await component.next(); // approve summary, then load limitations
     await component.next(); // 2 -> 3, one approval
     await settle(fixture);
     await arriveAtStrategy(fixture);
-    expect(runs.sent.filter((c) => c.method === 'approveGateA')).toHaveLength(1);
+    expect(runs.sent.filter((c) => c.method === 'approveGateLimitations')).toHaveLength(1);
 
     component.previous(); // 3 -> 2
     await component.next(); // 2 -> 3 again
@@ -391,7 +426,7 @@ describe('Advanced Search — navigation preserves every edit', () => {
 
     // A second approval would be a WRONG_GATE conflict for a reviewer who did
     // nothing wrong: the run has already moved past Gate A.
-    expect(runs.sent.filter((c) => c.method === 'approveGateA')).toHaveLength(1);
+    expect(runs.sent.filter((c) => c.method === 'approveGateLimitations')).toHaveLength(1);
     expect(component.stage()).toBe(3);
   });
 });
@@ -489,7 +524,7 @@ describe('Advanced Search — the next stage arrives with no page reload', () =>
    * app-level durable stream moves the same component from A to STRATEGY by
    * updating its gate input.
    */
-  it('drives two approvals in a row without remounting', async () => {
+  it('drives all three approvals without remounting', async () => {
     const runs = new FakeRuns();
     const fixture = await atStageOne(runs);
     const component = fixture.componentInstance;
@@ -497,11 +532,11 @@ describe('Advanced Search — the next stage arrives with no page reload', () =>
     const resumed: string[] = [];
     component.resumed.subscribe((gate) => resumed.push(gate));
 
-    await component.next(); // 1 -> 2
-    await component.next(); // approval one
+    await component.next(); // summary approval -> stage 2
+    await component.next(); // limitations approval
     await settle(fixture);
     expect(component.state()).toBe('resuming');
-    expect(resumed).toEqual(['A']);
+    expect(resumed).toEqual(['A', 'A']);
 
     const transitionText = text(fixture).toLowerCase();
     expect(transitionText).toContain('preparing your search strategy');
@@ -524,11 +559,14 @@ describe('Advanced Search — the next stage arrives with no page reload', () =>
     await settle(fixture);
 
     expect(runs.sent.map((call) => call.method)).toEqual([
-      'approveGateA',
+      'approveGateSummary',
+      'approveGateLimitations',
       'approveGateStrategy',
     ]);
     expect(component.state()).toBe('resuming');
-    expect(resumed).toEqual(['A', 'STRATEGY']);
+    expect(resumed).toEqual(['A', 'A', 'STRATEGY']);
+    expect(text(fixture).toLowerCase()).toContain('starting your prior-art search');
+    expect(text(fixture).toLowerCase()).toContain('searches you approved');
   });
 });
 

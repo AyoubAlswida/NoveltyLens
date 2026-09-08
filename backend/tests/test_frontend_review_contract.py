@@ -28,11 +28,11 @@ RUNS_SERVICE = FRONTEND / "services" / "runs.ts"
 STAGES = FRONTEND / "screens" / "advanced-search-stages.ts"
 """The three stages, in one component.
 
-Stages 1 and 2 are a single backend approval (the understanding) and stage 3 is
-a second one (the strategy) -- two approvals, three screens -- but the three
-screens are one flow a person walks forward and back through, so the drafts live
-in one component. `understanding-review.ts` and `strategy-review.ts` were
-replaced by it.
+Stages 1 and 2 are separate approvals at the same durable Gate A: approve the
+summary, generate limitations from that exact approved text, then approve the
+limitations. Stage 3 separately approves the strategy. The three screens are
+one flow a person walks through, so the drafts live in one component.
+`understanding-review.ts` and `strategy-review.ts` were replaced by it.
 """
 
 GATE_SCREENS = {
@@ -276,10 +276,11 @@ def test_the_understanding_screen_shows_the_original_description_read_only():
 
 
 MUTATIONS = (
-    "approveGateA",
+    "approveGateSummary",
+    "approveGateLimitations",
     "approveGateStrategy",
 )
-"""Two approvals: the entire mutating surface of a run.
+"""Three approvals: the entire mutating surface of a run.
 
 The other eight went with their routes. `tests/test_workflow_api.py` asserts
 those paths now 404 as unknown, so a client method for one would be a call site

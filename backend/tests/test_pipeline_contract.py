@@ -106,12 +106,15 @@ def _fake_llm_chat(prompt: str, **kwargs: object) -> str:
         # because analyze_all_matches raises on a missing rationale or missing
         # key-overlap tags.
         count = int(re.search(r"against (\d+) prior-art patents", prompt).group(1))
+        limitation_ids = re.findall(r"^(L\d+):", prompt, flags=re.MULTILINE)
         return json.dumps({
             "rationales": [
                 {
                     "index": i,
                     "text": f"Deterministic rationale for patent {i}.",
                     "key_overlap": [f"overlap tag {i}a", f"overlap tag {i}b"],
+                    "covered_limitation_ids": limitation_ids,
+                    "missing_limitation_ids": [],
                 }
                 for i in range(1, count + 1)
             ],

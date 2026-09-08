@@ -51,9 +51,9 @@ from graph.understanding import (
     understand_node,
 )
 from graph.validation import validate_node
-from graph.gates import gate_a_node, gate_strategy_node
+from graph.gates import gate_a_node, gate_limitations_node, gate_strategy_node
 from graph.strategy import propose_strategy_node
-from graph.verification_nodes import decompose_features_node
+from graph.verification_nodes import decompose_features_node, propose_limitations_node
 
 # NOT imported, and deliberately: `graph/evidence_nodes.py`,
 # `graph/verification_nodes.py::verify_features_node`, `graph/report.py` and
@@ -164,8 +164,9 @@ def _assemble() -> StateGraph:
     # A search-only run never enters any node below, which is what keeps today's
     # SSE stream byte-identical.
     #
-    # Two Human-in-the-Loop gates, presented to the user as three stages: the
-    # understanding (stages 1 and 2) and the search strategy (stage 3).
+    # Three Human-in-the-Loop pauses presented as three stages. The first two
+    # share durable Workflow Gate A but approve different artifacts in sequence:
+    # summary first, then limitations generated from that approved summary.
     builder.add_node("decompose", decompose_features_node)
 
     # Each gate calls `interrupt()`. LangGraph commits a checkpoint and raises
@@ -175,20 +176,25 @@ def _assemble() -> StateGraph:
     # the resume value travels through an HTTP request and a checkpoint, and if
     # it were the decision then forging it would be approving.
     builder.add_node("gate_a", gate_a_node)
+    builder.add_node("propose_limitations", propose_limitations_node)
+    builder.add_node("gate_limitations", gate_limitations_node)
     builder.add_node("propose_strategy", propose_strategy_node)
     builder.add_node("gate_strategy", gate_strategy_node)
     builder.add_node("prepare_approved_search", prepare_approved_search_node)
 
-    # Gate A sits between the machine proposing an understanding and the search
-    # that uses it, so nothing is searched for against elements nobody approved.
+    # The first Gate-A pause sits between the summary proposal and limitation
+    # generation, so Stage 2 cannot be based on an unapproved interpretation.
     builder.add_edge("decompose", "gate_a")
 
     # **A plain edge, not a router.** Regeneration was removed from the product:
     # editing the summary, the elements and the queries replaces it, so a gate
     # has exactly one way out and there is no rejection branch to route to. The
-    # approved understanding leads to the SEARCH STRATEGY stage, which proposes
-    # the queries and pauses again; the search is reached only from there.
-    builder.add_edge("gate_a", "propose_strategy")
+    # approved summary leads to limitation generation and its own pause. Only
+    # the approved limitations lead to the SEARCH STRATEGY stage; the search is
+    # reached only after its separate approval.
+    builder.add_edge("gate_a", "propose_limitations")
+    builder.add_edge("propose_limitations", "gate_limitations")
+    builder.add_edge("gate_limitations", "propose_strategy")
 
     # --- The SEARCH STRATEGY stage ---------------------------------------
     #
@@ -292,7 +298,18 @@ def build_result_event(state: GraphState) -> dict[str, object]:
         return _result_envelope(state, patents=[], recommendations=[])
 
     match_analysis = state["match_analysis"]
-    patents = format_matches(state["comparisons"], match_analysis.rationales, match_analysis.key_overlaps)
+    limitations = [
+        str(value).strip()
+        for value in (state.get("similarity_units") or [state["description"]])
+        if str(value).strip()
+    ]
+    patents = format_matches(
+        state["comparisons"],
+        match_analysis.rationales,
+        match_analysis.key_overlaps,
+        match_analysis.covered_limitation_ids,
+        len(limitations),
+    )
     return _result_envelope(
         state,
         patents=patents,

@@ -69,12 +69,11 @@ describe('RunsService', () => {
   it('sends an idempotency key on every mutating call', async () => {
     auth.responder = () => json({ status: 'RESUMING' });
 
-    // Two mutating calls, because two approvals are the whole mutating surface
-    // of a run now. The other six methods went with the routes behind them.
-    await runs.approveGateA('r1', 'a summary', ['an element'], 'key-a');
-    await runs.approveGateStrategy('r1', ['a query'], 'key-b');
+    await runs.approveGateSummary('r1', 'a summary', 'key-summary');
+    await runs.approveGateLimitations('r1', ['an element'], 'key-limitations');
+    await runs.approveGateStrategy('r1', ['a query'], 'key-strategy');
 
-    expect(auth.calls).toHaveLength(2);
+    expect(auth.calls).toHaveLength(3);
     for (const call of auth.calls) {
       const body = JSON.parse(String(call.init.body));
       expect(body.idempotency_key, `${call.url} sent no key`).toBeTruthy();
@@ -106,7 +105,7 @@ describe('RunsService', () => {
     auth.responder = () =>
       json({ code: 'WRONG_GATE', detail: 'run is waiting at STRATEGY, not A' }, 409);
     try {
-      await runs.approveGateA('r1', 'a summary', ['an element'], 'k');
+      await runs.approveGateSummary('r1', 'a summary', 'k');
       expect.unreachable('a 409 should have thrown');
     } catch (error) {
       expect((error as RunApiError).failure.code).toBe('WRONG_GATE');

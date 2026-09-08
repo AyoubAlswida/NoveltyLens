@@ -5,6 +5,10 @@
 `docs/prompts/advanced-search-three-stage-implementation.md`
 **Status:** implemented
 
+> Approval sequencing was superseded on 2026-09-08: summary and limitations are
+> now generated and approved sequentially. See
+> `2026-09-08-sequential-understanding-and-patent-families.md`.
+
 This is a **scope decision**, not an implementer's call. The repository's convention is that
 a change of this size is recorded before it is relied on, because most of what it removes was
 built deliberately and is documented at length as the project's most carefully guarded work.

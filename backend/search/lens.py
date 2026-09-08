@@ -19,6 +19,8 @@ Response field reference: https://docs.api.lens.org/response-patent.html
 import logging
 import re
 import threading
+import hashlib
+import time
 
 import requests
 
@@ -55,6 +57,7 @@ INCLUDE_FIELDS = [
     "claims",
     "description",
     "legal_status",
+    "families.simple_family",
 ]
 
 
@@ -232,6 +235,19 @@ def _to_patent_record(item: dict) -> PatentRecord:
     claims_text = " ".join(claim.text for claim in claims)
     full_text = f"{description_text} {claims_text}".strip()
 
+    simple_family = ((item.get("families") or {}).get("simple_family") or {})
+    member_ids = sorted(
+        str(member.get("lens_id") or "").strip()
+        for member in (simple_family.get("members") or [])
+        if isinstance(member, dict) and str(member.get("lens_id") or "").strip()
+    )
+    family_id = (
+        "lens-simple-" + hashlib.sha256("|".join(member_ids).encode("utf-8")).hexdigest()[:16]
+        if member_ids
+        else ""
+    )
+    family_size = int(simple_family.get("size") or len(member_ids) or 0)
+
     return PatentRecord(
         id=patent_id,
         title=title,
@@ -242,6 +258,8 @@ def _to_patent_record(item: dict) -> PatentRecord:
         full_text=full_text,
         description=description_text,
         claims=claims,
+        family_id=family_id,
+        family_size=family_size,
     )
 
 
@@ -252,6 +270,20 @@ the caller asks for (RESULTS_PER_QUERY=10). Each result carries full text
 were taking 30s-700+s and getting cut off mid-transfer by what looks like a
 connection-lifetime limit on Lens's own infrastructure. Smaller responses
 finish faster and are less likely to run into that ceiling."""
+
+MAX_ATTEMPTS = 2
+RETRY_BACKOFF_SECONDS = 3.0
+RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+
+
+def _retry_delay(response: requests.Response | None = None) -> float:
+    if response is not None:
+        raw = response.headers.get("Retry-After", "")
+        try:
+            return min(30.0, max(RETRY_BACKOFF_SECONDS, float(raw)))
+        except (TypeError, ValueError):
+            pass
+    return RETRY_BACKOFF_SECONDS
 
 
 def search_lens(query: str, size: int = 10) -> list[PatentRecord]:
@@ -271,25 +303,45 @@ def search_lens(query: str, size: int = 10) -> list[PatentRecord]:
     size = min(size, MAX_SIZE)
 
     with _request_lock:
-        trace("lens.search.request", query=query, size=size)
-        try:
-            response = requests.post(
-                LENS_SEARCH_URL,
-                headers={
-                    "Authorization": f"Bearer {settings.lens_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={"query": query, "size": size, "include": INCLUDE_FIELDS},
-                # (connect, read) tuple, not a single number - a single value
-                # only resets on each received byte, which is what let one
-                # call run past 200s (and another hang indefinitely) against
-                # a slow trial-tier server. This is a hard per-phase cap:
-                # if Lens goes quiet for 45s at any point, fail loudly rather
-                # than hang the whole pipeline waiting on it.
-                timeout=(10, 45),
-            )
-        except requests.exceptions.Timeout as error:
-            raise RuntimeError(f"Lens Patent API timed out for query {query!r}: {error}") from error
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            trace("lens.search.request", query=query, size=size, attempt=attempt)
+            try:
+                response = requests.post(
+                    LENS_SEARCH_URL,
+                    headers={
+                        "Authorization": f"Bearer {settings.lens_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={"query": query, "size": size, "include": INCLUDE_FIELDS},
+                    timeout=(10, 45),
+                )
+            except (
+                requests.exceptions.Timeout,
+                requests.exceptions.ConnectionError,
+                requests.exceptions.ChunkedEncodingError,
+            ) as error:
+                if attempt < MAX_ATTEMPTS:
+                    logger.warning(
+                        "Lens Patent API transient transport failure; retrying same query once"
+                    )
+                    time.sleep(RETRY_BACKOFF_SECONDS)
+                    continue
+                raise RuntimeError(
+                    f"Lens Patent API transport failed after {MAX_ATTEMPTS} attempts "
+                    f"for query {query!r}"
+                ) from error
+
+            if response.status_code in RETRYABLE_STATUSES and attempt < MAX_ATTEMPTS:
+                logger.warning(
+                    "Lens Patent API returned retryable HTTP %d; retrying same query once",
+                    response.status_code,
+                )
+                time.sleep(_retry_delay(response))
+                continue
+            break
+        else:  # pragma: no cover - the loop always returns or breaks
+            raise AssertionError("Lens retry loop exhausted without a response")
+
         if response.status_code >= 400:
             # Mirror search/google.py's _raise_for_status reasoning: don't let a
             # library-generated error message carry anything sensitive. The
@@ -297,7 +349,7 @@ def search_lens(query: str, size: int = 10) -> list[PatentRecord]:
             # requests' HTTPError message only echoes the URL, so this is already
             # safe - but raise deliberately rather than call raise_for_status()
             # out of habit, so that stays true if this code is ever copied.
-            raise RuntimeError(f"Lens Patent API search returned HTTP {response.status_code}: {response.text[:200]}")
+            raise RuntimeError(f"Lens Patent API search returned HTTP {response.status_code}")
 
         data = response.json()
         results = [_to_patent_record(item) for item in data.get("data", [])]

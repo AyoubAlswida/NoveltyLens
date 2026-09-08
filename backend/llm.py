@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import time
 from collections.abc import Sequence
 from contextvars import ContextVar
@@ -623,7 +624,11 @@ def _rationale_source_text(patent: PatentRecord) -> str:
     return patent.full_text[-CLAIMS_EXCERPT_CHARS:]
 
 
-def analyze_all_matches(invention: str, patents: list[PatentRecord]) -> MatchAnalysis:
+def analyze_all_matches(
+    invention: str,
+    patents: list[PatentRecord],
+    limitations: Sequence[str] = (),
+) -> MatchAnalysis:
     """Rationalize every patent and propose recommendations in one LLM call.
 
     A single batched request is far friendlier to the model provider's rate
@@ -633,10 +638,28 @@ def analyze_all_matches(invention: str, patents: list[PatentRecord]) -> MatchAna
     """
     count = len(patents)
     if count == 0:
-        return MatchAnalysis(rationales=[], key_overlaps=[], recommendations=[])
+        return MatchAnalysis(
+            rationales=[],
+            key_overlaps=[],
+            covered_limitation_ids=[],
+            missing_limitation_ids=[],
+            recommendations=[],
+        )
+
+    reviewed_limitations = [str(item).strip() for item in limitations if str(item).strip()]
+    if not reviewed_limitations:
+        reviewed_limitations = [invention.strip()]
+    limitation_ids = [f"L{index}" for index in range(1, len(reviewed_limitations) + 1)]
+    limitation_block = "\n".join(
+        f"{limitation_id}: {text}"
+        for limitation_id, text in zip(limitation_ids, reviewed_limitations, strict=True)
+    )
+    known_limitation_ids = set(limitation_ids)
 
     patent_block = "\n".join(
-        f"[{index}] Number: {patent.id}\n    Title: {patent.title}\n    Excerpt: {_rationale_source_text(patent)}"
+        f"[{index}] Number: {patent.id}\n    Title: {patent.title}\n"
+        f"    Simple family: {patent.family_id or 'not supplied'}\n"
+        f"    Excerpt: {_rationale_source_text(patent)}"
         for index, patent in enumerate(patents, start=1)
     )
     prompt = f'''You are an expert patent examiner comparing a user's invention against {count} prior-art patents.
@@ -644,16 +667,20 @@ def analyze_all_matches(invention: str, patents: list[PatentRecord]) -> MatchAna
 User Invention:
 {invention}
 
+Reviewed Technical Limitations:
+{limitation_block}
+
 Prior-art patents:
 {patent_block}
 
 Tasks:
-1. For EACH of the {count} patents, write a concise overlap summary (1 to 2 sentences, not more) explaining the actual technical overlap - the shared mechanism, purpose, structure, or technical approach that makes it relevant prior art. Reference the concrete technical features of that individual patent that are similar to the user's invention. Do NOT describe how the invention differs from the patent, and do NOT explain why an algorithm or search selected this patent - focus entirely on describing the real technical overlap itself. Every summary must be distinct - never reuse wording between patents.
-2. For EACH of the {count} patents, also extract 3 to 4 short key-overlap tags (2-4 words each, e.g. "distributed sensing", "strain measurement") naming the specific overlapping technical concepts between that patent and the invention. These must name real shared concepts, not generic category words like "patent" or "invention".
-3. Provide AS MANY actionable, specific uniqueness recommendations as you can (at least 10) describing concrete engineering, structural, or claim-drafting changes the user can make to distinguish their invention from this body of prior art.
+1. For EACH patent, classify every reviewed limitation as covered or missing using its exact L-id. A limitation is covered only when the supplied excerpt directly discloses its complete technical relationship, not merely similar component nouns, a shared purpose, or passages scattered across unrelated mechanisms. The covered and missing lists must be disjoint and together contain every L-id exactly once.
+2. For EACH patent, write a concise 2-sentence overlap summary consistent with that classification. Sentence one must name only the concrete mechanism actually shared with the user's invention. Sentence two must explicitly identify the important reviewed limitations that are missing from the supplied excerpt. Never imply full-invention coverage from a shared subsystem. Do not invent disclosure outside the supplied excerpt. Members of one patent family may overlap similarly; say so accurately rather than manufacturing a difference merely to make wording distinct.
+3. For EACH of the {count} patents, also extract 3 to 4 short key-overlap tags (2-4 words each, e.g. "distributed sensing", "strain measurement") naming the specific overlapping technical concepts between that patent and the invention. These must name real shared concepts, not generic category words like "patent" or "invention".
+4. Provide 5 to 10 non-duplicative recommendations grounded in the actual gaps visible across these excerpts. Preserve the user's stated invention and describe any newly proposed component, constraint, calibration method, control loop, or other feature plainly, without adding a category prefix to the recommendation. Never pad the list, and do not recommend merely re-claiming a conventional subsystem that the cited art already discloses.
 
 Return ONLY valid JSON in exactly this schema:
-{{"rationales": [{{"index": 1, "text": "1-2 sentence overlap summary for patent 1", "key_overlap": ["tag 1", "tag 2", "tag 3"]}}], "recommendations": ["tip 1", "tip 2"]}}
+{{"rationales": [{{"index": 1, "text": "Exactly two sentences: shared mechanism, then important mechanism not disclosed.", "key_overlap": ["tag 1", "tag 2", "tag 3"], "covered_limitation_ids": ["L1"], "missing_limitation_ids": ["L2"]}}], "recommendations": ["tip 1", "tip 2", "tip 3", "tip 4", "tip 5"]}}
 Include one rationale object for every patent from index 1 through {count}, in order. Do not include markdown code fences or any text outside the JSON object.'''
 
     trace("analyze_all_matches.start", patent_count=count)
@@ -676,6 +703,8 @@ Include one rationale object for every patent from index 1 through {count}, in o
 
     rationales = [""] * count
     key_overlaps: list[list[str]] = [[] for _ in range(count)]
+    covered_limitation_ids: list[list[str]] = [[] for _ in range(count)]
+    missing_limitation_ids: list[list[str]] = [[] for _ in range(count)]
     raw_rationales = parsed.get("rationales", [])
     for item in raw_rationales:
         if isinstance(item, dict):
@@ -684,6 +713,16 @@ Include one rationale object for every patent from index 1 through {count}, in o
                 rationales[index] = str(item.get("text", "")).strip()
                 key_overlaps[index] = [
                     str(tag).strip() for tag in item.get("key_overlap", []) if str(tag).strip()
+                ]
+                covered_limitation_ids[index] = [
+                    str(value).strip()
+                    for value in item.get("covered_limitation_ids", [])
+                    if str(value).strip()
+                ]
+                missing_limitation_ids[index] = [
+                    str(value).strip()
+                    for value in item.get("missing_limitation_ids", [])
+                    if str(value).strip()
                 ]
     if not any(rationales):
         # Tolerate a plain array of strings instead of indexed objects. No
@@ -702,6 +741,30 @@ Include one rationale object for every patent from index 1 through {count}, in o
     if missing_overlap:
         raise ValueError(f"LLM omitted key-overlap tags for patent index/indices: {missing_overlap}")
 
+    for index, (covered, missing) in enumerate(
+        zip(covered_limitation_ids, missing_limitation_ids, strict=True), start=1
+    ):
+        covered_set = set(covered)
+        missing_set = set(missing)
+        unknown = (covered_set | missing_set) - known_limitation_ids
+        duplicated = covered_set & missing_set
+        omitted = known_limitation_ids - covered_set - missing_set
+        if len(covered) != len(covered_set) or len(missing) != len(missing_set):
+            raise ValueError(f"LLM duplicated limitation ids for patent index {index}")
+        if unknown:
+            raise ValueError(
+                f"LLM returned unknown limitation ids for patent index {index}: {sorted(unknown)}"
+            )
+        if duplicated:
+            raise ValueError(
+                f"LLM marked limitation ids both covered and missing for patent index {index}: "
+                f"{sorted(duplicated)}"
+            )
+        if omitted:
+            raise ValueError(
+                f"LLM omitted limitation ids for patent index {index}: {sorted(omitted)}"
+            )
+
     recommendations = [str(item).strip() for item in parsed.get("recommendations", []) if str(item).strip()]
     if not recommendations:
         raise ValueError("LLM returned no uniqueness recommendations")
@@ -710,9 +773,16 @@ Include one rationale object for every patent from index 1 through {count}, in o
         "analyze_all_matches.done",
         rationale_count=len(rationales),
         key_overlap_counts=[len(tags) for tags in key_overlaps],
+        covered_limitation_counts=[len(values) for values in covered_limitation_ids],
         recommendation_count=len(recommendations),
     )
-    return MatchAnalysis(rationales=rationales, key_overlaps=key_overlaps, recommendations=recommendations)
+    return MatchAnalysis(
+        rationales=rationales,
+        key_overlaps=key_overlaps,
+        covered_limitation_ids=covered_limitation_ids,
+        missing_limitation_ids=missing_limitation_ids,
+        recommendations=recommendations,
+    )
 
 
 def validate_relevance(invention: str, patents: list[PatentRecord]) -> list[bool]:
@@ -804,6 +874,112 @@ an owner decision, not a code decision, and it is recorded as outstanding in
 `docs/decisions/` rather than settled here by default.
 """
 
+SUMMARY_PROMPT_MARKER = "patent invention-summary assistant"
+LIMITATIONS_PROMPT_MARKER = "patent technical-limitation assistant"
+
+
+def _understanding_context(problem_solved: str, novelty_statement: str, feedback: str) -> str:
+    context = ""
+    if problem_solved.strip():
+        context += "\n\nPROBLEM THE INVENTOR SAYS THIS SOLVES:\n" + problem_solved.strip()
+    if novelty_statement.strip():
+        context += (
+            "\n\nWHAT THE INVENTOR BELIEVES IS NEW (context only - a claim to be "
+            "tested, not a fact):\n" + novelty_statement.strip()
+        )
+    if feedback.strip():
+        context += (
+            "\n\nA PREVIOUS ANALYSIS WAS REJECTED BY THE INVENTOR, WHO SAID:\n"
+            + feedback.strip()
+            + "\nProduce a fresh analysis that addresses this."
+        )
+    return context
+
+
+def propose_technical_summary(
+    invention: str,
+    *,
+    problem_solved: str = "",
+    novelty_statement: str = "",
+    feedback: str = "",
+) -> str:
+    """Propose only the summary that Stage 1 asks the inventor to approve."""
+    prompt = f"""You are a {SUMMARY_PROMPT_MARKER}.
+
+Write a 2-4 sentence technical summary that precisely restates the submitted
+invention. Preserve every stated conditional relationship and explicit addition.
+Do not generate technical limitations, search queries, prior-art conclusions, or
+capabilities that the submission does not state.
+
+Return ONLY valid JSON in this exact schema:
+{{"summary": "string"}}
+
+Invention:
+{invention}{_understanding_context(problem_solved, novelty_statement, feedback)}"""
+    data = _llm_json(prompt, max_tokens=700, temperature=0.0, timeout=60)
+    summary = str(data.get("summary") or "").strip()
+    if not summary:
+        raise LLMResponseError("LLM returned no technical summary")
+    return summary
+
+
+def propose_technical_limitations(
+    approved_summary: str,
+    *,
+    max_elements: int = 7,
+) -> list[dict]:
+    """Generate limitations only from the exact summary a human approved."""
+    prompt = f"""You are a {LIMITATIONS_PROMPT_MARKER}.
+
+The text below is an APPROVED technical summary. Generate a focused flat list of
+searchable technical limitations from that text only. Do not use an earlier draft
+or the original submission, and do not add capabilities absent from the approved
+summary.
+
+Preserve the invention's combination-critical mechanisms: keep interacting parts,
+comparisons, triggers, conditions, and coordinated outputs together when splitting
+them would lose what is technically distinctive. Avoid generic component-only
+lines and semantic duplicates.
+
+Rules:
+- Choose one 1-to-3-word domain_anchor naming the invention's concrete platform (for example "folding bicycle", "video baby monitor", or "photoelectric smoke detector"). Every query must contain every domain-anchor word so a relationship query cannot drift into an unrelated field.
+- Return exactly one feature, F1.
+- Aim for 4 to {max_elements} limitations; use fewer rather than padding.
+- Every limitation must be independently searchable and technically checkable.
+- Mark every element core=true and use E1, E2, ... in order.
+- Return relationships as an empty array.
+- At most {max_elements} elements.
+
+Return ONLY valid JSON in this exact schema:
+{{"features": [{{"feature_id": "F1", "feature_version": "1", "feature_text": "searchable technical limitations", "elements": [{{"element_id": "E1", "text": "string", "core": true, "order": 1}}], "relationships": []}}]}}
+
+APPROVED TECHNICAL SUMMARY:
+{approved_summary}"""
+    data = _llm_json(prompt, max_tokens=1300, temperature=0.0, timeout=60)
+    features = data.get("features")
+    if not isinstance(features, list) or len(features) != 1:
+        raise LLMResponseError("LLM did not return exactly one technical-limitation group")
+    feature = features[0]
+    if not isinstance(feature, dict):
+        raise LLMResponseError("LLM returned a malformed technical-limitation group")
+    elements = feature.get("elements")
+    if not isinstance(elements, list) or not elements:
+        raise LLMResponseError("LLM returned no searchable technical limitations")
+    if len(elements) > max_elements:
+        raise LLMResponseError("LLM returned more technical limitations than requested")
+    seen: set[str] = set()
+    for element in elements:
+        text = str(element.get("text") or "").strip() if isinstance(element, dict) else ""
+        normalized = " ".join(text.casefold().split())
+        if not normalized:
+            raise LLMResponseError("LLM returned an empty searchable technical limitation")
+        if normalized in seen:
+            raise LLMResponseError("LLM returned duplicate searchable technical limitations")
+        seen.add(normalized)
+    if feature.get("relationships") != []:
+        raise LLMResponseError("LLM returned separate relationships")
+    return [dict(feature)]
+
 
 def propose_understanding(
     invention: str,
@@ -870,12 +1046,16 @@ Write a short technical summary of the invention, then identify a focused flat l
 The SUMMARY is 2-4 sentences restating the invention in precise technical language. It is shown to the inventor as the system's understanding of their invention, and must not add capabilities the description does not state.
 A SEARCHABLE TECHNICAL LIMITATION is a concrete combination of structure, function, arrangement, trigger, or operating condition that can distinguish the invention in patent text. Keep interacting parts together when their interaction is what matters.
 
+Before writing the JSON, identify the invention's COMBINATION-CRITICAL MECHANISM: the smallest interaction, comparison, trigger, conditional relationship, or coordinated output that would be lost if its clauses were split apart. Preserve that mechanism in one limitation. Treat wording such as "unique addition", "unlike", "only when", "without a corresponding", "based on", and "different output" as a strong signal that the relationship - not the component nouns by themselves - is what must stay together. This identifies what the inventor is asking to search; it does not assume that the mechanism is legally novel.
+
 Rules:
 - Return exactly one feature, F1. Do not split the limitations into multiple feature groups.
 - Aim for 4 to {max_elements_per_feature} limitations. Use fewer if the description does not support four; never pad the list or invent a limitation.
 - Each limitation must be independently checkable against a patent passage. "a flow sensor downstream of a membrane that triggers cleaning when flow drops" is checkable; "a sensor", "a membrane", and "an efficient design" are not useful standalone limitations.
 - Do not output a single generic component, material, energy type, or result by itself unless it is genuinely distinctive without any relationship or condition.
 - Merge related nouns with the function, arrangement, trigger, or condition that gives them technical meaning.
+- Do not spend several limitations separately listing conventional components when one compound limitation can state their operative arrangement. Use the remaining lines for the invention's distinguishing interactions and conditions.
+- A sensor type, network destination, alert, material, or chamber is not independently searchable merely because it is concrete. Bind it to what it measures, what other signal it is compared with, what condition triggers it, or what technically distinct action follows.
 - Do not repeat or paraphrase the same limitation in more than one element.
 - Mark every element core=true; the reviewer approves one flat list and the search must account for every approved line.
 - Return relationships as an empty array. Relationships are represented inside the limitation text, not as separate records.
@@ -883,6 +1063,14 @@ Rules:
 - Use element ids E1, E2, ... in order.
 - feature_version is "1" for a first proposal.
 - Do not invent components the invention does not describe.
+
+Quality check before returning JSON:
+- Could one matching paragraph for a generic component satisfy a line while missing the interaction the inventor described? If yes, merge or rewrite that line.
+- If the description contains an explicit addition or differentiator, is its complete operative relationship preserved in at least one limitation? If not, the proposal is incomplete.
+
+Example (illustrative only; do not copy its subject matter):
+BAD: "a pressure sensor"; "a cleaning controller"; "a wireless alert".
+GOOD: "a pressure sensor across a filter that triggers a cleaning cycle when differential pressure exceeds a threshold"; "a controller that sends a distinct maintenance alert after that pressure-triggered cycle".
 
 Return ONLY valid JSON in this exact schema:
 {{"summary": "string", "features": [{{"feature_id": "F1", "feature_version": "1", "feature_text": "searchable technical limitations", "elements": [{{"element_id": "E1", "text": "string", "core": true, "order": 1}}], "relationships": []}}]}}
@@ -985,6 +1173,94 @@ STRATEGY_COMPONENT = "graph.strategy.propose_search_strategy"
 `DECOMPOSITION_COMPONENT` is: the specification does not assign an owner to it,
 and a component nobody has named cannot be assigned one later."""
 
+_QUERY_STOPWORDS = {
+    "a", "an", "and", "as", "at", "be", "being", "by", "for", "from",
+    "has", "in", "into", "is", "it", "of", "on", "or", "that", "the",
+    "this", "to", "with",
+}
+_RELATION_MARKERS = {
+    "after", "based", "before", "between", "compare", "compared", "comparing",
+    "different", "distinct", "during", "if", "only", "response", "than",
+    "then", "trigger", "triggered", "unless", "until", "versus", "when",
+    "where", "while", "without",
+}
+
+
+def _strategy_terms(text: str) -> set[str]:
+    """Small deterministic vocabulary check, not a semantic substitute.
+
+    The model is explicitly asked to retain approved patent vocabulary. Basic
+    suffix folding lets ``triggers`` support ``triggered`` without pretending
+    this lexical guard can infer arbitrary synonyms.
+    """
+    terms: set[str] = set()
+    for raw in re.findall(r"[a-z0-9]+", text.casefold()):
+        if raw in _QUERY_STOPWORDS or len(raw) < 3:
+            continue
+        term = raw
+        for suffix in ("ingly", "edly", "ing", "ed", "es", "s"):
+            if term.endswith(suffix) and len(term) - len(suffix) >= 4:
+                term = term[:-len(suffix)]
+                break
+        terms.add(term)
+    return terms
+
+
+def _query_evidences_limitation(query_text: str, limitation_text: str) -> bool:
+    limitation_terms = _strategy_terms(limitation_text)
+    if not limitation_terms:
+        return False
+    required = min(2, len(limitation_terms))
+    return len(_strategy_terms(query_text) & limitation_terms) >= required
+
+
+def _terms_needed_to_evidence(query_text: str, limitation_text: str) -> list[str]:
+    """Return the fewest approved vocabulary words needed by the lexical guard."""
+    limitation_terms = _strategy_terms(limitation_text)
+    query_terms = _strategy_terms(query_text)
+    needed = max(0, min(2, len(limitation_terms)) - len(query_terms & limitation_terms))
+    additions: list[str] = []
+    seen_terms = set(query_terms)
+    for raw in re.findall(r"[a-z0-9]+(?:-[a-z0-9]+)?", limitation_text.casefold()):
+        folded = _strategy_terms(raw)
+        if not folded or folded & seen_terms:
+            continue
+        additions.append(raw)
+        seen_terms.update(folded)
+        if len(additions) == needed:
+            break
+    return additions
+
+
+_DOMAIN_PREFIX_WORDS = {"a", "an", "the", "invention", "is", "are"}
+_DOMAIN_BOUNDARY_WORDS = {
+    "has", "have", "having", "includes", "include", "including", "comprises",
+    "comprise", "comprising", "uses", "use", "using", "where", "whose", "that",
+}
+
+
+def _derive_domain_anchor(summary: str) -> str:
+    """Derive a short platform anchor from the approved summary, deterministically.
+
+    The search must not depend on the model remembering an administrative JSON
+    field. Approved summaries conventionally start by naming the platform before
+    a verb ("A folding bicycle has...", "A video baby monitor includes...").
+    """
+    words = re.findall(r"[a-z0-9]+(?:-[a-z0-9]+)?", summary.casefold())
+    while words and words[0] in _DOMAIN_PREFIX_WORDS:
+        words.pop(0)
+    selected: list[str] = []
+    for word in words:
+        if word in _DOMAIN_BOUNDARY_WORDS:
+            break
+        if word not in _QUERY_STOPWORDS and len(word) >= 3:
+            selected.append(word)
+        if len(selected) == 3:
+            break
+    if not selected:
+        raise LLMResponseError("approved summary has no usable invention domain anchor")
+    return " ".join(selected)
+
 
 def propose_search_strategy(
     summary: str,
@@ -1052,6 +1328,18 @@ def propose_search_strategy(
                 + str(element.get("text") or "")
             )
     elements_block = "\n".join(listing)
+    approved_elements = {
+        str(feature.get("feature_id")) + "." + str(element.get("element_id")): str(
+            element.get("text") or ""
+        )
+        for feature in features
+        for element in (feature.get("elements") or ())
+    }
+    relational_element_ids = {
+        element_id
+        for element_id, text in approved_elements.items()
+        if set(re.findall(r"[a-z0-9]+", text.casefold())) & _RELATION_MARKERS
+    }
 
     prior = ""
     if existing_queries:
@@ -1083,16 +1371,28 @@ Rules:
 - Every limitation marked [core] must be covered by at least one query. A core limitation is one the invention is not itself without.
 - covered_element_ids lists the element ids a query is aimed at, written exactly as they appear above, including the feature prefix (for example F1.E2). Never invent an id that is not listed.
 - Most queries must combine 2 or 3 compatible approved limitations. Do not turn each limitation into an isolated one-line query.
+- Start with the combination-critical mechanism: at least two queries must search the distinctive interaction or conditional relationship together with its technical context, using different patent-language synonyms. Do not reduce it to a standalone component query.
 - A query may target one limitation alone only when that limitation is technically distinctive enough to retrieve useful prior art by itself.
 - Do not claim coverage a query does not have. A query listed against a limitation it would not retrieve prior art for is worse than one fewer query.
+- For every covered_element_id, retain at least two meaningful technical words from that limitation in query_text (or every meaningful word when the limitation has only one). You may add patent synonyms, but synonyms do not replace this auditable vocabulary anchor.
 - Keep each query between 4 and 10 words, in the vocabulary patent titles, abstracts and claims actually use.
 - Vary the angle across the set: the distinctive combination, the operating relationship or trigger, the domain, and plausible patent synonyms.
 - Avoid near-duplicate queries; each one should be able to return something the others would miss.
+- Do not use a generic standalone query for a sensor, network, hub, alert, material, or component. Combine it with the measurement, comparison, trigger, classification, or resulting technical action stated in the approved limitations.
 - rationale is one short sentence saying what this query is looking for.
 - Use query ids Q1, Q2, ... in the order you propose them.
 
+Quality check before returning JSON:
+- A majority of the queries must genuinely cover 2 or 3 limitations, and their query text must contain the relationship that makes those limitations a combination. Listing multiple covered ids without expressing their relationship is false coverage.
+- At least two queries must target the invention's most specific interaction rather than only its conventional platform.
+- Remove any query that could retrieve the same broad category after deleting the invention's trigger, comparison, arrangement, or coordinated result.
+
+Example (illustrative only; do not copy its subject matter):
+BAD: "filter pressure sensor"; "wireless maintenance alert".
+GOOD: "differential pressure triggered filter cleaning controller"; "pressure initiated cleaning distinct maintenance alert".
+
 Return ONLY valid JSON in this exact schema:
-{{"queries": [{{"query_id": "Q1", "query_text": "string", "rationale": "string", "covered_element_ids": ["F1.E1"]}}]}}
+{{"domain_anchor": "concrete invention platform", "queries": [{{"query_id": "Q1", "query_text": "string", "rationale": "string", "covered_element_ids": ["F1.E1"]}}]}}
 Do not change the schema. Do not add explanations. Return JSON only.{prior}{correction}"""
 
     data = _llm_json(
@@ -1106,10 +1406,99 @@ Do not change the schema. Do not add explanations. Return JSON only.{prior}{corr
     )
 
     queries = data.get("queries")
+    domain_anchor = " ".join(str(data.get("domain_anchor") or "").split())
+    domain_anchor_terms = _strategy_terms(domain_anchor)
+    if not domain_anchor or not 1 <= len(domain_anchor_terms) <= 3:
+        domain_anchor = _derive_domain_anchor(summary)
+        domain_anchor_terms = _strategy_terms(domain_anchor)
     if not isinstance(queries, list) or not queries:
         raise LLMResponseError(
             "LLM returned no search queries; a strategy with nothing in it is not a "
             "proposal a reviewer can edit, and an empty query set is not invented here"
         )
-    trace("propose_search_strategy.done", queries=len(queries))
+    if len(queries) > max_queries:
+        raise LLMResponseError(
+            "LLM returned more search queries than requested; the product does not "
+            "silently discard a search strategy"
+        )
+
+    normalized_queries: set[str] = set()
+    combination_queries = 0
+    relationship_queries = 0
+    for query in queries:
+        if not isinstance(query, dict):
+            raise LLMResponseError("LLM returned a malformed search query")
+        query_text = " ".join(str(query.get("query_text") or "").split())
+        rationale = str(query.get("rationale") or "").strip()
+        covered_ids = query.get("covered_element_ids")
+        if not query_text or not rationale:
+            raise LLMResponseError(
+                "LLM returned a search query without text or rationale"
+            )
+        if not isinstance(covered_ids, list) or not covered_ids:
+            raise LLMResponseError(
+                "LLM returned a search query with no stated limitation coverage"
+            )
+        declared_ids = set(str(item) for item in covered_ids)
+        known_declared_ids = declared_ids & approved_elements.keys()
+        vocabulary_additions: list[str] = []
+        for element_id in sorted(known_declared_ids):
+            if _query_evidences_limitation(query_text, approved_elements[element_id]):
+                continue
+            vocabulary_additions.extend(
+                _terms_needed_to_evidence(query_text, approved_elements[element_id])
+            )
+            query_text = " ".join([query_text, *vocabulary_additions]).strip()
+            vocabulary_additions.clear()
+        missing_anchor_terms = domain_anchor_terms - _strategy_terms(query_text)
+        if missing_anchor_terms:
+            anchor_words = [
+                word
+                for word in domain_anchor.split()
+                if _strategy_terms(word) & missing_anchor_terms
+            ]
+            query_text = " ".join(anchor_words + query_text.split())
+        query["query_text"] = query_text
+        normalized = query_text.casefold()
+        if normalized in normalized_queries:
+            raise LLMResponseError(
+                "LLM returned duplicate search queries; the product does not "
+                "silently remove them"
+            )
+        normalized_queries.add(normalized)
+        evidenced_ids = {
+            element_id
+            for element_id in known_declared_ids
+            if _query_evidences_limitation(query_text, approved_elements[element_id])
+        }
+        if known_declared_ids != evidenced_ids:
+            unsupported = sorted(known_declared_ids - evidenced_ids)
+            raise LLMResponseError(
+                "LLM claimed limitation coverage that is not evidenced by the query "
+                f"text: {', '.join(unsupported)}"
+            )
+        if 2 <= len(declared_ids) <= 3 and declared_ids == evidenced_ids:
+            combination_queries += 1
+        if evidenced_ids & relational_element_ids:
+            relationship_queries += 1
+
+    required_combinations = (len(queries) + 1) // 2
+    if combination_queries < required_combinations:
+        raise LLMResponseError(
+            "LLM returned a fragmented search strategy: a majority of queries "
+            "must combine two or three approved technical limitations"
+        )
+    if relational_element_ids and relationship_queries < min(2, len(queries)):
+        raise LLMResponseError(
+            "LLM returned too few relationship-preserving search queries: at least "
+            "two queries must retain an approved trigger, comparison, condition, or "
+            "coordinated result"
+        )
+
+    trace(
+        "propose_search_strategy.done",
+        queries=len(queries),
+        combination_queries=combination_queries,
+        relationship_queries=relationship_queries,
+    )
     return [dict(query) for query in queries]

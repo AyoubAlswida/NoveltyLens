@@ -48,21 +48,22 @@ export const TOTAL_STAGES = STAGE_NAMES.length;
  * them in advance.
  */
 /**
- * **Advanced Search: three stages, two approvals, one screen.**
+ * **Advanced Search: three stages, three approvals, one screen.**
  *
- * A standard prior-art search preceded by guided editing. The system proposes a
- * technical summary and a focused flat list of searchable technical
- * limitations; the user edits and approves them; the system proposes search
- * queries; the user edits and approves those; the approved queries are then
- * executed by the ordinary search pipeline and the ordinary report is displayed.
+ * A standard prior-art search preceded by guided editing. The system first
+ * proposes only a technical summary. After the user edits and approves that
+ * summary, it generates searchable technical limitations from the approved
+ * text. The user approves those independently, then reviews and approves the
+ * generated search queries before the ordinary search pipeline executes.
  *
  * It performs **no** evidence verification, makes **no** legal conclusion, and
  * presents **no** numeric score.
  *
  * ## Why one component for three stages
  *
- * Stages 1 and 2 are a single backend approval (the understanding); stage 3 is a
- * second one (the strategy). Two approvals, three screens — and the three
+ * Stage 1 approves the summary before Stage 2 can be generated. Stage 2 then
+ * approves those limitations, and Stage 3 approves the strategy. Three
+ * approvals, three screens — and the three
  * screens are one flow a person walks forward and back through, so the drafts
  * live in one place. Splitting them across components would put the drafts
  * behind a router or a shared store purely so that pressing Back could find them
@@ -70,12 +71,10 @@ export const TOTAL_STAGES = STAGE_NAMES.length;
  *
  * ## What navigation does and does not do
  *
- * Moving between stages **preserves every edit and never touches the server**.
- * Only two transitions mutate anything: leaving stage 2 the first time (the
- * understanding approval) and leaving stage 3 (the strategy approval). In
- * particular 1 → 2 calls no approval endpoint, which is asserted rather than
- * assumed — a stage that quietly approved on its way past would make the
- * "Next" button an approval the reviewer never recognised as one.
+ * Moving backward preserves every edit and never touches the server. Each
+ * forward transition approves the artifact visible on that stage: 1 → 2 saves
+ * the summary, 2 → 3 saves the limitations, and leaving stage 3 saves the
+ * queries and starts the search.
  *
  * Once the understanding is approved the run moves to the strategy gate, so
  * going back to stage 2 and forward again must **not** try to approve it a
@@ -135,9 +134,13 @@ export const TOTAL_STAGES = STAGE_NAMES.length;
               <div class="comparison-panel editable-summary">
                 <div class="stage-field-heading">
                   <h3>Technical summary</h3>
-                  <span class="editable-label">
-                    <app-icon name="PenLine" [size]="14" /> Editable
-                  </span>
+                  @if (summaryApproved()) {
+                    <span class="read-only-label">Approved</span>
+                  } @else {
+                    <span class="editable-label">
+                      <app-icon name="PenLine" [size]="14" /> Editable
+                    </span>
+                  }
                 </div>
                 <label class="sr-only" for="summary-input">Technical summary</label>
                 <!-- Wrapped in .textarea-wrap so this box IS the search page's
@@ -151,6 +154,7 @@ export const TOTAL_STAGES = STAGE_NAMES.length;
                     rows="8"
                     [ngModel]="summary()"
                     (ngModelChange)="summary.set($event)"
+                    [readOnly]="summaryApproved()"
                     placeholder="A short technical restatement of the invention."
                   ></textarea>
                 </div>
@@ -266,9 +270,11 @@ export class AdvancedSearchStages {
    * Set when leaving stage 2 succeeds, and when the component mounts on a run
    * that is already at the strategy gate. It is what stops a reviewer who walks
    * back to stage 2 and forward again from re-approving an artifact the run has
-   * already moved past.
+   * already moved past. Summary approval is tracked independently because it
+   * happens one durable pause earlier.
    */
   readonly understandingApproved = signal(false);
+  readonly summaryApproved = signal(false);
 
   private key = 0;
   private readonly actionKeys = new Map<string, string>();
@@ -296,15 +302,27 @@ export class AdvancedSearchStages {
         // walkable so a reviewer can re-read what they approved, and going
         // forward from them will not try to approve it again.
         this.understandingApproved.set(true);
+        this.summaryApproved.set(true);
         this.stage.set(3);
       } else {
         const payload = await this.runs.gateA(runId);
         this.originalDescription.set(String(payload['original_description'] ?? ''));
         this.summary.set(String(payload['technical_summary'] ?? ''));
-        this.elements.set(
-          ((payload['technical_elements'] as string[]) ?? []).map((text) => this.row(text)),
-        );
-        this.stage.set(1);
+        const technicalElements = this.technicalElements(payload);
+        this.elements.set(technicalElements.map((text) => this.row(text)));
+        const reviewStage = String(payload['review_stage'] ?? 'summary');
+        this.summaryApproved.set(reviewStage === 'limitations');
+        if (reviewStage === 'limitations' && technicalElements.length === 0) {
+          // There is a durable checkpoint between summary approval and the
+          // limitation-generating node. It can already carry the next stage
+          // name while the generated artifact is still empty. Keep waiting;
+          // presenting that checkpoint as an editable empty proposal invents
+          // a result the worker has not produced yet.
+          this.state.set('resuming');
+          await this.waitForLimitations();
+          return;
+        }
+        this.stage.set(reviewStage === 'limitations' ? 2 : 1);
       }
       this.state.set('review');
     } catch (error) {
@@ -419,9 +437,14 @@ export class AdvancedSearchStages {
     if (this.violations().length > 0) return;
     const stage = this.stage();
 
-    // 1 -> 2 never mutates anything.
     if (stage === 1) {
-      this.stage.set(2);
+      await this.commit('summary', () =>
+        this.runs.approveGateSummary(
+          this.runId(),
+          this.summary().trim(),
+          this.actionKey('summary'),
+        ),
+      );
       return;
     }
 
@@ -432,12 +455,11 @@ export class AdvancedSearchStages {
         this.stage.set(3);
         return;
       }
-      await this.commit('understanding', () =>
-        this.runs.approveGateA(
+      await this.commit('limitations', () =>
+        this.runs.approveGateLimitations(
           this.runId(),
-          this.summary().trim(),
           this.nonEmpty(this.elements()),
-          this.actionKey('understanding'),
+          this.actionKey('limitations'),
         ),
       );
       return;
@@ -473,7 +495,13 @@ export class AdvancedSearchStages {
     try {
       await send();
       this.state.set('resuming');
-      if (action === 'understanding') {
+      if (action === 'summary') {
+        this.summaryApproved.set(true);
+        this.resumed.emit('A');
+        await this.waitForLimitations();
+        return;
+      }
+      if (action === 'limitations') {
         this.understandingApproved.set(true);
         this.resumed.emit('A');
         return;
@@ -490,5 +518,35 @@ export class AdvancedSearchStages {
       }
       this.state.set(next);
     }
+  }
+
+  private async waitForLimitations(): Promise<void> {
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      try {
+        const payload = await this.runs.gateA(this.runId());
+        if (String(payload['review_stage'] ?? '') !== 'limitations') continue;
+        const technicalElements = this.technicalElements(payload);
+        if (technicalElements.length === 0) continue;
+        this.originalDescription.set(String(payload['original_description'] ?? ''));
+        this.summary.set(String(payload['technical_summary'] ?? ''));
+        this.elements.set(technicalElements.map((text) => this.row(text)));
+        this.stage.set(2);
+        this.state.set('review');
+        return;
+      } catch {
+        // The worker is between checkpoints. The durable stream remains active.
+      }
+    }
+    this.detail.set('The approved summary was saved, but the technical limitations are not ready yet.');
+    this.state.set('reconnecting');
+  }
+
+  private technicalElements(payload: Record<string, unknown>): string[] {
+    const values = payload['technical_elements'];
+    if (!Array.isArray(values)) return [];
+    return values.filter(
+      (value): value is string => typeof value === 'string' && value.trim().length > 0,
+    );
   }
 }

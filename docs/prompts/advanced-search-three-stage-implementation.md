@@ -862,3 +862,6 @@ standards do not. Concretely, at every gate:
 When this document and the code disagree, read the code. When this document and `CLAUDE.md`
 disagree about what exists **today**, read the code. When they disagree about what should exist
 **after** this change, this document wins — and `CLAUDE.md` is your job to fix.
+> Historical implementation brief. The approval sequencing described here was
+> superseded by `docs/decisions/2026-09-08-sequential-understanding-and-patent-families.md`:
+> the summary is approved before limitations are generated.

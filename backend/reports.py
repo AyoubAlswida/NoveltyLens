@@ -109,8 +109,8 @@ def save_report(
         for rank, match in enumerate(matches):
             cur.execute(
                 """
-                INSERT INTO search_run_matches (run_id, rank, patent_id, risk, rationale, key_overlap, source)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO search_run_matches (run_id, rank, patent_id, risk, rationale, key_overlap, source, family_id, family_size)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     run_id,
@@ -122,6 +122,8 @@ def save_report(
                     # still stores a run rather than failing on a KeyError.
                     list(match.get("key_overlap") or []),
                     match["source"],
+                    str(match.get("family_id") or ""),
+                    int(match.get("family_size") or 0),
                 ),
             )
     return str(run_id)
@@ -190,7 +192,7 @@ def list_history(conn: psycopg.Connection, limit: int = 50) -> list[dict[str, ob
         cur.execute(
             """
             SELECT srm.run_id, srm.patent_id, p.title, srm.risk, srm.rationale,
-                   srm.key_overlap, srm.source, p.url
+                   srm.key_overlap, srm.source, p.url, srm.family_id, srm.family_size
             FROM search_run_matches srm
             JOIN patents p ON p.id = srm.patent_id
             WHERE srm.run_id = ANY(%s)
@@ -199,7 +201,7 @@ def list_history(conn: psycopg.Connection, limit: int = 50) -> list[dict[str, ob
             (run_ids,),
         )
         matches_by_run: dict[str, list[dict[str, object]]] = {str(rid): [] for rid in run_ids}
-        for run_id, patent_id, title, risk, rationale, key_overlap, source, url in cur.fetchall():
+        for run_id, patent_id, title, risk, rationale, key_overlap, source, url, family_id, family_size in cur.fetchall():
             matches_by_run[str(run_id)].append({
                 "num": patent_id,
                 "title": title,
@@ -208,6 +210,8 @@ def list_history(conn: psycopg.Connection, limit: int = 50) -> list[dict[str, ob
                 "key_overlap": list(key_overlap),
                 "source": source,
                 "url": url,
+                "family_id": family_id or "",
+                "family_size": int(family_size or 0),
             })
 
     return [

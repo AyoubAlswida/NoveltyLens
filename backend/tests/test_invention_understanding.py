@@ -32,6 +32,23 @@ WORKER = "worker-1"
 TTL = 60
 
 
+def test_quick_search_preserves_understood_concepts_as_similarity_units():
+    from graph.understanding import understand_node
+    from models import InventionAnalysis
+
+    analysis = InventionAnalysis(
+        queries=["combined control query"],
+        keywords=["controller"],
+        concepts=["sensor detects a threshold", "controller triggers an actuator"],
+    )
+    with patch("graph.understanding.emit_progress"), patch(
+        "graph.understanding.understand_invention", return_value=analysis
+    ):
+        result = understand_node({"description": "a controlled device"})
+
+    assert result["similarity_units"] == analysis.concepts
+
+
 def _feature(feature_id="F1", elements=None, relationships=None):
     return {
         "feature_id": feature_id,
@@ -241,6 +258,10 @@ def test_the_proposal_prompt_asks_for_compound_searchable_limitations():
     assert "Aim for 4 to 7 limitations" in prompt
     assert "single generic component" in prompt
     assert "Merge related nouns with the function, arrangement, trigger, or condition" in prompt
+    assert "COMBINATION-CRITICAL MECHANISM" in prompt
+    assert "unique addition" in prompt
+    assert "one compound limitation" in prompt
+    assert "complete operative relationship" in prompt
     assert "relationships as an empty array" in prompt
 
 
@@ -265,6 +286,46 @@ def test_separate_machine_proposed_relationships_fail_instead_of_being_flattened
     with patch.object(llm, "_llm_json", return_value={"summary": "s", "features": [feature]}):
         with pytest.raises(llm.LLMResponseError, match="separate relationships"):
             llm.propose_understanding("a water filter")
+
+
+def test_summary_and_limitations_use_separate_model_calls():
+    import llm
+
+    prompts = []
+
+    def capture(prompt, **kwargs):
+        prompts.append(prompt)
+        if llm.SUMMARY_PROMPT_MARKER in prompt:
+            return {"summary": "the reviewed technical meaning"}
+        return {"features": [_feature()]}
+
+    with patch.object(llm, "_llm_json", side_effect=capture):
+        summary = llm.propose_technical_summary("the raw inventor submission")
+        features = llm.propose_technical_limitations(summary)
+
+    assert len(prompts) == 2
+    assert llm.SUMMARY_PROMPT_MARKER in prompts[0]
+    assert "Do not generate technical limitations" in prompts[0]
+    assert llm.LIMITATIONS_PROMPT_MARKER in prompts[1]
+    assert "the reviewed technical meaning" in prompts[1]
+    assert "the raw inventor submission" not in prompts[1]
+    assert features == [_feature()]
+
+
+def test_limitation_generation_refuses_an_empty_or_duplicate_proposal():
+    import llm
+
+    with patch.object(llm, "_llm_json", return_value={"features": []}):
+        with pytest.raises(llm.LLMResponseError, match="exactly one"):
+            llm.propose_technical_limitations("approved summary")
+
+    duplicate = _feature(elements=[
+        {"element_id": "E1", "text": "measured flow controls cleaning", "core": True, "order": 1},
+        {"element_id": "E2", "text": " MEASURED  FLOW CONTROLS CLEANING ", "core": True, "order": 2},
+    ])
+    with patch.object(llm, "_llm_json", return_value={"features": [duplicate]}):
+        with pytest.raises(llm.LLMResponseError, match="duplicate"):
+            llm.propose_technical_limitations("approved summary")
 
 
 # `test_relationships_are_regenerated_against_the_current_elements_only` and
@@ -296,7 +357,9 @@ def test_the_understanding_stage_sits_before_the_search_in_the_graph():
 
     edges = {(edge.source, edge.target) for edge in build_graph().get_graph().edges}
     assert ("decompose", "gate_a") in edges
-    assert ("gate_a", "propose_strategy") in edges
+    assert ("gate_a", "propose_limitations") in edges
+    assert ("propose_limitations", "gate_limitations") in edges
+    assert ("gate_limitations", "propose_strategy") in edges
     assert ("gate_strategy", "prepare_approved_search") in edges
     assert ("prepare_approved_search", "search_orchestrator") in edges
     assert ("gate_a", "search_orchestrator") not in edges
@@ -313,14 +376,15 @@ def test_an_approved_understanding_leads_to_the_strategy_stage_and_nowhere_else(
     destination.
 
     The guarantee that survives -- and the reason the loop existed -- is that an
-    approved understanding leads to the SEARCH STRATEGY stage rather than to a
-    provider, so there are still two approvals in front of any search.
+    approved summary leads only to limitation generation. The independently
+    approved limitations then lead to the SEARCH STRATEGY stage, so there are
+    three approvals in front of any search.
     """
     from graph.pipeline import build_graph
 
     edges = {(edge.source, edge.target) for edge in build_graph().get_graph().edges}
     out_of_gate_a = {target for source, target in edges if source == "gate_a"}
-    assert out_of_gate_a == {"propose_strategy"}
+    assert out_of_gate_a == {"propose_limitations"}
     assert "regenerate_understanding" not in set(build_graph().get_graph().nodes)
 
 
@@ -373,6 +437,10 @@ def test_approved_search_preparation_uses_no_unreviewed_machine_analysis():
         "original description\n\noriginal claims\n\napproved summary\n\n"
         "approved limitation one\n\napproved limitation two"
     )
+    assert prepared["similarity_units"] == [
+        "approved limitation one",
+        "approved limitation two",
+    ]
 
 
 # =========================================================================
@@ -623,7 +691,7 @@ class TestPersistence:
 
     # --- the HTTP surface ---------------------------------------------------
 
-    def test_the_stage_payload_is_the_description_summary_and_flat_elements(
+    def test_the_limitations_payload_is_the_description_summary_and_flat_elements(
         self, client, pg, paused_run
     ):
         understanding_store.record_proposal(
@@ -633,6 +701,7 @@ class TestPersistence:
         with patch(
             "workflow.gate_state.read_state",
             return_value={"description": "the inventor's own words",
+                          "understanding_review_stage": "limitations",
                           "candidate_decomposition": {"summary": "machine summary",
                                                       "features": [_feature()], "version": 1}},
         ):
@@ -653,6 +722,26 @@ class TestPersistence:
         assert "candidate_decomposition" not in body
         assert "proposal" not in body
 
+    def test_summary_review_never_exposes_draft_limitations(
+        self, client, paused_run
+    ):
+        state = {
+            "understanding_review_stage": "summary",
+            "understanding_version": 1,
+            "candidate_decomposition": {
+                "summary": "machine summary",
+                "features": [_feature()],
+                "version": 1,
+            },
+        }
+        with patch("workflow.gate_state.read_state", return_value=state):
+            body = client.get(
+                f"/api/runs/{paused_run}/gates/A", headers=self.auth()
+            ).json()
+        assert body["review_stage"] == "summary"
+        assert body["technical_elements"] == []
+        assert body["completion_rules"] == ["a non-empty technical summary"]
+
     def test_an_unreadable_checkpoint_is_not_rendered_as_an_empty_analysis(
         self, client, paused_run
     ):
@@ -664,36 +753,88 @@ class TestPersistence:
     def test_an_invalid_understanding_is_refused_with_the_rules_it_broke(
         self, client, paused_run
     ):
-        response = client.post(
-            f"/api/runs/{paused_run}/gates/A/approve",
-            json={
-                "idempotency_key": "k1",
-                "technical_summary": "",
-                "technical_elements": ["a membrane"],
-            },
-            headers=self.auth(),
-        )
-        assert response.status_code == 409, response.text
-        assert "NO_SUMMARY" in response.text
+        with patch(
+            "workflow.gate_state.read_state",
+            return_value={"understanding_review_stage": "summary", "understanding_version": 1},
+        ):
+            response = client.post(
+                f"/api/runs/{paused_run}/gates/A/approve",
+                json={
+                    "idempotency_key": "k1",
+                    "review_stage": "summary",
+                    "technical_summary": "",
+                },
+                headers=self.auth(),
+            )
+        assert response.status_code == 422, response.text
+        assert response.json()["code"] == "EMPTY_SUMMARY"
 
-    def test_an_approval_records_both_the_edit_and_the_approved_artifact(
+    def test_summary_approval_records_the_edit_without_approving_limitations(
         self, client, pg, paused_run
     ):
-        response = client.post(
-            f"/api/runs/{paused_run}/gates/A/approve",
-            json={
-                "idempotency_key": "k1",
-                "technical_summary": "the approved restatement",
-                "technical_elements": ["a membrane"],
-            },
-            headers=self.auth(),
-        )
+        with patch(
+            "workflow.gate_state.read_state",
+            return_value={"understanding_review_stage": "summary", "understanding_version": 1},
+        ):
+            response = client.post(
+                f"/api/runs/{paused_run}/gates/A/approve",
+                json={
+                    "idempotency_key": "k1",
+                    "review_stage": "summary",
+                    "technical_summary": "the approved restatement",
+                },
+                headers=self.auth(),
+            )
         assert response.status_code == 200, response.text
         assert approvals.load_approved_understanding(pg, run_id=paused_run, version=1)[
             "summary"
         ] == "the approved restatement"
+        assert approvals.load_approved_decompositions(
+            pg, run_id=paused_run, version=1
+        ) == []
         history = understanding_store.proposal_history(pg, run_id=paused_run, actor_email=OWNER)
         assert any(item["source"] == understanding_store.SOURCE_USER_EDIT for item in history)
+
+    def test_limitations_are_approved_only_after_the_summary(
+        self, client, pg, paused_run
+    ):
+        understanding_store.record_proposal(
+            pg,
+            run_id=paused_run,
+            version=1,
+            source=understanding_store.SOURCE_USER_EDIT,
+            summary="the approved restatement",
+            features=[],
+            created_by=OWNER,
+        )
+        approvals.approve_summary_by_owner(
+            pg,
+            run_id=paused_run,
+            actor_email=OWNER,
+            version=1,
+            summary="the approved restatement",
+            approved_at="2026-09-08T10:00:00Z",
+        )
+        with patch(
+            "workflow.gate_state.read_state",
+            return_value={"understanding_review_stage": "limitations", "understanding_version": 1},
+        ):
+            response = client.post(
+                f"/api/runs/{paused_run}/gates/A/approve",
+                json={
+                    "idempotency_key": "limitations-k1",
+                    "review_stage": "limitations",
+                    "technical_elements": ["a membrane driven by measured flow"],
+                },
+                headers=self.auth(),
+            )
+        assert response.status_code == 200, response.text
+        approved = approvals.load_approved_decompositions(
+            pg, run_id=paused_run, version=1
+        )
+        assert [element.text for element in approved[0].elements] == [
+            "a membrane driven by measured flow"
+        ]
 
     def test_the_review_state_survives_a_refresh(self, client, pg, paused_run):
         """Nothing about the stage lives in the browser. A second GET after a

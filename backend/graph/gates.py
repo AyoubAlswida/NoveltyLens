@@ -3,7 +3,8 @@
 An Advanced Search run is not a black box that emits a report. It **pauses**, and
 a person decides whether it continues. These two nodes are where it pauses.
 
-`gate_a_node` is the invention understanding (stages 1 and 2); `gate_strategy_node`
+`gate_a_node` and `gate_limitations_node` independently review the summary and
+limitations; `gate_strategy_node`
 is the search strategy (stage 3), and it sits between the approved understanding
 and the search: nothing is dispatched to a provider until a person has approved
 both what the invention is and what the run will go looking for. Gates B, C and D
@@ -100,8 +101,9 @@ def gate_a_node(state: GraphState) -> dict[str, Any]:
             "problem_solved": state.get("problem_solved") or "",
             "inventor_novelty_statement": state.get("inventor_novelty_statement") or "",
             "candidate_decomposition": state.get("candidate_decomposition"),
+            "review_stage": "summary",
             "editable": True,
-            "completion_rules": list(GATE_A_RULES),
+            "completion_rules": list(GATE_LIMITATIONS_RULES),
         }
     )
 
@@ -119,18 +121,34 @@ def gate_a_node(state: GraphState) -> dict[str, Any]:
     # through the approved-only readers. `latest_approved_*` filters `is_approved`
     # in SQL, so an unapproved proposal is not fetched and then rejected -- it is
     # not fetched.
+    version = int(state.get("understanding_version") or 0)
     with db.connect() as conn:
-        version = approvals.latest_approved_decomposition_version(conn, run_id=run_id)
-        features = approvals.require_approved_decompositions(
-            conn, run_id=run_id, version=version
-        )
-        # The summary is approved by the same act, at the same version, so a
-        # missing one here means the two were written apart -- which
-        # `approve_understanding_by_owner` makes impossible and this refuses to
-        # paper over.
-        understanding = approvals.require_approved_understanding(
-            conn, run_id=run_id, version=version
-        )
+        understanding = approvals.require_approved_understanding(conn, run_id=run_id, version=version)
+    return {
+        "approved_summary": understanding["summary"],
+        "understanding_version": version,
+        "understanding_review_stage": "limitations",
+    }
+
+
+def gate_limitations_node(state: GraphState) -> dict[str, Any]:
+    """Pause independently for Stage 2 after its input summary was approved."""
+    run_id = _run_id(state, WorkflowGate.A)
+    emit_progress("gate_a", "Awaiting your review of the technical limitations…")
+    interrupt(
+        {
+            "gate": str(WorkflowGate.A),
+            "run_id": run_id,
+            "review_stage": "limitations",
+            "candidate_decomposition": state.get("candidate_decomposition"),
+            "editable": True,
+            "completion_rules": list(GATE_SUMMARY_RULES),
+        }
+    )
+    version = int(state.get("understanding_version") or 0)
+    with db.connect() as conn:
+        features = approvals.require_approved_decompositions(conn, run_id=run_id, version=version)
+        understanding = approvals.require_approved_understanding(conn, run_id=run_id, version=version)
     first = features[0]
     return {
         "approved_summary": understanding["summary"],
@@ -171,14 +189,22 @@ def gate_a_node(state: GraphState) -> dict[str, Any]:
         },
         "decomposition_version": version,
         "understanding_version": version,
+        "understanding_review_stage": "complete",
     }
 
 
-GATE_A_RULES: tuple[str, ...] = (
-    "a non-empty technical summary",
+GATE_SUMMARY_RULES: tuple[str, ...] = ("a non-empty technical summary",)
+"""The one binding rule surfaced while Stage 1 is on screen."""
+
+
+GATE_LIMITATIONS_RULES: tuple[str, ...] = (
     "at least one non-empty technical element",
 )
-"""What stages 1 and 2 require, surfaced to the reviewer.
+"""The one binding rule surfaced while Stage 2 is on screen."""
+
+
+GATE_A_RULES: tuple[str, ...] = GATE_SUMMARY_RULES + GATE_LIMITATIONS_RULES
+"""The combined server-side rules for a fully approved understanding.
 
 Advisory in this payload and **binding** in `workflow/review.py`, which refuses an
 approval that violates any of them. A rule shown but not enforced is a suggestion;
@@ -192,9 +218,9 @@ of strings, and `core` is no longer something a reviewer sets -- every approved
 element is written `core = TRUE`, which is what makes the internal
 `NO_CORE_ELEMENT` condition unreachable rather than deleted and hoped for.
 
-**The reviewer's on-screen list must stay one-to-one and in order with this
-tuple.** Shrinking one side alone is how a stage starts refusing an approval for
-a reason it never showed."""
+Each pause surfaces only its own subset above. The combined tuple remains the
+binding list for code paths that validate the completed summary and limitations
+together."""
 
 
 # --- Workflow Gates B, C and D: REMOVED ------------------------------------
@@ -218,8 +244,8 @@ def gate_strategy_node(state: GraphState) -> dict[str, Any]:
     """Pause for the search strategy -- a human approves what will be searched for.
 
     Placed between the approved understanding and `search_orchestrator`, so
-    **no provider is contacted until both approvals exist**: what the invention
-    is, and what the run will go looking for.
+    **no provider is contacted until all three approvals exist**: the summary,
+    the limitations, and what the run will go looking for.
 
     The payload carries `candidate_search_strategy`, which is **machine output**.
     The field name is the guard, exactly as at the understanding stage: the search
@@ -313,10 +339,13 @@ moment the product is supposed to explain itself."""
 
 __all__ = [
     "GATE_A_RULES",
+    "GATE_SUMMARY_RULES",
+    "GATE_LIMITATIONS_RULES",
     "GATE_STRATEGY_RULES",
     "GATE_NODES",
     "GATE_RULES",
     "gate_a_node",
+    "gate_limitations_node",
     "gate_strategy_node",
 ]
 

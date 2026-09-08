@@ -87,6 +87,28 @@ describe('Submit screen — Advanced is a mode, not a second button', () => {
     expect(options.querySelector('.advanced-help')).not.toBeNull();
   });
 
+  it('keeps the composer toolbar outside the editable text area', () => {
+    const wrap = fixture.nativeElement.querySelector('.textarea-wrap-primary');
+    const textarea = wrap.querySelector('textarea');
+    const tools = wrap.querySelector('.composer-tools');
+
+    expect(textarea.contains(tools)).toBe(false);
+    expect(textarea.nextElementSibling).toBe(tools);
+  });
+
+  it('expands the description box to its full content height while typing', () => {
+    const textarea: HTMLTextAreaElement = fixture.nativeElement.querySelector(
+      '#invention-description',
+    );
+    Object.defineProperty(textarea, 'scrollHeight', { configurable: true, value: 348 });
+
+    textarea.value = DESCRIPTION.repeat(8);
+    textarea.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+
+    expect(textarea.style.height).toBe('348px');
+  });
+
   it('announces its on/off state to assistive technology', () => {
     const t: HTMLButtonElement = fixture.nativeElement.querySelector('.composer-toggle');
     expect(t.getAttribute('role')).toBe('switch');

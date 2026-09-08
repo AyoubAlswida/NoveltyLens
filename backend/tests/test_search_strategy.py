@@ -3,9 +3,10 @@
 This stage sits between the approved invention understanding and the first
 provider call, and three properties dominate everything here:
 
-1. **No provider is contacted until both approvals exist.** The graph pauses
-   again after the understanding, and `search_orchestrator` is reachable on the
-   verified branch only from this stage's gate.
+1. **No provider is contacted until all three approvals exist.** Summary and
+   limitations are independently approved before the strategy, and
+   `search_orchestrator` is reachable on the verified branch only from this
+   stage's gate.
 2. **Only the queries a human approved and left enabled are dispatched.** A
    proposal is never dispatched, and a disabled query is kept as the record of
    what was deliberately not searched for.
@@ -57,7 +58,9 @@ def test_the_strategy_stage_sits_between_the_approved_understanding_and_the_sear
     from graph.pipeline import build_graph
 
     edges = {(edge.source, edge.target) for edge in build_graph().get_graph().edges}
-    assert ("gate_a", "propose_strategy") in edges
+    assert ("gate_a", "propose_limitations") in edges
+    assert ("propose_limitations", "gate_limitations") in edges
+    assert ("gate_limitations", "propose_strategy") in edges
     assert ("propose_strategy", "gate_strategy") in edges
     assert ("gate_strategy", "prepare_approved_search") in edges
     assert ("prepare_approved_search", "search_orchestrator") in edges
@@ -126,12 +129,21 @@ def test_the_strategy_prompt_combines_approved_limitations_instead_of_isolating_
     def capture(prompt, **kwargs):
         captured["prompt"] = prompt
         return {
-            "queries": [{
-                "query_id": "Q1",
-                "query_text": "flow-triggered membrane cleaning sensor",
-                "rationale": "Looks for the approved combination.",
-                "covered_element_ids": ["F1.E1", "F1.E2"],
-            }]
+            "domain_anchor": "membrane",
+            "queries": [
+                {
+                    "query_id": "Q1",
+                    "query_text": "flow-triggered membrane cleaning sensor",
+                    "rationale": "Looks for the approved combination.",
+                    "covered_element_ids": ["F1.E1", "F1.E2"],
+                },
+                {
+                    "query_id": "Q2",
+                    "query_text": "membrane flow drop triggered cleaning",
+                    "rationale": "Looks for the operating relationship.",
+                    "covered_element_ids": ["F1.E1", "F1.E2"],
+                },
+            ]
         }
 
     features = [{
@@ -151,7 +163,119 @@ def test_the_strategy_prompt_combines_approved_limitations_instead_of_isolating_
     prompt = captured["prompt"]
     assert "Most queries must combine 2 or 3 compatible approved limitations" in prompt
     assert "Do not turn each limitation into an isolated one-line query" in prompt
+    assert "at least two queries must search the distinctive interaction" in prompt
+    assert "Listing multiple covered ids without expressing their relationship is false coverage" in prompt
+    assert "retain at least two meaningful technical words" in prompt
     assert "between 4 and 10 words" in prompt
+
+
+def test_missing_model_domain_anchor_is_derived_and_applied_without_another_call():
+    import llm
+
+    strategy = {
+        "queries": [
+            {
+                "query_id": "Q1",
+                "query_text": "seat tube hinge sections pass without overlapping",
+                "rationale": "Looks for the folding relationship.",
+                "covered_element_ids": ["F1.E1", "F1.E2"],
+            },
+            {
+                "query_id": "Q2",
+                "query_text": "frame sections hinge pass without overlapping",
+                "rationale": "Looks for the same relationship in claim language.",
+                "covered_element_ids": ["F1.E1", "F1.E2"],
+            },
+        ]
+    }
+    features = [{
+        "feature_id": "F1",
+        "feature_text": "folding arrangement",
+        "elements": [
+            {"element_id": "E1", "text": "frame sections coupled by a hinge", "core": True},
+            {"element_id": "E2", "text": "sections pass without overlapping", "core": True},
+        ],
+    }]
+
+    with patch.object(llm, "_llm_json", return_value=strategy) as mocked:
+        result = llm.propose_search_strategy("A folding bicycle has hinged frame sections", features)
+
+    assert mocked.call_count == 1
+    assert all("folding" in item["query_text"] for item in result)
+    assert all("bicycle" in item["query_text"] for item in result)
+
+
+def test_declared_coverage_is_strengthened_with_approved_vocabulary():
+    import llm
+
+    strategy = {"domain_anchor": "smoke detector", "queries": [
+        {
+            "query_id": "Q1",
+            "query_text": "optical chamber smoke detector",
+            "rationale": "Claims more coverage than its text contains.",
+            "covered_element_ids": ["F1.E1", "F1.E2"],
+        },
+        {
+            "query_id": "Q2",
+            "query_text": "smoke detector temperature rise triggered classification",
+            "rationale": "Searches the conditional mechanism.",
+            "covered_element_ids": ["F1.E2"],
+        },
+    ]}
+    features = [{
+        "feature_id": "F1",
+        "feature_text": "approved limitations",
+        "elements": [
+            {"element_id": "E1", "text": "optical chamber smoke detector", "core": True},
+            {"element_id": "E2", "text": "classification triggered by temperature rise", "core": True},
+        ],
+    }]
+
+    with patch.object(llm, "_llm_json", return_value=strategy):
+        result = llm.propose_search_strategy("a combined detector", features)
+
+    assert "classification" in result[0]["query_text"]
+    assert "triggered" in result[0]["query_text"]
+
+
+def test_a_fragmented_strategy_fails_instead_of_being_shown_for_approval():
+    import llm
+
+    fragmented = {
+        "domain_anchor": "smoke detector",
+        "queries": [
+            {
+                "query_id": "Q1",
+                "query_text": "smoke detector thermal infrared sensor rate rise",
+                "rationale": "Looks for a sensor alone.",
+                "covered_element_ids": ["F1.E1"],
+            },
+            {
+                "query_id": "Q2",
+                "query_text": "smoke detector signal comparison smart alert tone",
+                "rationale": "Looks for an alert alone.",
+                "covered_element_ids": ["F1.E2"],
+            },
+            {
+                "query_id": "Q3",
+                "query_text": "smoke detector thermal rate signal comparison alert",
+                "rationale": "Looks for the combined mechanism.",
+                "covered_element_ids": ["F1.E1", "F1.E2"],
+            },
+        ]
+    }
+    features = [{
+        "feature_id": "F1",
+        "feature_text": "searchable technical limitations",
+        "elements": [
+            {"element_id": "E1", "text": "thermal rate sensing", "core": True},
+            {"element_id": "E2", "text": "signal comparison alert", "core": True},
+        ],
+    }]
+
+    with patch.object(llm, "_llm_json", return_value=fragmented):
+        with pytest.raises(llm.LLMResponseError, match="fragmented search strategy"):
+            llm.propose_search_strategy("a combined detector", features)
 
 
 # =========================================================================

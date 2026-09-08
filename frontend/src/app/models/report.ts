@@ -17,6 +17,8 @@ export interface PatentMatch {
   key_overlap: string[];
   source: string;
   url: string;
+  family_id?: string;
+  family_size?: number;
 }
 
 export interface AnalysisReport {
@@ -101,7 +103,7 @@ export const PHASE_LABELS: Record<Phase, string> = {
   validate: 'Checking relevance of candidates…',
   compare: 'Scoring patent similarities…',
   analyze: 'Writing detailed analysis…',
-  decompose: 'Proposing a technical summary and limitations…',
+  decompose: 'Preparing the technical summary…',
   strategy: 'Planning the search…',
   gate_a: 'Awaiting your review of the understanding…',
   gate_strategy: 'Awaiting your approval of the search queries…',

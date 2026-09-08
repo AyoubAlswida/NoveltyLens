@@ -18,7 +18,8 @@ import { PUBLIC_ERRORS, publicRunError } from '../shared/public-errors';
  * - `resuming` — a decision committed; the executor has not picked it up yet.
  * - `blocked` — the gate refused, and **every** blocking condition is listed.
  * - `stale` — the artifact moved under the reviewer. Never resubmitted.
- * - `forbidden` — `RUN_NOT_FOUND`, identical for "no such run" and "not yours".
+ * - `forbidden` — `RUN_NOT_FOUND`; the API deliberately does not distinguish
+ *   "no such run" from "not yours".
  * - `reconnecting` — the stream dropped. **A client problem, never a run
  *   failure**, so the UI says reconnecting rather than failed (Gate F item 3).
  * - `failed` — the run itself failed, with the backend's sanitized detail shown
@@ -128,7 +129,7 @@ export const STAGE_LABELS: Record<string, string> = {
           <div class="glass-card gate-card" data-state="reconnecting" aria-busy="true">
             <h2><app-icon name="RotateCcw" /> Reconnecting…</h2>
             <p>
-              We lost the connection. We’re trying again now.
+              We lost the connection. The run is unaffected, and we’re trying again now.
             </p>
           </div>
         }
@@ -266,16 +267,20 @@ export class GateShell {
 
   readonly displayTitle = computed(() => {
     if (this.state() !== 'resuming') return this.title();
-    return this.gate() === 'STRATEGY'
-      ? 'Starting your prior-art search'
-      : 'Preparing your search strategy';
+    if (this.current() === 1) return 'Preparing your technical limitations';
+    if (this.current() === 2) return 'Preparing your search strategy';
+    return 'Starting your prior-art search';
   });
 
-  readonly transitionMessage = computed(() =>
-    this.gate() === 'STRATEGY'
-      ? 'We’re starting the searches you approved. Results will appear here when they’re ready.'
-      : 'We’re creating focused search queries from the technical limitations you approved.',
-  );
+  readonly transitionMessage = computed(() => {
+    if (this.current() === 1) {
+      return 'We’re turning your approved invention summary into focused technical limitations for you to review.';
+    }
+    if (this.current() === 2) {
+      return 'We’re creating focused search queries from the technical limitations you approved.';
+    }
+    return 'We’re starting the searches you approved. Results will appear here when they’re ready.';
+  });
 
   readonly state = input.required<GateState>();
   readonly detail = input<string>('');

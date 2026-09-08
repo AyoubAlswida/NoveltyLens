@@ -27,8 +27,9 @@ and an Angular frontend — with no shared tooling; each is run and developed se
 - **Quick Search** (`POST /api/analyze[/stream]`) — the description goes straight to the
   pipeline. Inline execution driven by the HTTP request: no run row, no lease, no event log.
 - **Advanced Search** (`POST /api/runs`) — the same search, preceded by guided editing. The
-  system proposes a technical summary and a focused flat list of searchable technical
-  limitations; a person edits and approves them; the system proposes queries that combine
+  system first proposes a technical summary for a person to edit and approve. Only then
+  does it generate a focused flat list of searchable technical limitations from that
+  approved summary; the person reviews those separately; the system proposes queries that combine
   compatible limitations; the person edits and approves those;
   the approved queries are then executed by the *same* pipeline and the *same* report is
   displayed. Durable: a run row, a lease, an event log and a separate worker process.
@@ -42,9 +43,14 @@ and an Angular frontend — with no shared tooling; each is run and developed se
   unreachable; see "Advanced Search: the guided branch" below.
 - **No numeric similarity score, and no overall novelty verdict.** `pct`, `top_score` and
   `verdict` are gone from the API, the database, the UI and every export. Cosine similarity
-  is still computed — it is how ranking works — and is used for exactly two things before
-  being discarded: it orders the matches, and it selects a per-patent High/Medium/Low
-  **novelty risk** rating. A report with no matches carries **no rating at all**.
+  is still computed — it is how ranking works — together with transient,
+  excerpt-grounded limitation coverage returned by the existing batched explanation call.
+  They order the matches and select a per-patent High/Medium/Low **novelty risk** rating,
+  then are discarded. `High` requires both an aggregate score of at least 0.75 and direct
+  excerpt support for at least 75% of the independently reviewed invention units. `Medium`
+  requires an aggregate score of at least 0.45 and direct excerpt support for at least half
+  the units; narrower or weaker overlap is `Low`. A report with no matches carries **no
+  rating at all**.
 
 ## Commands
 
@@ -284,7 +290,21 @@ enabled* — accurate as design intent, not as what a request currently exercise
   request rather than being treated as an implicit keep or drop. An empty candidate set
   skips the LLM call entirely rather than validating nothing.
 - `ranking.py` — Ranking + Explanation. Calls `compare.py`'s embedding-based scoring (no
-  TF-IDF fallback — see `compare.py` below) and `analyze_all_matches` with no `except`. The
+  TF-IDF fallback — see `compare.py` below) and `analyze_all_matches` with no `except`.
+  Ranking is coverage-aware rather than a single best-chunk maximum: it first selects one
+  adjacent three-chunk evidence window, preventing unrelated passages spread across a long
+  document from being combined as though they disclosed one coherent mechanism. Within
+  that window, 60% is the mean of each invention unit's best chunk match, 25% is the mean
+  of the three strongest chunk-pair matches, and 15% is the best invention-unit match
+  against the patent's title plus abstract. Risk uses structured covered/missing limitation
+  ids returned by the same excerpt-grounded explanation call (no additional LLM request):
+  `High` requires at least 75% direct coverage plus the 0.75 aggregate floor; `Medium`
+  requires at least 50% direct coverage plus the 0.45 aggregate floor; otherwise narrow or
+  weak overlap is `Low`. Advanced Search supplies its reviewer-approved technical limitations as
+  the invention units; Quick Search uses the technical concepts returned by its existing
+  understanding call, falling back to 180-word chunks only when that list is empty.
+  Patent chunks and the title/abstract texts share one batched embedding call, so the new
+  signal adds one vector per patent but no extra sequential embedding round trip. The
   displayed score is the real one, truncated and clamped to 0–100 and nothing else — a
   dissimilar patent shows an honest `0`. Also holds `format_matches` and `verdict_for`,
   which builds the `patents[]` entries. Split into two node
@@ -313,7 +333,7 @@ empty result set would state a finding the run did not make.
 **Feature-disclosure verification was withdrawn from the product on 2026-09-01**
 (`docs/decisions/2026-09-01-advanced-search-three-stages.md`). What replaced it is
 **Advanced Search**: a standard prior-art search preceded by guided editing. The system
-proposes a technical summary and a focused flat list of searchable technical limitations;
+proposes a technical summary, waits for its approval, then generates a focused flat list of searchable technical limitations from that approved summary;
 a person edits and approves them; the system proposes queries that normally combine two or
 three compatible limitations; the person edits and approves those;
 the approved queries are then executed by the ordinary search pipeline and the ordinary
@@ -371,17 +391,20 @@ level that no gate node captures the return value and that none calls an approva
 
 **`search_orchestrator` has exactly two incoming edges** — `expand_queries` (the Quick
 Search branch) and `prepare_approved_search` (the Advanced branch, reachable only after
-`gate_strategy`). That is what makes "no provider call before both approvals" a property of
-the graph rather than a convention, and
-`test_no_provider_call_is_reachable_before_both_approvals` asserts the count by name. The
-chain into it is now *tighter* than it was: `propose_strategy` is reachable only from
-`gate_a`, and `gate_a` only from `decompose`, because regeneration is gone.
+`gate_strategy`). That is what makes "no provider call before all three approvals" a
+property of the graph rather than a convention, and
+`test_no_provider_call_is_reachable_before_all_three_approvals` asserts the count by name.
+The Advanced chain is deliberately sequential: `decompose -> gate_a ->
+propose_limitations -> gate_limitations -> propose_strategy -> gate_strategy`. Stage 2 is
+therefore generated only from the exact summary approved at Stage 1.
 
-**What the two gates approve, and how it is stored.** The public payloads are flat
-(spec §4.2): gate `A` carries `original_description`, `technical_summary` and
-`technical_elements` (a list of **strings**); gate `STRATEGY` carries `queries` (a list of
-**strings**). No capability objects, no `core`, no relationships, no per-element or per-query
-ids, no enable/disable, no coverage claim. `api/runs.py` translates that into storage:
+**What the three pauses approve, and how it is stored.** The public payloads are flat
+(spec §4.2): Gate `A` first carries only `original_description` and
+`technical_summary`; after that summary is approved, Gate `A` pauses again with
+`technical_elements` (a list of **strings**) generated from the approved summary. Gate
+`STRATEGY` carries `queries` (a list of **strings**). No capability objects, no `core`, no
+relationships, no per-element or per-query ids, no enable/disable, no coverage claim.
+`api/runs.py` translates that into storage:
 
 - one `feature_decompositions` row (one technical group, `F1`), one `decomposition_elements`
   row per element, ids minted **on write** as `E1..En`;
@@ -453,6 +476,10 @@ rolling `0023`/`0022` back and re-applying against the Compose database.
   than the payload's `title`/`date`, because those two are display values (`"Today"` is
   literally hardcoded) and meaningless read back weeks later.
 - **`search_run_matches`** — one row per `patents[]` entry, in rank order, FK'd to both.
+  Migration `0025` also snapshots Lens's simple-family identity and reported family size.
+  The report groups matched publications by that provider-backed identity but keeps every
+  publication visible and in its original rank order; missing family metadata means an
+  ungrouped publication, never an inferred family.
 - **`users`** — login accounts. See the auth section below.
 
 The durable-workflow tables, from migrations `0006`-`0015`. `backend/workflow/` is their
@@ -767,7 +794,7 @@ stages**, plus `gate-shell.ts` (the shared frame, the **twelve** states, `STAGE_
 one generic editor before them.
 
 **Why one component for three stages.** Stages 1 and 2 are a single backend approval (the
-understanding) and stage 3 is a second one (the strategy) — two approvals, three screens —
+summary, stage 2 approves the generated limitations, and stage 3 approves the strategy — three approvals, three screens —
 but the three screens are one flow a person walks forward and back through, so the drafts
 live in one place. Splitting them would put the drafts behind a router or a shared store
 purely so that pressing Back could find them again.
@@ -775,10 +802,30 @@ purely so that pressing Back could find them again.
 - **Stage 1** — the inventor's description read-only beside an editable technical summary.
 - **Stage 2** — a flat, editable list of searchable technical limitations: add, edit,
   delete. The machine aims for 4–7 compound limitations, keeps relationships/triggers in
-  the same line, and uses fewer rather than padding with generic components.
+  the same line, and uses fewer rather than padding with generic components. The proposal
+  explicitly identifies the combination-critical mechanism before writing JSON: an
+  addition, comparison, trigger, absence-of-a-corresponding-signal condition, or coordinated
+  output stays in one limitation instead of being fragmented into component nouns. This is
+  a search-quality instruction, not a claim that the inventor's stated addition is novel.
 - **Stage 3** — a plain, editable list of search query strings. The proposal normally
   combines 2–3 compatible approved limitations per query instead of emitting one query per
-  isolated noun.
+  isolated noun. `propose_search_strategy` enforces that a majority of proposed queries
+  genuinely cover two or three limitations: each claimed limitation must contribute at
+  least two meaningful words to the query text (or all of them when it has only one), so a
+  model cannot pass by merely listing extra `covered_element_ids`. When the approved
+  limitations contain a trigger, comparison, condition or coordinated output, at least two
+  queries must preserve one of those relational limitations. Empty rationales/coverage and
+  exact duplicate query text are also rejected. A model that ignores these structural
+  quality requirements fails the stage; the product does not present the fragmented
+  strategy as an acceptable proposal. Every query also carries a concrete one-to-three-word
+  invention-domain anchor. If the model omits that administrative JSON field, the server
+  deterministically derives it from the opening platform phrase of the approved summary
+  and inserts any missing anchor words into the editable query; this costs no additional
+  model call and prevents a generic relationship query from drifting into another field.
+  Likewise, when a query declares a reviewed limitation but uses only synonyms, the server
+  inserts the minimum missing approved vocabulary needed by the lexical audit before the
+  query is shown. It does not add a coverage id or make another LLM request; unknown ids
+  still fail at the approval gate.
 - Each renders `1 / 3`, `2 / 3`, `3 / 3` as **rendered text**, not an aria-label.
 
 **Navigation preserves every edit.** Only two transitions mutate anything: leaving stage 2
@@ -835,7 +882,7 @@ them are retained.
 makes every claim above checkable at zero cost. It serves the real application with the real
 graph, the real executor, the real lease, the real event log and the real database, and stubs
 only the metered boundaries: discovery, EPO enrichment, and the LLM. A run admitted against
-it pauses at Workflow Gate A (stages 1 and 2) and at the search strategy stage (stage 3), and
+it pauses twice at Workflow Gate A (summary, then limitations) and once at the search strategy stage, and
 completes with the standard report.
 
 Three things about it are load-bearing:
@@ -855,7 +902,7 @@ Three things about it are load-bearing:
   binds a local name, so patching `llm._llm_chat` never reaches such a caller.
 
 `python acceptance/advanced_search_acceptance.py` drives it end to end over HTTP: admission,
-both approvals, an edited element and a replaced query, the search, the standard report,
+all three approvals, an edited element and a replaced query, the search, the standard report,
 ownership 404s, idempotent replay, one History row carrying the same matches, and every
 withdrawn route answering 404. **53 checks, zero paid calls**, transcript at
 `docs/acceptance/advanced-search-transcript.txt`. It **replaces** `four_gate_acceptance.py`
@@ -966,7 +1013,7 @@ the schema underneath one reproduces the deadlock with none of the explanation.
 which the Compose setup does not provide; this makes the shared one behave correctly and
 says so.
 
-### The Invention Understanding stage (Workflow Gate A: stages 1 and 2)
+### The Invention Understanding stages (Workflow Gate A: summary, then limitations)
 
 **Workflow Gate A is unchanged as a mechanism and rebuilt as an experience.** It is the
 same `interrupt()` node at the same place in the graph, with the same approval boundary and
@@ -1069,7 +1116,7 @@ decompose -> gate_a -> [route_after_gate_a] -> regenerate_understanding -> decom
 **The approved branch goes to `propose_strategy`, not to the search.** The search strategy
 stage sits between this approval and `search_orchestrator` (see "The Search Strategy
 stage"), so the invariant this route guards -- nothing is searched for that a person did not
-approve -- now has two approvals in front of the first provider call rather than one.
+approve -- now has three approvals in front of the first provider call rather than one.
 
 `gate_a_node` checks for a pending regeneration **before** reading any approved artifact and
 returns `{}` if it finds one — a rejection is not an approval, and reading one there would
@@ -1697,6 +1744,12 @@ has to be able to say "claim 4" — which is what `docs/prompts/feature-disclosu
 number comes from the claim's own leading digits; **1-based position is only a fallback, and
 only where nothing else claims that number.**
 
+Lens discovery requests are serialized for the trial-tier key and each query gets at most
+two attempts. The second attempt is only for a transport failure, HTTP 429, or HTTP
+500/502/503/504, and honors `Retry-After` up to 30 seconds; deterministic 4xx responses are
+never retried. Exhausting the second attempt still fails the run rather than returning an
+incomplete result set.
+
 That qualifier is load-bearing and was a real bug. Numbering used to be assigned in one pass,
 so `["2. A method.", "A further method."]` produced two claims both numbered 2 — two locators
 reading "claim 2" and two identical chunk IDs — and `["3. A method.", "A further method."]`
@@ -2003,10 +2056,10 @@ Layout of `frontend/src/app/`:
 - `services/history.ts` — `GET /api/history`, plus `reportFromHistory`, which maps an entry
   onto `AnalysisReport` so a past run and a fresh one render through one display path. It
   derives `title`/`date` (from `description`/`created_at`) and invents nothing else.
-- `services/export.ts` — PDF / Word / JSON. Ported verbatim from React, and
-  `buildReportHtml`'s template literal is byte-identical, so exported documents are
-  unchanged: the `.doc` and `.json` produced by the Angular build compare byte-for-byte
-  equal to the React build's output for the same report. Keep it that way when editing.
+- `services/export.ts` — PDF / Word / JSON. PDF is generated lazily with `jsPDF` and
+  downloaded directly; it never opens a popup or the browser print dialog. The generator
+  lays out pages itself, wraps long report text and adds page numbers. Word retains the
+  standalone HTML `.doc` path, and JSON remains the raw report data.
 - `screens/` — `login-screen`, `submit-screen`, `running-screen`, `report-screen`,
   `history-screen`, `error-screen`.
 - `shared/` — `chrome.ts` (brand header only; the page footer was removed), `export-menu.ts`, `icon.ts`,
@@ -2295,7 +2348,9 @@ Three things worth knowing before optimizing further:
   zero-tolerance exception for a write whose failure nobody would see.
 - **There is no caching of any kind.** Repeat the identical search and it costs the full
   pipeline again: ~5 SerpAPI searches, ~20 Details calls, ~20 description-page fetches,
-  4 LLM calls, and several embedding round trips. This is the single largest remaining
+  multiple LLM calls, and several embedding round trips. Advanced Search now intentionally
+  spends separate calls on summary generation and limitation generation so the latter can
+  use the human-approved summary; do not collapse them to save one call. This is the single largest remaining
   source of avoidable work, and it is a deliberate open question rather than an oversight
   (the Postgres layer that used to do it was removed on purpose).
 

@@ -95,6 +95,10 @@ def test_the_understanding_payload_is_exactly_three_business_fields():
     payload = gate_state.gate_a_payload(state)
 
     assert set(payload) == {"original_description", "technical_summary", "technical_elements"}
+    assert payload["technical_elements"] == []
+
+    state["understanding_review_stage"] = "limitations"
+    payload = gate_state.gate_a_payload(state)
     # Groups are concatenated in order and their structure is dropped. The two
     # `E1`s in different groups are two different elements and both survive --
     # which is why the flat list can carry no ids.

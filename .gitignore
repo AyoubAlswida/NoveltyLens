@@ -13,11 +13,15 @@ Thumbs.db
 ~$*
 
 # Scratch and build artifacts (not source)
+.artifacts/
 .tmp_video_deps/
 .video_review/
 docs/.pptx_build/
 docs/.pptx_workflow_build/
 backend/acceptance/*.log
+
+# Per-machine assistant settings; never share these with the repository.
+.claude/settings.local.json
 
 # Backups of .env carry the same live credentials the file does.
 .env.bak*

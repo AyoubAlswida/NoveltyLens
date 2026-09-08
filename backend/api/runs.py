@@ -1,8 +1,8 @@
 """The Advanced Search HTTP surface.
 
 Advanced Search is a standard prior-art search preceded by guided editing: the
-run pauses twice for a person -- once on the invention understanding (presented
-as stages 1 and 2) and once on the search queries (stage 3) -- and then executes
+run pauses three times for a person -- first on the summary, then on limitations
+generated from that approved summary, and finally on the search queries -- and then executes
 the ordinary search pipeline. It performs no evidence verification, reaches no
 legal conclusion, and presents no numeric score.
 
@@ -335,14 +335,14 @@ async def gate_a(run_id: str, email: CurrentUser) -> dict[str, Any]:
     backend enforces the same limits in `workflow/review.py`; that is the binding
     check and this is the courtesy.
     """
-    from graph.gates import GATE_A_RULES
+    from graph.gates import GATE_LIMITATIONS_RULES, GATE_SUMMARY_RULES
     from graph.limits import MAX_ELEMENTS_TOTAL
     from workflow import gate_state
 
     with db.connect() as conn:
         try:
             run = store.get_run(conn, run_id=run_id, actor_email=email)
-            version = approvals.latest_approved_decomposition_version(conn, run_id=run_id)
+            version = approvals.latest_approved_understanding_version(conn, run_id=run_id)
         except Exception as error:
             raise to_http(error, run_id=run_id) from error
 
@@ -360,12 +360,17 @@ async def gate_a(run_id: str, email: CurrentUser) -> dict[str, Any]:
             "yet. This is not an empty analysis.",
         )
 
+    review_stage = str(state.get("understanding_review_stage") or "summary")
+    completion_rules = (
+        GATE_LIMITATIONS_RULES if review_stage == "limitations" else GATE_SUMMARY_RULES
+    )
     return {
         # --- the editable business payload (spec section 4.2.1) -------------
         #
         # Three fields, and nothing that revives a removed concept: no capability
         # objects, no `core`, no relationships, no per-element ids.
         **gate_state.gate_a_payload(state),
+        "review_stage": review_stage,
         # The run row is the record of what was submitted and survives a
         # checkpoint compaction, so it wins over graph state for the description.
         # Read-only, and NOT accepted by the approval endpoint: the description is
@@ -374,7 +379,7 @@ async def gate_a(run_id: str, email: CurrentUser) -> dict[str, Any]:
         # --- generic transport metadata, outside the business payload -------
         "editable": True,
         "approved_version": version,
-        "completion_rules": list(GATE_A_RULES),
+        "completion_rules": list(completion_rules),
         "limits": {"max_elements_total": MAX_ELEMENTS_TOTAL},
     }
 
@@ -426,93 +431,132 @@ def _one_technical_group(summary: str, elements: list[Any]) -> list[dict[str, An
     ]
 
 
-def _next_understanding_version(run_id: str, email: str) -> int:
-    """The version this approval writes.
-
-    Supplied by the server rather than by the request. The reviewer edits text,
-    not versions, so `NO_VERSION` and "the approval names a version explicitly"
-    describe a field the public shape no longer has -- and a client-chosen
-    version could silently overwrite an approved one.
-    """
-    with db.connect() as conn:
-        current = approvals.latest_approved_decomposition_version(conn, run_id=run_id)
-    return int(current or 0) + 1
-
-
 @router.post("/{run_id}/gates/A/approve")
 async def approve_gate_a(
     run_id: str, email: CurrentUser, body: dict[str, Any] = Body(...)
 ) -> dict[str, Any]:
-    """Commit the invention-understanding approval. **Does not call the graph.**
+    """Approve exactly the Stage-1 or Stage-2 artifact currently on screen."""
+    from workflow import gate_state
+    from workflow import understanding as understanding_store
 
-    One human act approves the summary and the technical capabilities together,
-    at one version. The inventor's original description is untouched by this and
-    by everything else -- an approved summary is stored beside it, never over it.
-
-    The edited proposal is recorded as a `USER_EDIT` proposal row in the same
-    transaction, so "what the machine said" and "what the human approved" are
-    both retrievable afterwards. A stage that kept only the second could not show
-    that the human changed anything.
-    """
     key = _key(body)
+    requested_stage = str(body.get("review_stage") or "")
     summary = str(body.get("technical_summary") or "")
     elements = list(body.get("technical_elements") or ())
-    version = _next_understanding_version(run_id, email)
-    features = _one_technical_group(summary, elements)
-
-    from workflow import understanding as understanding_store
 
     with db.connect() as conn:
         try:
+            # Ownership must be established before reading the actor-less graph
+            # checkpoint. The idempotency record is checked next: a successful
+            # Stage-1 request retried after the graph reaches Stage 2 must replay
+            # its original response instead of failing as the "wrong" stage.
             _own(conn, run_id, email)
             with idempotent(
                 conn,
                 actor_email=email,
-                scope="gate_a_approve",
+                scope=f"gate_a_{requested_stage or 'unspecified'}_approve",
                 resource_id=run_id,
                 idempotency_key=key,
                 request_body=body,
             ) as slot:
                 if slot.replayed:
                     return slot.response
+                state = gate_state.read_state(run_id)
+                if state is None:
+                    raise ApiError(
+                        503,
+                        "CHECKPOINT_UNAVAILABLE",
+                        "The review state could not be read.",
+                    )
+                review_stage = str(
+                    state.get("understanding_review_stage") or "summary"
+                )
+                if requested_stage != review_stage:
+                    raise ApiError(
+                        409,
+                        "WRONG_REVIEW_STAGE",
+                        f"The run is awaiting {review_stage} review, not "
+                        f"{requested_stage or 'an unspecified stage'} review.",
+                    )
+                version = int(state.get("understanding_version") or 0)
+                if version < 1:
+                    raise ApiError(
+                        409,
+                        "NO_UNDERSTANDING_VERSION",
+                        "The review has no proposal version.",
+                    )
                 _own_at_gate(conn, run_id, email, WorkflowGate.A)
-                # Every completion rule, checked before anything is written, so an
-                # invalid understanding is refused with the rules it broke rather
-                # than by a constraint violation surfacing as a 500.
-                review_store.require_gate_clear(
-                    conn,
-                    run_id=run_id,
-                    gate=WorkflowGate.A,
-                    payload={"decomposition": features, "summary": summary},
-                )
                 approved_at = _now()
-                understanding_store.record_proposal_if_absent(
-                    conn,
-                    run_id=run_id,
-                    version=version,
-                    source=understanding_store.SOURCE_USER_EDIT,
-                    summary=summary,
-                    features=features,
-                    created_by=email,
-                )
-                written = approvals.approve_understanding_by_owner(
-                    conn,
-                    run_id=run_id,
-                    actor_email=email,
-                    version=version,
-                    summary=summary,
-                    features=features,
-                    approved_at=approved_at,
-                )
+                if review_stage == "summary":
+                    if not summary.strip():
+                        raise ApiError(422, "EMPTY_SUMMARY", "The technical summary cannot be empty.")
+                    understanding_store.record_proposal_if_absent(
+                        conn,
+                        run_id=run_id,
+                        version=version,
+                        source=understanding_store.SOURCE_USER_EDIT,
+                        summary=summary,
+                        features=[],
+                        created_by=email,
+                    )
+                    approvals.approve_summary_by_owner(
+                        conn,
+                        run_id=run_id,
+                        actor_email=email,
+                        version=version,
+                        summary=summary,
+                        approved_at=approved_at,
+                    )
+                    field = "summary_version"
+                    reason = "Technical summary approved."
+                    response = {
+                        "understanding_version": version,
+                        "review_stage": "summary",
+                        "status": "RESUMING",
+                    }
+                elif review_stage == "limitations":
+                    approved = approvals.require_approved_understanding(conn, run_id=run_id, version=version)
+                    features = _one_technical_group(approved["summary"], elements)
+                    review_store.require_gate_clear(
+                        conn,
+                        run_id=run_id,
+                        gate=WorkflowGate.A,
+                        payload={"decomposition": features, "summary": approved["summary"]},
+                    )
+                    understanding_store.attach_features_to_proposal(
+                        conn,
+                        run_id=run_id,
+                        version=version,
+                        source=understanding_store.SOURCE_USER_EDIT,
+                        features=features,
+                    )
+                    written = approvals.approve_limitations_by_owner(
+                        conn,
+                        run_id=run_id,
+                        actor_email=email,
+                        version=version,
+                        features=features,
+                        approved_at=approved_at,
+                    )
+                    field = "limitations_version"
+                    reason = "Technical limitations approved."
+                    response = {
+                        "decomposition_version": written,
+                        "understanding_version": version,
+                        "review_stage": "limitations",
+                        "status": "RESUMING",
+                    }
+                else:
+                    raise ApiError(409, "WRONG_REVIEW_STAGE", f"Unknown review stage {review_stage!r}.")
                 review_store.write_audit(
                     conn,
                     run_id=run_id,
                     actor_email=email,
                     workflow_stage=str(WorkflowGate.A),
-                    field="understanding_version",
+                    field=field,
                     previous_value="",
                     new_value=str(version),
-                    reason="Invention understanding approved.",
+                    reason=reason,
                 )
                 store.begin_resume(
                     conn,
@@ -525,15 +569,12 @@ async def approve_gate_a(
                         "at": approved_at,
                         "approved_by": email,
                     },
-                    dedupe_key=f"resumed:A:v{version}",
+                    dedupe_key=f"resumed:A:{review_stage}:v{version}",
                 )
-                response = {
-                    "decomposition_version": written,
-                    "understanding_version": version,
-                    "status": "RESUMING",
-                }
                 slot.record(200, response)
                 return response
+        except ApiError:
+            raise
         except Exception as error:
             raise to_http(error, run_id=run_id) from error
 

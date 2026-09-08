@@ -175,17 +175,19 @@ export class RunsService {
 
   // --- mutations -----------------------------------------------------------
 
-  /**
-   * Approve the invention understanding: stages 1 and 2, one backend approval.
-   *
-   * A summary and a flat list of element **strings**. No version (the server
-   * mints it), no capability objects, no `core`, no relationships and no
-   * per-element ids -- the ids the stage-2 screen keeps are its own bookkeeping
-   * for tracking rows while editing, and are not part of the contract.
-   */
-  approveGateA(runId: string, summary: string, elements: string[], key: string) {
+  /** Stage 1 approval. Stage 2 is generated only after this succeeds. */
+  approveGateSummary(runId: string, summary: string, key: string) {
     return this.post(`/api/runs/${runId}/gates/A/approve`, {
+      review_stage: 'summary',
       technical_summary: summary,
+      idempotency_key: key,
+    });
+  }
+
+  /** Stage 2 approval of the limitations generated from the approved summary. */
+  approveGateLimitations(runId: string, elements: string[], key: string) {
+    return this.post(`/api/runs/${runId}/gates/A/approve`, {
+      review_stage: 'limitations',
       technical_elements: elements,
       idempotency_key: key,
     });

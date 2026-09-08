@@ -280,8 +280,11 @@ def test_semantic_search_does_not_retrieve_this_requests_own_keyword_hits():
          patch("graph.validation.validate_relevance", side_effect=lambda text, c: [True] * len(c)), \
          patch(
              "graph.ranking.analyze_all_matches",
-             side_effect=lambda description, patents: MatchAnalysis(
-                 rationales=["r"] * len(patents), recommendations=["rec"]
+             side_effect=lambda description, patents, limitations: MatchAnalysis(
+                 rationales=["r"] * len(patents),
+                 recommendations=["rec"],
+                 covered_limitation_ids=[["L1"] for _ in patents],
+                 missing_limitation_ids=[[] for _ in patents],
              ),
          ):
         list(run_graph_pipeline(invention, None))

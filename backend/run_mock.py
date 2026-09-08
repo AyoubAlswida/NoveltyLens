@@ -82,6 +82,8 @@ from models import PatentRecord
 from search.vector_store import QUERY_INSTRUCTION
 from llm import (
     DECOMPOSITION_PROMPT_MARKER,
+    LIMITATIONS_PROMPT_MARKER,
+    SUMMARY_PROMPT_MARKER,
     STRATEGY_PROMPT_MARKER,
 )
 from verification.prompt import PROMPT_MARKER as VERIFIER_MARKER
@@ -610,6 +612,14 @@ def _mock_decomposition() -> str:
     })
 
 
+def _mock_summary() -> str:
+    return json.dumps({"summary": json.loads(_mock_decomposition())["summary"]})
+
+
+def _mock_limitations() -> str:
+    return json.dumps({"features": json.loads(_mock_decomposition())["features"]})
+
+
 def _mock_strategy(prompt: str) -> str:
     """Stand in for `llm.propose_search_strategy`, keyed off the real prompt.
 
@@ -645,8 +655,10 @@ def _mock_strategy(prompt: str) -> str:
         # No elements in the prompt at all. Returning an empty list is the honest
         # answer and `propose_search_strategy` refuses it loudly, which is what
         # should happen: a strategy over nothing is not a strategy.
-        return json.dumps({"queries": []})
-    return json.dumps({"queries": queries})
+        return json.dumps({"domain_anchor": "mock platform", "queries": []})
+    for query in queries:
+        query["query_text"] = "mock platform " + str(query["query_text"])
+    return json.dumps({"domain_anchor": "mock platform", "queries": queries})
 
 
 def _mock_llm_chat(prompt: str, **kwargs: object) -> str:
@@ -674,6 +686,12 @@ def _mock_llm_chat(prompt: str, **kwargs: object) -> str:
     # were the same component doing the same job and both opened with this
     # marker, so matching on it alone answered a relationship request with a
     # whole decomposition. Nothing builds that prompt any more.
+    if SUMMARY_PROMPT_MARKER in prompt:
+        return _mock_summary()
+
+    if LIMITATIONS_PROMPT_MARKER in prompt:
+        return _mock_limitations()
+
     if DECOMPOSITION_PROMPT_MARKER in prompt:
         return _mock_decomposition()
 
@@ -709,6 +727,11 @@ def _mock_llm_chat(prompt: str, **kwargs: object) -> str:
 
     if "expert patent examiner" in prompt:
         count = int(re.search(r"against (\d+) prior-art patents", prompt).group(1))
+        limitation_ids = re.findall(r"^(L\d+):", prompt, flags=re.MULTILINE)
+        if not limitation_ids:
+            raise AssertionError("mock analysis prompt has no reviewed limitation ids")
+        covered_ids = limitation_ids[: max(1, len(limitation_ids) // 2)]
+        missing_ids = [item for item in limitation_ids if item not in covered_ids]
         # `key_overlap` is not optional: as of 3dad9f6b, analyze_all_matches
         # raises if any patent comes back without tags, so omitting them here
         # would fail every mock run at the analyze phase.
@@ -730,6 +753,8 @@ def _mock_llm_chat(prompt: str, **kwargs: object) -> str:
                         f"{index} - no model was called.)"
                     ),
                     "key_overlap": overlap_tags[(index - 1) % len(overlap_tags)],
+                    "covered_limitation_ids": covered_ids,
+                    "missing_limitation_ids": missing_ids,
                 }
                 for index in range(1, count + 1)
             ],

@@ -1,7 +1,7 @@
 import { Component, ChangeDetectionStrategy, input, output, computed } from '@angular/core';
 import { Icon } from '../shared/icon';
 import { ExportMenu } from '../shared/export-menu';
-import { AnalysisReport, Risk } from '../models/report';
+import { AnalysisReport, PatentMatch, Risk } from '../models/report';
 
 @Component({
   selector: 'app-report-screen',
@@ -21,7 +21,13 @@ import { AnalysisReport, Risk } from '../models/report';
           <h1>{{ data().title }}</h1>
           <p>
             Submitted {{ data().date }} &middot; {{ data().query_count }} queries &middot;
-            {{ data().patents.length }} patents scanned
+            {{ data().patents.length }} publications
+            @if (familyCount()) {
+              &middot; {{ familyCount() }} identified patent families
+            }
+            @if (unknownFamilyPublications()) {
+              &middot; {{ unknownFamilyPublications() }} without family metadata
+            }
           </p>
         </div>
         <div class="toolbar-actions">
@@ -69,7 +75,24 @@ import { AnalysisReport, Risk } from '../models/report';
             }
 
             <div class="matches-list">
-              @for (patent of data().patents; track patent.num + patent.title) {
+              @for (family of patentFamilies(); track family.key) {
+                <section
+                  class="patent-family"
+                  [class.patent-family-grouped]="family.identified && (family.members.length > 1 || family.totalSize > 1)"
+                >
+                @if (family.identified && (family.members.length > 1 || family.totalSize > 1)) {
+                  <header class="patent-family-header">
+                    <span>Patent family</span>
+                    <strong>
+                      {{ family.members.length }} matched
+                      {{ family.members.length === 1 ? 'publication' : 'publications' }}
+                    </strong>
+                    @if (family.totalSize > family.members.length) {
+                      <small>{{ family.totalSize }} publications reported in this family</small>
+                    }
+                  </header>
+                }
+              @for (patent of family.members; track patent.num + patent.title) {
                 <a
                   class="patent-card"
                   [attr.href]="patent.url || null"
@@ -83,20 +106,24 @@ import { AnalysisReport, Risk } from '../models/report';
                   </div>
                   <h3 class="patent-title">{{ patent.title }}</h3>
 
-                  <div class="patent-similarity">
-                    <span class="card-label">Novelty risk</span>
-                    <span class="risk-label {{ riskClass(patent.risk) }}">
-                      <i></i>{{ patent.risk }}
-                    </span>
-                  </div>
+                  <div class="patent-details">
+                    <section class="patent-detail-section patent-similarity">
+                      <span class="card-label">Novelty risk</span>
+                      <span class="risk-label {{ riskClass(patent.risk) }}">
+                        <i></i>{{ patent.risk }}
+                      </span>
+                    </section>
 
-                  <div class="patent-summary">
-                    <p class="card-label">Overlap summary</p>
-                    <p>{{ patent.rationale }}</p>
+                    <section class="patent-detail-section patent-summary">
+                      <p class="card-label">Overlap summary</p>
+                      <p>{{ patent.rationale }}</p>
+                    </section>
                   </div>
 
                   <span class="patent-action">View patent &rarr;</span>
                 </a>
+              }
+                </section>
               } @empty {
                 <div class="empty-state padded">No matching patent records were returned.</div>
               }
@@ -171,7 +198,6 @@ import { AnalysisReport, Risk } from '../models/report';
           <div class="section-heading">
             <app-icon name="Sparkles" [size]="24" />
             <div>
-              <p class="eyebrow">AI Recommendation</p>
               <h2>How to make it more unique</h2>
             </div>
           </div>
@@ -208,6 +234,38 @@ export class ReportScreen {
    * could not re-sort even if it wanted to: no similarity number is published.
    */
   readonly topPatent = computed(() => this.data().patents[0]);
+  readonly patentFamilies = computed(() => {
+    const groups = new Map<
+      string,
+      { key: string; identified: boolean; members: PatentMatch[]; totalSize: number }
+    >();
+    for (const patent of this.data().patents) {
+      const familyId = patent.family_id?.trim() ?? '';
+      const key = familyId || `publication:${patent.num}`;
+      const existing = groups.get(key);
+      if (existing) {
+        existing.members.push(patent);
+        existing.totalSize = Math.max(existing.totalSize, patent.family_size ?? 0);
+      } else {
+        groups.set(key, {
+          key,
+          identified: Boolean(familyId),
+          members: [patent],
+          totalSize: patent.family_size ?? 0,
+        });
+      }
+    }
+    return [...groups.values()];
+  });
+  readonly familyCount = computed(
+    () => this.patentFamilies().filter((family) => family.identified).length,
+  );
+  readonly unknownFamilyPublications = computed(
+    () =>
+      this.patentFamilies()
+        .filter((family) => !family.identified)
+        .reduce((count, family) => count + family.members.length, 0),
+  );
 
   riskClass(risk: Risk) {
     return `risk-${risk.toLowerCase()}`;

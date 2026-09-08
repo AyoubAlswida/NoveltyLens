@@ -46,6 +46,10 @@ class PatentRecord:
 
     Empty for providers that only ever return one merged text blob, so a reader
     must not treat an empty list as "this patent has no claims"."""
+    family_id: str = ""
+    """Provider-backed simple-family key. Empty means the provider supplied none."""
+    family_size: int = 0
+    """Total simple-family publications reported by the provider, when known."""
 
 
 @dataclass(slots=True)
@@ -59,10 +63,17 @@ class InventionAnalysis:
 
 @dataclass(slots=True)
 class ComparisonResult:
-    """A patent and its embedding cosine similarity score to an invention."""
+    """A patent and its transient embedding evidence for an invention."""
 
     patent: PatentRecord
     similarity_score: float
+    unit_similarity_scores: list[float] = field(default_factory=list)
+    """Best patent-chunk match for each independently approved invention unit.
+
+    This stays inside execution just like ``similarity_score``.  It exists so a
+    single excellent subsystem match cannot receive a High risk label while
+    most of the invention has no support in that patent.
+    """
 
 @dataclass(slots=True)
 class MatchAnalysis:
@@ -72,6 +83,8 @@ class MatchAnalysis:
 
     rationales: list[str] = field(default_factory=list)
     key_overlaps: list[list[str]] = field(default_factory=list)
+    covered_limitation_ids: list[list[str]] = field(default_factory=list)
+    missing_limitation_ids: list[list[str]] = field(default_factory=list)
     recommendations: list[str] = field(default_factory=list)
 
 

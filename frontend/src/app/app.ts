@@ -520,7 +520,9 @@ export class App {
               this.errorDetail.set(PUBLIC_ERRORS.analysis);
               const phase = event.phase as Phase | undefined;
               this.failedPhase.set(
-                phase && ADVANCED_SEARCH_PHASE_ORDER.includes(phase) ? phase : null,
+                phase && ADVANCED_SEARCH_PHASE_ORDER.includes(phase)
+                  ? phase
+                  : this.currentAdvancedPhase(),
               );
               this.screen.set('error');
               this.finishAdvancedRun(runId);
@@ -554,6 +556,7 @@ export class App {
         }
         if (run.status === 'FAILED') {
           this.errorDetail.set(PUBLIC_ERRORS.analysis);
+          this.failedPhase.set(this.currentAdvancedPhase());
           this.screen.set('error');
           this.finishAdvancedRun(runId);
           return;
@@ -564,6 +567,19 @@ export class App {
       }
       await new Promise((resolve) => setTimeout(resolve, 750));
     }
+  }
+
+  /** Infer the active Advanced Search phase from the checklist currently shown.
+   *
+   * Durable terminal errors intentionally carry only sanitized failure facts and
+   * older stored events do not name a phase. The UI still knows which workflow
+   * segment it released and the latest progress index, so preserve that honest
+   * context instead of claiming that the run failed before any phase reported.
+   */
+  private currentAdvancedPhase(): Phase | null {
+    const order = this.phaseOrder();
+    const index = this.phaseIdx();
+    return index >= 0 && index < order.length ? order[index] : null;
   }
 
   /** Show the review screen for one gate of one run. */
@@ -623,7 +639,8 @@ export class App {
    *
    * The run is `RESUMING`, not running: the executor picks it up on its next
    * stream. Gate A keeps the same editor mounted while the worker proposes the
-   * queries. STRATEGY releases the run into the ordinary execution checklist.
+   * next artifact (limitations after the summary, then queries after the
+   * limitations). STRATEGY releases the run into the ordinary execution checklist.
    */
   afterDecision(gate: WorkflowGate): void {
     const runId = this.reviewRunId();

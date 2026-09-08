@@ -118,7 +118,13 @@ def test_analyze_scales_max_tokens_with_patent_count():
         seen.append(int(kwargs["max_tokens"]))
         return json.dumps({
             "rationales": [
-                {"index": i, "text": f"r{i}", "key_overlap": ["tag a", "tag b"]}
+                {
+                    "index": i,
+                    "text": f"r{i}",
+                    "key_overlap": ["tag a", "tag b"],
+                    "covered_limitation_ids": ["L1"],
+                    "missing_limitation_ids": [],
+                }
                 for i in range(1, PATENT_COUNT + 1)
             ],
             "recommendations": ["rec"],
@@ -128,9 +134,52 @@ def test_analyze_scales_max_tokens_with_patent_count():
     patents = [PatentRecord(id=f"US{i}", title=f"t{i}") for i in range(PATENT_COUNT)]
 
     with patch("llm._llm_chat", side_effect=capture):
-        llm.analyze_all_matches("an invention", patents)
+        llm.analyze_all_matches("an invention", patents, ["the invention"])
 
     assert seen[0] > 3200, f"12 patents should ask for more than the old flat 3200, got {seen[0]}"
+
+
+def test_overlap_and_recommendation_prompt_requires_grounded_gaps():
+    captured: dict[str, str] = {}
+
+    def answer(prompt: str, **kwargs: object) -> dict:
+        captured["prompt"] = prompt
+        return {
+            "rationales": [{
+                "index": 1,
+                "text": "It shares measured soil-moisture control. It does not disclose spectral nutrient diagnosis.",
+                "key_overlap": ["soil moisture control", "adaptive watering", "watering duration"],
+                "covered_limitation_ids": ["L1"],
+                "missing_limitation_ids": ["L2"],
+            }],
+            "recommendations": ["Preserve the spectral diagnosis and dosing relationship."],
+        }
+
+    patent = PatentRecord(
+        id="US1",
+        title="Moisture controlled irrigation",
+        full_text="A soil sensor controls irrigation duration.",
+        family_id="lens-simple-family-one",
+    )
+    with patch("llm._llm_json", side_effect=answer):
+        result = llm.analyze_all_matches(
+            "soil and spectral plant control",
+            [patent],
+            ["soil-moisture control", "spectral nutrient diagnosis"],
+        )
+
+    prompt = captured["prompt"]
+    assert "Simple family: lens-simple-family-one" in prompt
+    assert "important reviewed limitations" in prompt
+    assert "missing from the supplied excerpt" in prompt
+    assert "Never imply full-invention coverage" in prompt
+    assert "without adding a category prefix" in prompt
+    assert "Optional enhancement:" not in prompt
+    assert "do not recommend merely re-claiming a conventional subsystem" in prompt
+    assert "directly discloses its complete technical relationship" in prompt
+    assert result.rationales[0].endswith("spectral nutrient diagnosis.")
+    assert result.covered_limitation_ids == [["L1"]]
+    assert result.missing_limitation_ids == [["L2"]]
 
 
 # --------------------------------------------------------------------------

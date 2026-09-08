@@ -1,4 +1,4 @@
-import { Component, ChangeDetectionStrategy, input, output, signal, ElementRef, viewChild } from '@angular/core';
+import { Component, ChangeDetectionStrategy, effect, input, output, signal, ElementRef, viewChild } from '@angular/core';
 import { Icon } from '../shared/icon';
 
 /** Every file type accepted here is parsed to plain text entirely in the
@@ -34,9 +34,10 @@ const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.pdf', '.docx'];
           (drop)="onDrop($event)"
         >
           <textarea
+            #descriptionTextarea
             id="invention-description"
             [value]="description()"
-            (input)="descriptionChange.emit($any($event.target).value)"
+            (input)="onDescriptionInput($event)"
             maxlength="2000"
             rows="6"
             placeholder="Describe your invention in plain language: what it does, how it works, and what makes it different from what already exists…"
@@ -46,14 +47,11 @@ const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.pdf', '.docx'];
                browser then silently truncates. -->
 
           <!--
-            Attach lives INSIDE the box, bottom-left, the way a composer does.
-            It was a full-width outlined button underneath, which gave the form
-            three stacked rows of controls and made attaching look like a step
-            of equal weight to running the search. It is an option on the
-            description, so it sits on the description.
-
-            The drop target is still the whole wrap, so dragging a file anywhere
-            over the box works exactly as before.
+            Attach and Advanced stay grouped with the description, but live in
+            normal document flow below the textarea. An absolutely positioned
+            toolbar can cover the final line when a long value scrolls inside
+            the field. The drop target remains the whole wrap, so dragging onto
+            either the field or this compact toolbar still works.
           -->
           <div class="composer-tools">
             <input
@@ -178,10 +176,30 @@ export class SubmitScreen {
   }
 
   readonly fileInputRef = viewChild<ElementRef<HTMLInputElement>>('fileInput');
+  readonly descriptionTextarea = viewChild<ElementRef<HTMLTextAreaElement>>('descriptionTextarea');
+
+  /** Re-measure after Angular applies values originating outside the textarea
+   * itself, including an uploaded file or a description restored from history. */
+  private readonly resizeDescriptionEffect = effect(() => {
+    const textarea = this.descriptionTextarea()?.nativeElement;
+    this.description();
+    if (textarea) queueMicrotask(() => this.resizeDescription(textarea));
+  });
 
   readonly uploadedFileName = signal('');
   readonly uploadError = signal('');
   readonly dragActive = signal(false);
+
+  onDescriptionInput(event: Event) {
+    const textarea = event.target as HTMLTextAreaElement;
+    this.resizeDescription(textarea);
+    this.descriptionChange.emit(textarea.value);
+  }
+
+  private resizeDescription(textarea: HTMLTextAreaElement) {
+    textarea.style.height = 'auto';
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }
 
   onFileInputChange(event: Event) {
     const input = event.target as HTMLInputElement;

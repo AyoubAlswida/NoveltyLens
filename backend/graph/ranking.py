@@ -11,10 +11,11 @@ for any patent, and on an empty recommendation list.  Every one of those must
 fail the request: a match card with an invented or blank explanation is a claim
 about prior art that nothing actually examined.
 
-The similarity score is **transient execution data**.  It is still computed - it
-is how ranking works - and it is used for exactly two things before being
-discarded: it orders the matches, and it selects the High/Medium/Low novelty
-risk rating.  It reaches neither the ``result`` event nor the stored row.
+The embedding similarity score and excerpt-grounded limitation coverage are
+**transient execution data**. Similarity orders the matches; coverage returned
+by the existing explanation call helps select the High/Medium/Low novelty risk
+before both are discarded. Neither reaches the ``result`` event nor the stored
+row.
 ``search_run_matches.rank`` is the only surviving record of the order it
 produced, which is why nothing may reorder those rows on read.
 
@@ -32,9 +33,51 @@ from models import ComparisonResult
 MAX_RESULTS = 15
 """Matches the cap the legacy pipeline applies in ``backend/server.py``."""
 
+HIGH_SCORE_THRESHOLD = 0.75
+MEDIUM_SCORE_THRESHOLD = 0.45
+HIGH_COVERAGE_RATIO = 0.75
+MEDIUM_COVERAGE_RATIO = 0.50
+
+
+def _risk_for(
+    result: ComparisonResult,
+    covered_limitation_ids: list[str],
+    total_limitations: int,
+) -> str:
+    """Rate a patent from similarity plus excerpt-grounded limitation coverage.
+
+    A High rating requires at least three quarters of the independently
+    approved limitations to have a substantive match somewhere in this same
+    patent.  The rule is domain-neutral: it uses the reviewed limitations, not
+    smoke-detector vocabulary or a model-authored coverage claim.
+    """
+    if total_limitations <= 0:
+        raise ValueError("novelty risk requires reviewed technical limitations")
+    unique_covered = set(covered_limitation_ids)
+    if len(unique_covered) != len(covered_limitation_ids):
+        raise ValueError("novelty risk coverage contains duplicate limitation ids")
+    if len(unique_covered) > total_limitations:
+        raise ValueError("novelty risk coverage exceeds reviewed technical limitations")
+    coverage_ratio = len(unique_covered) / total_limitations
+    broad_coverage = coverage_ratio >= HIGH_COVERAGE_RATIO
+    if result.similarity_score >= HIGH_SCORE_THRESHOLD and broad_coverage:
+        return "High"
+    # A strong hit on one isolated subsystem is still narrow prior art. Medium
+    # requires both meaningful aggregate similarity and coverage of at least
+    # half of the independently approved limitations.
+    if result.similarity_score < MEDIUM_SCORE_THRESHOLD:
+        return "Low"
+    if coverage_ratio < MEDIUM_COVERAGE_RATIO:
+        return "Low"
+    return "Medium"
+
 
 def format_matches(
-    comparisons: list[ComparisonResult], rationales: list[str], key_overlaps: list[list[str]]
+    comparisons: list[ComparisonResult],
+    rationales: list[str],
+    key_overlaps: list[list[str]],
+    covered_limitation_ids: list[list[str]],
+    total_limitations: int,
 ) -> list[dict[str, object]]:
     """Build the ``patents[]`` entries of the ``result`` event.
 
@@ -43,33 +86,34 @@ def format_matches(
     silently blank an explanation. ``analyze_all_matches`` already refuses to
     return a short list for either, so this only guards against future drift.
 
-    The score is read here and published nowhere.  The thresholds are the ones
-    that have always applied - ``>= 75`` High, ``<= 25`` Low, Medium between -
-    and their boundaries are pinned by test, so ``<= 25`` must not be tidied
-    into ``< 25``: that moves a real patent from Low to Medium.
+    The aggregate embedding score and the excerpt-grounded structured coverage
+    are read here and published nowhere. High requires both ``>= 75`` and broad
+    support in the same patent excerpt. Medium requires both ``>= 45`` aggregate
+    similarity and coverage of at least half the limitations. Narrow subsystem
+    overlap is Low regardless of how strongly that isolated subsystem matches.
     """
     scored: list[tuple[float, dict[str, object]]] = []
-    for result, rationale, tags in zip(comparisons, rationales, key_overlaps, strict=True):
+    for result, rationale, tags, covered_ids in zip(
+        comparisons, rationales, key_overlaps, covered_limitation_ids, strict=True
+    ):
         patent = result.patent
-        score = max(0, min(100, int(result.similarity_score * 100)))
         scored.append((
             result.similarity_score,
             {
                 "num": patent.id,
                 "title": patent.title,
-                "risk": "High" if score >= 75 else "Low" if score <= 25 else "Medium",
+                "risk": _risk_for(result, covered_ids, total_limitations),
                 "rationale": rationale,
                 "key_overlap": tags,
                 "source": patent.source or "live",
                 "url": patent.url,
+                "family_id": patent.family_id,
+                "family_size": patent.family_size,
             },
         ))
     # One global descending sort on the raw float, replacing the old sort on the
-    # truncated percent. The rating is a monotonic function of the score, so this
-    # single sort already yields "strongest first" *and* leaves the ratings
-    # grouped -- grouping first and sorting within groups would reach the same
-    # order by a more fragile route. Sorting the float rather than the int also
-    # drops the tie-breaking subtlety the truncated key used to rely on.
+    # truncated percent. Risk also considers coverage breadth, but ranking stays
+    # global by aggregate relevance; grouping by label would corrupt that order.
     scored.sort(key=lambda item: item[0], reverse=True)
     return [entry for _, entry in scored]
 
@@ -78,7 +122,9 @@ def rank_node(state: GraphState) -> dict:
     """Score every candidate against the invention and keep the top matches."""
     candidates = state["candidates"]
     emit_progress("compare", f"Scoring {len(candidates)} candidates for similarity…")
-    comparisons = compare_invention_to_patents(state["invention_text"], candidates)
+    comparisons = compare_invention_to_patents(
+        state["invention_text"], candidates, state.get("similarity_units")
+    )
     return {"comparisons": comparisons[:MAX_RESULTS]}
 
 
@@ -98,7 +144,12 @@ def explain_node(state: GraphState) -> dict:
         current=0,
         total=len(patents),
     )
-    match_analysis = analyze_all_matches(state["description"], patents)
+    limitations = [
+        str(value).strip()
+        for value in (state.get("similarity_units") or [state["description"]])
+        if str(value).strip()
+    ]
+    match_analysis = analyze_all_matches(state["description"], patents, limitations)
     emit_progress(
         "analyze",
         f"Writing detailed analysis… {len(patents)}/{len(patents)}",

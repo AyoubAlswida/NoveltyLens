@@ -651,6 +651,7 @@ button {
 }
 
 .textarea-wrap textarea {
+  display: block;
   width: 100%;
   min-height: 114px;
   resize: vertical;
@@ -669,27 +670,19 @@ button {
 .textarea-wrap-primary textarea {
   min-height: 176px;
   border-color: var(--teal);
-  /* Clears the attach row that sits inside the box. Scoped to `-primary`,
-     which only the submit page uses -- the stage-1 summary box shares
-     `.textarea-wrap` and has no tools, so it must not gain dead space. */
-  padding-bottom: 52px;
+  overflow-y: hidden;
+  resize: none;
 }
 
-/* The composer row: inside the field, bottom-left, out of the text's way. */
+/* Keep the composer controls below the editable area in normal flow. This
+   guarantees that long or internally scrolled text can never sit behind them. */
 .composer-tools {
-  position: absolute;
-  left: 14px;
-  right: 14px;
-  bottom: 12px;
   display: flex;
   align-items: center;
   gap: 10px;
+  margin-top: 8px;
+  padding: 0 6px;
   flex-wrap: wrap;
-  pointer-events: none;
-}
-
-.composer-tools > * {
-  pointer-events: auto;
 }
 
 .composer-options {
@@ -900,9 +893,8 @@ button {
   border: 0;
 }
 
-/* `.upload-row` and `.upload-button` were removed: the attach control moved
-   inside the description box (see `.composer-tools`), so the full-width
-   outlined button underneath it has no markup left. */
+/* `.upload-row` and `.upload-button` were removed: the compact attach control
+   now lives beside the Advanced switch (see `.composer-tools`). */
 
 
 .upload-chip {
@@ -1329,6 +1321,17 @@ button {
   align-self: flex-start;
 }
 
+/* Keep the useful summary in view while the much longer patent list scrolls.
+   Unlike the previous sticky experiment, this introduces no max-height,
+   overflow, or nested scrollbar: the card keeps its natural height and the
+   page remains the only scrolling surface. */
+@media (min-width: 1001px) {
+  .report-col-right {
+    position: sticky;
+    top: 20px;
+  }
+}
+
 .summary-card,
 .matches-card,
 .recommendations-card {
@@ -1563,6 +1566,48 @@ button {
   margin-bottom: 20px;
 }
 
+.matches-list {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  background: #f6f9fa;
+}
+
+.patent-family {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.patent-family-grouped {
+  padding: 0.85rem;
+  border: 1px solid color-mix(in srgb, var(--teal, #12aaa5) 42%, var(--border));
+  border-left: 4px solid var(--teal, #12aaa5);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--teal, #12aaa5) 4%, transparent);
+}
+
+.patent-family-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.45rem 0.8rem;
+  color: var(--text-muted);
+}
+
+.patent-family-header > span {
+  padding: 0.22rem 0.55rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--teal, #12aaa5) 14%, transparent);
+  color: var(--teal-dark, #087f7b);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.patent-family-header > strong { color: var(--text); }
+.patent-family-header > small { margin-left: auto; }
+
 .section-heading {
   padding: 22px 24px;
   display: flex;
@@ -1600,8 +1645,11 @@ button {
 
 .patent-card {
   display: block;
-  padding: 20px 24px;
-  border-bottom: 1px solid #e6edf1;
+  padding: 20px;
+  border: 1px solid #dbe5ea;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 3px 10px rgba(20, 48, 72, 0.055);
   color: inherit;
   text-decoration: none;
   cursor: pointer;
@@ -1610,6 +1658,7 @@ button {
 
 .patent-card:hover {
   background: rgba(38, 168, 171, 0.06);
+  border-color: rgba(38, 168, 171, 0.34);
 }
 
 .patent-card:hover .patent-title {
@@ -1628,10 +1677,6 @@ button {
 
 .patent-card:not([href]):hover .patent-title {
   text-decoration: none;
-}
-
-.patent-card:last-child {
-  border-bottom: 0;
 }
 
 .patent-meta {
@@ -1660,15 +1705,38 @@ button {
   overflow: hidden;
 }
 
-/* One row: the "Novelty risk" label on the left, the rating on the right.
-   Replaces the old header/bar/label stack -- `.patent-similarity-header` and
-   its mono `strong` held the percentage and went with it. */
+.patent-details {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.patent-detail-section {
+  padding: 12px 14px;
+  border: 1px solid rgba(8, 168, 115, 0.18);
+  border-left: 3px solid var(--green-dark);
+  border-radius: 8px;
+  background: rgba(8, 168, 115, 0.035);
+}
+
+.patent-detail-section .card-label {
+  color: var(--green-dark);
+  font-weight: 700;
+}
+
+/* A dedicated section: the "Novelty risk" label on the left, the semantic
+   High/Medium/Low badge on the right. The section uses green for hierarchy;
+   the badge keeps red/amber/green because its colour communicates risk. */
 .patent-similarity {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: center;
   gap: 12px;
-  margin-bottom: 16px;
+}
+
+.patent-similarity .card-label,
+.patent-summary .card-label {
+  margin: 0;
 }
 
 .overlap-tags {
@@ -1691,7 +1759,7 @@ button {
 }
 
 .patent-summary p:not(.card-label) {
-  margin: 0;
+  margin: 7px 0 0;
   color: #687b92;
   font-size: 12.5px;
   line-height: 1.55;
@@ -2705,7 +2773,9 @@ button {
    These rules survived the rename pointing at a class no template uses any
    more, so the new card had a light `#e6edf1` divider on a dark surface. */
 :root[data-theme="dark"] .patent-card {
-  border-bottom-color: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.11);
+  background: var(--card);
+  box-shadow: none;
 }
 
 /* The light hover is a 5% green wash, which is all but invisible on grey and
@@ -2713,6 +2783,21 @@ button {
    dark hover surface. */
 :root[data-theme="dark"] .patent-card:hover {
   background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(103, 194, 196, 0.34);
+}
+
+:root[data-theme="dark"] .matches-list {
+  background: var(--aramco-gray);
+}
+
+:root[data-theme="dark"] .patent-detail-section {
+  border-color: rgba(22, 201, 141, 0.26);
+  border-left-color: var(--green);
+  background: rgba(22, 201, 141, 0.07);
+}
+
+:root[data-theme="dark"] .patent-detail-section .card-label {
+  color: var(--green-dark);
 }
 
 :root[data-theme="dark"] .risk-legend {

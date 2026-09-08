@@ -122,6 +122,48 @@ describe('ReportScreen', () => {
     expect(ratings).toEqual(['High', 'Medium', 'Low']);
   });
 
+  it('separates novelty risk and overlap summary into distinct sections', () => {
+    const fixture = mountReport(report());
+    const card = html(fixture).querySelector('.patent-card')!;
+    const sections = [...card.querySelectorAll('.patent-detail-section')];
+
+    expect(sections).toHaveLength(2);
+    expect(sections[0].classList.contains('patent-similarity')).toBe(true);
+    expect(sections[1].classList.contains('patent-summary')).toBe(true);
+    expect(sections[0].textContent).toContain('Novelty risk');
+    expect(sections[1].textContent).toContain('Overlap summary');
+  });
+
+  it('renders each patent as a separate card in the matches list', () => {
+    const fixture = mountReport(
+      report({ patents: [match({ num: 'US1' }), match({ num: 'US2' })] }),
+    );
+    const list = html(fixture).querySelector('.matches-list')!;
+
+    expect(list.querySelectorAll('.patent-card')).toHaveLength(2);
+  });
+
+  it('groups matched publications from the same patent family visibly', () => {
+    const fixture = mountReport(
+      report({
+        patents: [
+          match({ num: 'US-FAMILY', family_id: 'family-1', family_size: 4 }),
+          match({ num: 'EP-FAMILY', family_id: 'family-1', family_size: 4 }),
+          match({ num: 'JP-OTHER', family_id: 'family-2', family_size: 1 }),
+        ],
+      }),
+    );
+    const root = html(fixture);
+    const grouped = root.querySelector('.patent-family-grouped')!;
+
+    expect(root.querySelectorAll('.patent-family')).toHaveLength(2);
+    expect(grouped.querySelectorAll('.patent-card')).toHaveLength(2);
+    expect(grouped.textContent).toContain('2 matched publications');
+    expect(grouped.textContent).toContain('4 publications reported in this family');
+    expect(text(fixture)).toContain('3 publications');
+    expect(text(fixture)).toContain('2 identified patent families');
+  });
+
   it('renders matches in the order given, without re-sorting', () => {
     // The order arrives already correct -- from the backend live, from
     // `search_run_matches.rank` out of History -- and there is no score left to
@@ -154,6 +196,13 @@ describe('ReportScreen', () => {
     // ...and it still says so plainly rather than rendering an empty shell.
     expect(root.querySelector('.empty-state')).not.toBeNull();
     expect(text(fixture)).toContain('No matching patent records were returned.');
+  });
+
+  it('does not label the recommendations as AI-generated', () => {
+    const fixture = mountReport(report());
+
+    expect(text(fixture)).toContain('How to make it more unique');
+    expect(text(fixture)).not.toContain('AI Recommendation');
   });
 });
 

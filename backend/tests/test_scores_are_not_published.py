@@ -69,7 +69,7 @@ def _numeric_ratings(payload):
     Catches a percentage returning under an innocent name. ``query_count`` is
     excluded by name because it is a genuine count, not a rating.
     """
-    allowed_numeric_keys = {"query_count", "rank"}
+    allowed_numeric_keys = {"query_count", "rank", "family_size"}
     return [
         (path, key, value)
         for path, key, value in _walk(payload)
@@ -122,8 +122,11 @@ def _match_with_score(similarity: float) -> dict:
     comparison = ComparisonResult(
         patent=PatentRecord(id="US1A", title="A patent", abstract="", source="Google Patents"),
         similarity_score=similarity,
+        unit_similarity_scores=[similarity],
     )
-    return format_matches([comparison], ["a rationale"], [["a tag"]])[0]
+    return format_matches(
+        [comparison], ["a rationale"], [["a tag"]], [["L1"]], 1
+    )[0]
 
 
 @pytest.mark.parametrize(
@@ -131,7 +134,7 @@ def _match_with_score(similarity: float) -> dict:
     [
         (75, "High"),
         (74, "Medium"),
-        (26, "Medium"),
+        (26, "Low"),
         (25, "Low"),
         # The ends, so a future refactor cannot satisfy the boundaries above by
         # accident while inverting the scale.
@@ -139,13 +142,7 @@ def _match_with_score(similarity: float) -> dict:
         (0, "Low"),
     ],
 )
-def test_the_risk_thresholds_hold_at_their_boundaries(percent, expected):
-    """``>= 75`` High, ``<= 25`` Low, Medium between.
-
-    Pinned at the boundaries because ``<= 25`` reads like a typo for ``< 25``
-    and tidying it moves a real patent from Low to Medium. 75 and 25 are the
-    values that change meaning if anyone does.
-    """
+def test_the_aggregate_risk_thresholds_hold_at_their_boundaries(percent, expected):
     assert _match_with_score(percent / 100)["risk"] == expected
 
 
@@ -159,6 +156,7 @@ def test_matches_are_ordered_strongest_first_without_a_published_score():
         ComparisonResult(
             patent=PatentRecord(id=f"US{index}A", title=f"Patent {index}", abstract="", source="x"),
             similarity_score=similarity,
+            unit_similarity_scores=[similarity],
         )
         for index, similarity in enumerate([0.30, 0.90, 0.10, 0.60])
     ]
@@ -166,9 +164,99 @@ def test_matches_are_ordered_strongest_first_without_a_published_score():
         comparisons,
         [f"rationale {i}" for i in range(4)],
         [[f"tag {i}"] for i in range(4)],
+        [["L1"] for _ in range(4)],
+        1,
     )
 
     assert [match["num"] for match in formatted] == ["US1A", "US3A", "US0A", "US2A"]
     # And the ratings come out grouped as a side effect of that single sort,
     # which is why section 5.2 forbids grouping first and sorting within groups.
-    assert [match["risk"] for match in formatted] == ["High", "Medium", "Medium", "Low"]
+    assert [match["risk"] for match in formatted] == ["High", "Medium", "Low", "Low"]
+
+
+def test_a_strong_subsystem_match_is_not_rated_high_without_broad_coverage():
+    comparison = ComparisonResult(
+        patent=PatentRecord(id="US-SUBSYSTEM", title="Partial match"),
+        similarity_score=0.88,
+        unit_similarity_scores=[0.92, 0.87, 0.81, 0.30, 0.22, 0.18],
+    )
+
+    match = format_matches(
+        [comparison], ["matches only the known subsystem"], [[]],
+        [["L1", "L2", "L3"]], 6,
+    )[0]
+
+    assert match["risk"] == "Medium"
+
+
+def test_a_strong_match_with_broad_limitation_coverage_can_be_high():
+    comparison = ComparisonResult(
+        patent=PatentRecord(id="US-BROAD", title="Broad match"),
+        similarity_score=0.82,
+        unit_similarity_scores=[0.84, 0.79, 0.76, 0.73, 0.68, 0.31],
+    )
+
+    match = format_matches(
+        [comparison], ["matches five of six limitations"], [[]],
+        [["L1", "L2", "L3", "L4", "L5"]], 6,
+    )[0]
+
+    assert match["risk"] == "High"
+
+
+def test_a_weak_match_to_only_one_limitation_is_low():
+    comparison = ComparisonResult(
+        patent=PatentRecord(id="US-WEAK-PARTIAL", title="Weak partial match"),
+        similarity_score=0.48,
+        unit_similarity_scores=[0.61, 0.31, 0.28, 0.22],
+    )
+
+    match = format_matches(
+        [comparison], ["weakly matches one limitation"], [[]], [["L1"]], 4
+    )[0]
+
+    assert match["risk"] == "Low"
+
+
+def test_a_strong_match_to_only_one_limitation_is_low():
+    comparison = ComparisonResult(
+        patent=PatentRecord(id="US-STRONG-PARTIAL", title="Strong partial match"),
+        similarity_score=0.52,
+        unit_similarity_scores=[0.78, 0.34, 0.29, 0.24],
+    )
+
+    match = format_matches(
+        [comparison], ["strongly matches one limitation"], [[]], [["L1"]], 4
+    )[0]
+
+    assert match["risk"] == "Low"
+
+
+@pytest.mark.parametrize(
+    ("similarity", "expected"),
+    [(0.45, "Medium"), (0.44, "Low")],
+)
+def test_medium_requires_the_aggregate_score_boundary_and_half_coverage(
+    similarity, expected
+):
+    comparison = ComparisonResult(
+        patent=PatentRecord(id="US-MEDIUM-BOUNDARY", title="Coverage boundary"),
+        similarity_score=similarity,
+        unit_similarity_scores=[0.62, 0.58, 0.31, 0.24],
+    )
+
+    match = format_matches(
+        [comparison], ["matches two of four limitations"], [[]], [["L1", "L2"]], 4
+    )[0]
+
+    assert match["risk"] == expected
+
+
+def test_risk_refuses_missing_reviewed_limitations():
+    comparison = ComparisonResult(
+        patent=PatentRecord(id="US-NO-PROFILE", title="Missing profile"),
+        similarity_score=0.80,
+    )
+
+    with pytest.raises(ValueError, match="reviewed technical limitations"):
+        format_matches([comparison], ["cannot be rated"], [[]], [[]], 0)

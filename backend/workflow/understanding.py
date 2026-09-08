@@ -165,6 +165,40 @@ def record_proposal_if_absent(
     return str(row[0]) if row else None
 
 
+def attach_features_to_proposal(
+    conn: psycopg.Connection,
+    *,
+    run_id: str,
+    version: int,
+    source: str,
+    features: Sequence[dict[str, Any]],
+) -> None:
+    """Attach Stage-2 output to the already-recorded Stage-1 proposal.
+
+    The conditional update makes recovery idempotent while refusing to overwrite
+    a different limitations proposal at the same audited version.
+    """
+    row = conn.execute(
+        """
+        UPDATE understanding_proposals
+           SET features = %s::jsonb
+         WHERE run_id = %s AND version = %s AND source = %s
+           AND features = '[]'::jsonb
+        RETURNING id
+        """,
+        (json.dumps(list(features)), run_id, version, source),
+    ).fetchone()
+    if row is not None:
+        return
+    existing = conn.execute(
+        """SELECT features FROM understanding_proposals
+             WHERE run_id = %s AND version = %s AND source = %s""",
+        (run_id, version, source),
+    ).fetchone()
+    if existing is None or list(existing[0] or []) != list(features):
+        raise ValueError("understanding proposal limitations conflict at the same version")
+
+
 def next_version(conn: psycopg.Connection, *, run_id: str) -> int:
     """The version a new proposal should take: one past the highest that exists.
 
@@ -299,4 +333,5 @@ __all__ = [
     "proposal_history",
     "record_proposal",
     "record_proposal_if_absent",
+    "attach_features_to_proposal",
 ]

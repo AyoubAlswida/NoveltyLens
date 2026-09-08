@@ -34,8 +34,11 @@ GATES_SOURCE = BACKEND / "graph" / "gates.py"
 # --- every gate is wired, and the list is derived ---------------------------
 
 
-def test_the_live_gates_are_exactly_the_two_advanced_search_pauses():
-    """Advanced Search pauses twice: the understanding, then the search queries.
+def test_the_live_gate_names_are_exactly_the_two_advanced_search_gates():
+    """Advanced Search pauses three times under two durable gate names.
+
+    Summary and limitations are two independent pauses at Gate A; search queries
+    pause at STRATEGY.
 
     Was `set(GATE_NODES) == set(WorkflowGate)`. The enum is deliberately WIDER
     than the graph now -- `B`/`C`/`D` remain members so a legacy run parked at one
@@ -103,15 +106,16 @@ def test_an_advanced_search_run_ends_after_explain():
 def test_gate_a_precedes_the_search_that_uses_its_decomposition():
     """Nothing is searched for against requirements nobody approved.
 
-    The path is now longer by one approved stage: an approved understanding leads
-    to `propose_strategy`, and the search is reached only through that stage's own
-    gate. The invariant is unchanged and stronger -- there are two approvals in
-    front of the first provider call rather than one -- so this asserts the path
-    rather than a single edge that no longer exists.
+    The path is now longer by two approved stages: the approved summary leads to
+    limitation generation and its own pause, then the approved limitations lead
+    to the query strategy. There are three approvals in front of the first
+    provider call, so this asserts the complete path.
     """
     edges = {(edge.source, edge.target) for edge in build_graph().get_graph().edges}
     assert ("decompose", "gate_a") in edges
-    assert ("gate_a", "propose_strategy") in edges
+    assert ("gate_a", "propose_limitations") in edges
+    assert ("propose_limitations", "gate_limitations") in edges
+    assert ("gate_limitations", "propose_strategy") in edges
     assert ("propose_strategy", "gate_strategy") in edges
     assert ("gate_strategy", "prepare_approved_search") in edges
     assert ("prepare_approved_search", "search_orchestrator") in edges
@@ -119,14 +123,14 @@ def test_gate_a_precedes_the_search_that_uses_its_decomposition():
     assert ("gate_a", "search_orchestrator") not in edges
 
 
-def test_no_provider_call_is_reachable_before_both_approvals():
+def test_no_provider_call_is_reachable_before_all_three_approvals():
     """**The property the SEARCH STRATEGY stage exists for.**
 
     `search_orchestrator` is the first node that can reach a provider. On the
     verified branch it must be reachable only from `prepare_approved_search`,
     which is reachable only from `gate_strategy`, then `propose_strategy`, then
-    `gate_a`. Any other incoming edge would be a path to a provider call that
-    skips one of the two approvals -- and it would be silent, because a run that
+    `gate_limitations`, then the first `gate_a`. Any other incoming edge would be
+    a path to a provider call that skips one of the three approvals -- and it would be silent, because a run that
     searched early would look exactly like one that searched on time.
 
     `expand_queries` is the search-only branch and is asserted separately: that
@@ -145,10 +149,21 @@ def test_no_provider_call_is_reachable_before_both_approvals():
     assert into_strategy_gate == {"propose_strategy"}
 
     into_propose = {source for source, target in edges if target == "propose_strategy"}
-    # `gate_a` alone. This set used to also carry `regenerate_strategy`; with
+    # `gate_limitations` alone. This set used to also carry
+    # `regenerate_strategy`; with
     # regeneration removed from the product (spec section 10.2) the chain is
     # strictly TIGHTER than it was, not looser -- one way in, from the gate.
-    assert into_propose == {"gate_a"}
+    assert into_propose == {"gate_limitations"}
+
+    into_limitations_gate = {
+        source for source, target in edges if target == "gate_limitations"
+    }
+    assert into_limitations_gate == {"propose_limitations"}
+
+    into_limitations = {
+        source for source, target in edges if target == "propose_limitations"
+    }
+    assert into_limitations == {"gate_a"}
 
     into_gate_a = {source for source, target in edges if target == "gate_a"}
     assert into_gate_a == {"decompose"}
