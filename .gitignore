@@ -18,6 +18,7 @@ Thumbs.db
 .video_review/
 docs/.pptx_build/
 docs/.pptx_workflow_build/
+docs/.pptx-build-*/
 backend/acceptance/*.log
 
 # Per-machine assistant settings; never share these with the repository.

@@ -22,6 +22,15 @@ external APIs, ranks them by similarity, and returns an LLM-written rationale pe
 plus drafting recommendations. There are two independent processes — a FastAPI backend
 and an Angular frontend — with no shared tooling; each is run and developed separately.
 
+**A separate portable deployment target lives in `aramco_portable/`.** It is a
+standard-library-only Python 3.13 application with its own browser UI and SQLite history,
+intended for an Aramco computer where Docker, Node.js, and third-party Python packages are
+unavailable. It calls the MetaBrain chat and embedding endpoints plus Lens directly and
+retains the same zero-tolerance failure policy. It does not share the FastAPI/LangGraph/
+PostgreSQL/Qdrant runtime described below. `install_aramco_portable.py` is a self-extracting
+transfer package containing that directory and no credentials; see its README for the
+session-only environment variables and network limitation.
+
 **Two ways to run a search.**
 
 - **Quick Search** (`POST /api/analyze[/stream]`) — the description goes straight to the
