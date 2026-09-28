@@ -1,0 +1,107 @@
+{
+  "description": "An automatic dry-pet-food dispenser with a rotating body containing several equal-sized compartments, each closed by a spring-loaded trap door at the bottom. A drive mechanism periodically withdraws a support bar holding a trap door shut, letting that compartment's food fall by gravity through a directional trough into the pet's bowl below, dispensing one measured portion at a time on a schedule. UNIQUE ADDITION (not in the source patent): the dispenser also has a small load cell built into the bowl itself that weighs how much food the pet actually ate versus how much was dispensed, and if a portion goes mostly uneaten for several consecutive feedings, it automatically reduces future portion sizes and sends a low-appetite alert to the owner's phone.",
+  "concepts": [
+    "rotating body defines multiple equal-sized food compartments",
+    "each compartment is closed at the bottom by a spring-loaded trap door",
+    "a drive mechanism periodically withdraws a support bar that holds a trap door shut",
+    "released food falls by gravity through a directional trough into the bowl below",
+    "the dispenser meters one measured portion at a time on a schedule",
+    "a load cell built into the bowl measures food actually eaten versus food dispensed",
+    "if a portion remains mostly uneaten for several consecutive feedings, future portion sizes are reduced",
+    "when low appetite is detected, an alert is sent to the owner's phone"
+  ],
+  "query_count": 8,
+  "patents": [
+    {
+      "num": "US5109799A",
+      "title": "Automatic dry pet food dispenser",
+      "risk": "Medium",
+      "rationale": "This excerpt shares measured dry-food dispensing from like-sized compartments using bottom trap-door panels, a withdrawing draw bar, and a directional trough that drops food into a bowl on a timed basis. It does not disclose bowl load-cell measurement of eaten versus dispensed food, adaptive reduction of future portions after repeated leftovers, or any low-appetite phone alert.",
+      "key_overlap": ["equal-sized compartments", "trap-door release", "timed gravity dispensing"],
+      "source": "Lens.org",
+      "url": "https://patents.google.com/patent/US5109799A/en"
+    },
+    {
+      "num": "EP3858135A1",
+      "title": "ROTARY DISPENSER",
+      "risk": "Low",
+      "rationale": "This excerpt shares a rotatable turntable that ejects a treat through a housing opening when an actuator is manipulated. It does not disclose equal-sized rotating food compartments, spring-loaded trap doors, scheduled measured portions, bowl load sensing, leftover-based portion reduction, or a low-appetite phone alert.",
+      "key_overlap": ["rotary dispensing", "actuated treat release"],
+      "source": "Lens.org",
+      "url": "https://patents.google.com/patent/EP3858135A1/en"
+    },
+    {
+      "num": "US8448602B2",
+      "title": "Pet actuated dry food feeder device",
+      "risk": "Low",
+      "rationale": "This excerpt shares a hopper-based dry-food release using a flapper trap door, linkages, and an angled chute that directs food outward. It does not disclose a rotating compartment body, bottom spring-loaded compartment doors, timed measured portions, bowl load-cell feedback, adaptive portion reduction, or phone alerts.",
+      "key_overlap": ["dry-food release", "trap door", "angled chute"],
+      "source": "Lens.org",
+      "url": "https://patents.google.com/patent/US8448602B2/en"
+    },
+    {
+      "num": "US6405674B1",
+      "title": "Cabinet for feed products",
+      "risk": "Low",
+      "rationale": "This excerpt shares a programmed feeder that releases shelves sequentially through a motor-driven jackscrew and lever assemblies at timed intervals. It does not disclose rotating equal-sized compartments, trap-door bottoms, gravity trough dispensing, bowl load-cell intake measurement, adaptive portion reduction, or phone alerts.",
+      "key_overlap": ["programmed feeding", "timed motor-driven release"],
+      "source": "Lens.org",
+      "url": "https://patents.google.com/patent/US6405674B1/en"
+    },
+    {
+      "num": "US20260130340A1",
+      "title": "Smart Automatic Pet Feeder with Refrigeration and Water Filtration",
+      "risk": "Low",
+      "rationale": "This excerpt shares a gravity chute that dispenses pet food into a bowl and a mobile app that monitors feeding schedules and portion sizes. It does not disclose rotating equal-sized compartments, spring-loaded trap doors, support-bar release, bowl load-cell measurement of eaten versus dispensed food, adaptive reduction after repeated leftovers, or a low-appetite alert based on intake.",
+      "key_overlap": ["gravity food chute", "feeding schedule", "mobile app"],
+      "source": "Lens.org",
+      "url": "https://patents.google.com/patent/US20260130340A1/en"
+    },
+    {
+      "num": "US20080264963A1",
+      "title": "Automatic pellets dispenser with closing exit",
+      "risk": "Low",
+      "rationale": "This excerpt shares timer-controlled metering of pellets, where one cycle of the moving platform dispenses a measured amount into a bowl. It does not disclose rotating equal-sized compartments, spring-loaded trap doors, a withdrawing support bar, trough-guided gravity drop, bowl load-cell feedback, adaptive portion reduction, or phone alerts.",
+      "key_overlap": ["timer-controlled dispensing", "measured bowl portion"],
+      "source": "Lens.org",
+      "url": "https://patents.google.com/patent/US20080264963A1/en"
+    },
+    {
+      "num": "US20240081278A1",
+      "title": "AUTOMATIC ANIMAL FEEDING SYSTEM FOR SELF DISPOSING OF USED FOOD PODS",
+      "risk": "Low",
+      "rationale": "This excerpt shares a rotating pod and chamber arrangement that moves food pods and routes them toward sensing or disposal locations. It does not disclose equal-sized compartment metering, spring-loaded bottom trap doors, a support bar release, bowl-based weight measurement of eaten versus dispensed food, adaptive portion reduction, or a low-appetite phone alert.",
+      "key_overlap": ["rotating food pods", "automated food handling"],
+      "source": "Lens.org",
+      "url": "https://patents.google.com/patent/US20240081278A1/en"
+    },
+    {
+      "num": "US12022809B2",
+      "title": "Automatic pet feeder",
+      "risk": "Low",
+      "rationale": "This excerpt shares a food supply passage with a reciprocating food releasing assembly and optional remote control. It does not disclose rotating equal-sized compartments, spring-loaded trap doors, measured scheduled portions, bowl load-cell monitoring, adaptive reduction after uneaten feedings, or low-appetite alerts to a phone.",
+      "key_overlap": ["food release passage", "remote control"],
+      "source": "Lens.org",
+      "url": "https://patents.google.com/patent/US12022809B2/en"
+    },
+    {
+      "num": "US11013214B2",
+      "title": "Methods and systems for monitoring and feeding a pet",
+      "risk": "Low",
+      "rationale": "This excerpt shares a pet feeder with a bowl, food receptacles, dispenser and collar sensors, wireless monitoring, and controller-selected measured portions. It does not disclose a rotating body of equal-sized compartments, spring-loaded bottom trap doors released by withdrawing a support bar, bowl-load-cell comparison of eaten versus dispensed food, repeated-leftover portion reduction, or the claimed low-appetite phone alert.",
+      "key_overlap": ["pet monitoring", "sensor-informed portion size", "measured dispensing"],
+      "source": "Lens.org",
+      "url": "https://patents.google.com/patent/US11013214B2/en"
+    }
+  ],
+  "recommendations": [
+    "Tie the bowl load cell to a per-feeding tare-and-settle routine that records only post-dispense consumption, so the system can distinguish actual eating from transient bowl movement or kibble bounce.",
+    "Add a multi-feeding intake trend rule that reduces portion size only after a defined number of consecutive low-consumption events, with an additional check against body-weight or activity baseline to avoid false appetite alarms.",
+    "Log each compartment release with a compartment-index identifier and a delivered-mass estimate, then reconcile that log against the bowl weight trace to confirm that the scheduled portion was actually dispensed and consumed.",
+    "Include a trap-door position sensor or support-bar travel sensor that confirms a full release event before the controller marks the portion as delivered, and trigger a retry or jam alert if the release signature is incomplete.",
+    "Use a density-calibration table or learnable kibble-mass profile so that the scheduled portion is converted from volume to true mass for each food type before adaptive portion reduction is applied.",
+    "Send the low-appetite alert only after packaging the last several feeding events into a concise trend report that includes dispensed mass, consumed mass, and the portion-reduction history.",
+    "Add a caregiver override that freezes automatic portion reduction until the owner or veterinarian approves a new appetite baseline after illness, medication, or food change.",
+    "Correlate the bowl weight signal with a brief post-dispense stabilization window and a leftover-threshold check before issuing the alert, so uneaten food sitting in the bowl is distinguished from food that was merely eaten slowly."
+  ]
+}

@@ -72,6 +72,11 @@ def initial_input(run: dict[str, Any]) -> dict[str, Any]:
         # The owner, so worker-side reads stay ownership-scoped rather than
         # running with an empty actor.
         "created_by": run.get("created_by") or "",
+        # Version 1 is retained for checkpoints/runs admitted before the
+        # two-stage flow. New rows receive version 2 from the database default.
+        "advanced_search_flow_version": int(
+            run.get("advanced_search_flow_version") or 1
+        ),
         # **Normalized to an ISO string here, at the seam.** `verification_runs.
         # cutoff_date` is a SQL `DATE`, so psycopg hands back a `datetime.date`,
         # while `GraphState.cutoff_date` is typed `str | None` and

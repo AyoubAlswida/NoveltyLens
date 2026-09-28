@@ -52,7 +52,7 @@ from graph.understanding import (
 )
 from graph.validation import validate_node
 from graph.gates import gate_a_node, gate_limitations_node, gate_strategy_node
-from graph.strategy import propose_strategy_node
+from graph.strategy import propose_strategy_node, select_generated_queries_node
 from graph.verification_nodes import decompose_features_node, propose_limitations_node
 
 # NOT imported, and deliberately: `graph/evidence_nodes.py`,
@@ -85,6 +85,12 @@ def _route_from_start(state: GraphState) -> str:
     return "decompose" if state.get("advanced_search") else "understand"
 
 
+def _route_after_strategy_proposal(state: GraphState) -> str:
+    """Keep pre-version-2 runs on their durable human-review route."""
+    version = int(state.get("advanced_search_flow_version") or 1)
+    return "select_generated_queries" if version >= 2 else "gate_strategy"
+
+
 def _assemble() -> StateGraph:
     """The topology. **One graph, conditional routing** -- never two pipelines.
 
@@ -95,9 +101,11 @@ def _assemble() -> StateGraph:
     same phases, which is what keeps today's SSE stream byte-identical.
 
     **An Advanced Search run rejoins the ordinary pipeline and ends with it.**
-    After `gate_strategy`, `prepare_approved_search` converts the reviewed
-    summary, limitations, and queries into the ordinary search state without an
-    LLM call. It then runs `search_orchestrator -> keyword_search -> validate ->
+    After the two invention reviews, flow version 2 generates and validates its
+    queries automatically. Legacy flow version 1 still pauses at `gate_strategy`.
+    `prepare_approved_search` then converts the approved summary, requirements,
+    and selected queries into ordinary search state without an LLM call. It runs
+    `search_orchestrator -> keyword_search -> validate ->
     rank -> explain` and terminates. Gates B, C and D, the evidence layer and the
     draft report were removed when feature verification was withdrawn.
 
@@ -164,9 +172,10 @@ def _assemble() -> StateGraph:
     # A search-only run never enters any node below, which is what keeps today's
     # SSE stream byte-identical.
     #
-    # Three Human-in-the-Loop pauses presented as three stages. The first two
-    # share durable Workflow Gate A but approve different artifacts in sequence:
-    # summary first, then limitations generated from that approved summary.
+    # Two Human-in-the-Loop pauses presented as two stages. They share durable
+    # Workflow Gate A but approve different artifacts in sequence: summary first,
+    # then requirements generated from that approved summary. `gate_strategy`
+    # remains registered only so version-1 checkpoints can resume.
     builder.add_node("decompose", decompose_features_node)
 
     # Each gate calls `interrupt()`. LangGraph commits a checkpoint and raises
@@ -179,6 +188,7 @@ def _assemble() -> StateGraph:
     builder.add_node("propose_limitations", propose_limitations_node)
     builder.add_node("gate_limitations", gate_limitations_node)
     builder.add_node("propose_strategy", propose_strategy_node)
+    builder.add_node("select_generated_queries", select_generated_queries_node)
     builder.add_node("gate_strategy", gate_strategy_node)
     builder.add_node("prepare_approved_search", prepare_approved_search_node)
 
@@ -187,25 +197,28 @@ def _assemble() -> StateGraph:
     builder.add_edge("decompose", "gate_a")
 
     # **A plain edge, not a router.** Regeneration was removed from the product:
-    # editing the summary, the elements and the queries replaces it, so a gate
-    # has exactly one way out and there is no rejection branch to route to. The
-    # approved summary leads to limitation generation and its own pause. Only
-    # the approved limitations lead to the SEARCH STRATEGY stage; the search is
-    # reached only after its separate approval.
+    # editing the summary and requirements replaces them, so each Gate-A pause
+    # has exactly one way out. The approved summary leads to requirement
+    # generation and its own pause. Approved requirements then lead to query
+    # generation; only legacy flow version 1 adds another human review.
     builder.add_edge("gate_a", "propose_limitations")
     builder.add_edge("propose_limitations", "gate_limitations")
     builder.add_edge("gate_limitations", "propose_strategy")
 
     # --- The SEARCH STRATEGY stage ---------------------------------------
     #
-    # `propose_strategy` reads the APPROVED understanding and proposes queries;
-    # `gate_strategy` pauses for a person and, on resume, writes `queries` from
-    # the approved strategy. `search_orchestrator` is reachable from nowhere else
-    # on this branch, which is what makes "no provider call before both
-    # approvals" a property of the graph rather than a convention -- the node has
-    # exactly two incoming edges, `expand_queries` and `prepare_approved_search`,
-    # and `tests/test_workflow_gates.py` asserts that count by name.
-    builder.add_edge("propose_strategy", "gate_strategy")
+    # New runs release validated machine-generated queries automatically. Runs
+    # admitted before flow version 2 retain the old query-review checkpoint and
+    # endpoints, including checkpoints already parked inside `gate_strategy`.
+    builder.add_conditional_edges(
+        "propose_strategy",
+        _route_after_strategy_proposal,
+        {
+            "select_generated_queries": "select_generated_queries",
+            "gate_strategy": "gate_strategy",
+        },
+    )
+    builder.add_edge("select_generated_queries", "prepare_approved_search")
     builder.add_edge("gate_strategy", "prepare_approved_search")
     builder.add_edge("prepare_approved_search", "search_orchestrator")
 

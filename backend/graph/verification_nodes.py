@@ -183,9 +183,9 @@ def propose_limitations_node(state: GraphState) -> dict[str, Any]:
     summary = str(state.get("approved_summary") or "").strip()
     if not summary:
         raise UnapprovedArtifactError(
-            "technical limitations cannot be generated before the summary is approved"
+            "invention requirements cannot be generated before the summary is approved"
         )
-    emit_progress("decompose", "Generating technical limitations from your approved summary…")
+    emit_progress("decompose", "Generating invention requirements from your approved summary…")
     features = llm.propose_technical_limitations(
         summary, max_elements=MAX_PROPOSED_SEARCH_LIMITATIONS
     )

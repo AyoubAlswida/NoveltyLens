@@ -267,17 +267,17 @@ export class GateShell {
 
   readonly displayTitle = computed(() => {
     if (this.state() !== 'resuming') return this.title();
-    if (this.current() === 1) return 'Preparing your technical limitations';
+    if (this.current() === 1) return 'Preparing your invention requirements';
     if (this.current() === 2) return 'Preparing your search strategy';
     return 'Starting your prior-art search';
   });
 
   readonly transitionMessage = computed(() => {
     if (this.current() === 1) {
-      return 'We’re turning your approved invention summary into focused technical limitations for you to review.';
+      return 'We’re turning your approved invention summary into focused invention requirements for you to review.';
     }
     if (this.current() === 2) {
-      return 'We’re creating focused search queries from the technical limitations you approved.';
+      return 'We’re creating focused search queries from the invention requirements you approved.';
     }
     return 'We’re starting the searches you approved. Results will appear here when they’re ready.';
   });

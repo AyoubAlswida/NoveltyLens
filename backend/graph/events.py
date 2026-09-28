@@ -37,7 +37,6 @@ ADVANCED_SEARCH_PHASES: tuple[str, ...] = (
     "decompose",
     "gate_a",
     "strategy",
-    "gate_strategy",
     "search",
     "filter",
     "enrich",
@@ -45,20 +44,25 @@ ADVANCED_SEARCH_PHASES: tuple[str, ...] = (
     "compare",
     "analyze",
 )
-"""The exact progress route for a durable Advanced Search."""
+"""The exact progress route for a current durable Advanced Search."""
 
 
 PHASES: tuple[str, ...] = tuple(
     dict.fromkeys(
-        (*QUICK_SEARCH_PHASES, *ADVANCED_SEARCH_PHASES, "semantic_search", "fuse")
+        (
+            *QUICK_SEARCH_PHASES,
+            *ADVANCED_SEARCH_PHASES,
+            "gate_strategy",  # legacy flow-version-1 checkpoints
+            "semantic_search",
+            "fuse",
+        )
     )
 )
 """The complete progress vocabulary (membership, not one route's order).
 
 The frontend declares matching ``QUICK_SEARCH_PHASE_ORDER`` and
-``ADVANCED_SEARCH_PHASE_ORDER`` lists. A single checklist order is invalid:
-Advanced Search pauses for two reviews before it rejoins the ordinary search,
-while Quick Search never enters those review stages.
+``ADVANCED_SEARCH_PHASE_ORDER`` lists. ``gate_strategy`` remains in membership
+for legacy checkpoints but is not part of the current Advanced Search order.
 
 ``semantic_search`` and ``fuse`` remain valid names while their nodes are
 disabled, but neither route lists them until those nodes are re-enabled.

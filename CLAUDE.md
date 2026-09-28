@@ -37,14 +37,13 @@ session-only environment variables and network limitation.
   pipeline. Inline execution driven by the HTTP request: no run row, no lease, no event log.
 - **Advanced Search** (`POST /api/runs`) — the same search, preceded by guided editing. The
   system first proposes a technical summary for a person to edit and approve. Only then
-  does it generate a focused flat list of searchable technical limitations from that
-  approved summary; the person reviews those separately; the system proposes queries that combine
-  compatible limitations; the person edits and approves those;
-  the approved queries are then executed by the *same* pipeline and the *same* report is
+  does it generate a focused flat list shown as **Invention Requirements (Claims)**; the
+  person reviews those separately. The system then generates and validates queries and
+  executes them automatically through the *same* pipeline; the same report is
   displayed. Durable: a run row, a lease, an event log and a separate worker process.
 
-**What the product does not do**, as of 2026-09-01
-(`docs/decisions/2026-09-01-advanced-search-three-stages.md`):
+**What the product does not do**, updated by
+`docs/decisions/2026-09-14-advanced-search-two-stages.md`:
 
 - **No feature-disclosure verification.** The five-gate reviewed workflow — the candidate
   set, the feature × publication matrix, its cells, the evidence passages and the drafted
@@ -57,8 +56,10 @@ session-only environment variables and network limitation.
   They order the matches and select a per-patent High/Medium/Low **novelty risk** rating,
   then are discarded. `High` requires both an aggregate score of at least 0.75 and direct
   excerpt support for at least 75% of the independently reviewed invention units. `Medium`
-  requires an aggregate score of at least 0.45 and direct excerpt support for at least 40%
-  of the units; narrower or weaker overlap is `Low`. A report with no matches carries **no
+  requires an aggregate score of at least 0.45 and either direct excerpt support for at
+  least 40% of the units, or direct support for one unit plus substantive embedding
+  evidence across two independently meaningful units. An isolated or only semantically
+  similar subsystem remains `Low`. A report with no matches carries **no
   rating at all**.
 
 ## Commands
@@ -78,7 +79,7 @@ session-only environment variables and network limitation.
   the same worker automatically as its `worker` service.
   See "Durable workflow execution" below.
 - Compact finished runs' progress events: `python -m workflow.cleanup` (`--dry-run` first).
-- **Run it without spending quota: `python run_mock.py`** (`--fast` to drop the pacing delays, `--port` to move it). Serves the real app on 8001 with only the metered boundaries stubbed. See the mock-mode section below before changing it.
+- **Run the isolated presentation mock without spending quota:** use `docker-compose.mock.yml` alongside the base Compose file. It serves the same frontend on 4201 and mock API on 8002 with separate Postgres and Qdrant. First-run schema commands are in the overlay header.
 - Run the tests: `python -m pytest` from `backend/` (config in `backend/pytest.ini`, which sets `pythonpath = .` because the modules import each other flat, e.g. `from config import settings`). The suite is `backend/tests/`. `backend/tests/conftest.py` stubs embeddings, Qdrant **and Postgres** (autouse, for every test) alongside the existing `_llm_chat`/`SOURCES` stubs — `compare.py`'s ranking, the semantic-search path and `persist_run` are all unconditionally on the happy path, so the suite still needs no credentials, makes no network calls, and needs no running database. `test_phase3_agents.py` covers Semantic Search, Fusion, and Validation individually; `test_history.py` covers persistence and `GET /api/history`; `test_auth.py` covers password hashing, token signing/expiry, and the endpoint gate. This is not yet the full P3.8 failure-path matrix (LLM failure, single-provider failure, Qdrant/embeddings outage, zero-similarity are covered for the parts that existed pre-Phase-3; a dedicated outage-injection suite for the new agents is still open).
 - **The Postgres double is a dict, not a SQL engine.** `tests/fakes.py`'s `FakeReportStore` stands in at the `reports.py` seam, so it pins the *call* contract and nothing about the SQL. A CHECK constraint, a foreign key, or a column that does not exist is invisible to it — schema changes have to be exercised against the real Compose Postgres by hand.
 - **Some tests need the real database and say so.** Everything marked `postgres` (`tests/test_lease_races.py`, `test_run_status_machine.py`, `test_event_authority.py`, `test_lease_lifecycle.py`, `test_terminal_replay.py`, `test_node_attempts.py`, `test_workflow_executor.py`, `test_migrations.py`, and the rest of the workflow suite) asserts a property of the SQL — a constraint, a trigger, the mandatory lock order, a lease race, an expiry boundary, a cascade — that the in-memory double structurally cannot exhibit. They **skip with a printed reason** when the Compose Postgres is unreachable or unmigrated, and a skipped run of them is a skipped run, never evidence that they passed.
@@ -218,7 +219,10 @@ a raw `authorizedFetch` POST to `/api/analyze/stream` and reads the SSE body dir
 that file's own comment on why `EventSource` is unusable — it can carry neither a POST body
 nor an auth header). `frontend/src/app/models/report.ts` declares separate chronological
 phase orders for Quick Search and Advanced Search; both are subsets of the backend's
-phase vocabulary and drive the running/error checklists for the selected branch. The SSE
+phase vocabulary. The running screen groups execution phases into four fixed,
+non-numeric user-facing stages (planning, searching, evaluating prior art, and
+preparing the analysis), while the raw orders still locate progress and failures.
+Advanced Search's pre-review summary screen remains separate. The SSE
 contract is load-bearing production behavior now, not a spec kept correct for a future
 wiring-up. Every event has a
 `type` of `progress` | `result` | `error`. `progress.phase` is one of the values in
@@ -227,6 +231,14 @@ exactly one `result` event (data shape:
 `patents[].{num,title,risk,rationale,key_overlap,url,source}` plus `title`, `date`,
 `concepts`, `recommendations`, `query_count`) or a client reading
 the stream would throw.
+
+The `search` phase emits a progress event after each real provider response is
+collected: `current` and `total` count completed and planned (query, provider)
+requests, and `received` counts raw patent records returned so far. The final
+`search` event reports distinct candidates. These events do not estimate
+remaining time or animate a percentage. The running screen advances its grouped
+checklist only from SSE events, ignores numeric event messages in visible labels,
+and does not display elapsed-time counters.
 
 **Adding a field to `patents[]` is a three-place change, not one.** It has to be produced
 (`graph/ranking.py`'s `format_matches`), *persisted* (`reports.py` — `save_report` writes it
@@ -276,11 +288,18 @@ enabled* — accurate as design intent, not as what a request currently exercise
   that the frontend omits hides real work.
 
 - `understanding.py` — Query Understanding + Query Expansion over `llm.py`.
-  Quick Search asks for five deliberately balanced queries: two views of the core
-  mechanism, one distinctive-feature query, one combined-interaction query, and one
-  broader patent-wording query that retains a concrete core feature. This is prompt
-  guidance rather than a brittle lexical rejection rule, and adds no LLM or Lens call.
-  Contains no `except`: a failed or malformed LLM response fails the request.
+  Quick Search requires exactly five distinct, non-blank model-planned queries: two views
+  of the core mechanism, one distinctive-feature query, one combined-interaction query,
+  and one broader patent-wording query that retains a concrete core feature. Expansion
+  then adds at most three **lexical mechanism anchors**, formed mechanically from the
+  user's leading domain phrase and overlapping adjacent keyword-phrase pairs. Concepts
+  fill slots only when there are too few keyword pairs. This is an
+  always-on, visible part of the retrieval plan—not a result-dependent fallback—and is
+  capped at eight total queries. It adds no LLM call and at most three Lens calls. The
+  anchors protect recall when a semantic paraphrase omits the exact component vocabulary
+  of an older source patent; their construction knows no patent number or domain-specific
+  terms. Contains no `except`: a failed, malformed, incomplete, or duplicate LLM query
+  plan fails the request.
 - `searching.py` — Search Orchestrator, Keyword Search, and Semantic Search. Keyword search
   fails the whole request if any one provider fails, via `search_all_providers_strict` in
   `backend/search/search.py`. It also enriches results with full text
@@ -317,8 +336,10 @@ enabled* — accurate as design intent, not as what a request currently exercise
   source may displace the other, because compact structural disclosure often appears only in
   the abstract. `High` requires at least 75% direct coverage plus the 0.75 aggregate floor;
   `Medium`
-  requires at least 40% direct coverage plus the 0.45 aggregate floor; otherwise narrow or
-  weak overlap is `Low`. Advanced Search supplies its reviewer-approved technical limitations as
+  requires the 0.45 aggregate floor plus either 40% direct coverage or one directly
+  covered unit and at least two units with meaningful chunk similarity (0.55).
+  Semantic breadth alone cannot establish disclosure; one isolated unit remains `Low`.
+  Advanced Search supplies its reviewer-approved technical limitations as
   the invention units; Quick Search uses the technical concepts returned by its existing
   understanding call, falling back to 180-word chunks only when that list is empty.
   Each chunked document includes title, abstract, and available full text; full text never
@@ -354,10 +375,9 @@ empty result set would state a finding the run did not make.
 **Feature-disclosure verification was withdrawn from the product on 2026-09-01**
 (`docs/decisions/2026-09-01-advanced-search-three-stages.md`). What replaced it is
 **Advanced Search**: a standard prior-art search preceded by guided editing. The system
-proposes a technical summary, waits for its approval, then generates a focused flat list of searchable technical limitations from that approved summary;
-a person edits and approves them; the system proposes queries that normally combine two or
-three compatible limitations; the person edits and approves those;
-the approved queries are then executed by the ordinary search pipeline and the ordinary
+proposes a technical summary, waits for its approval, then generates a focused flat list of
+Invention Requirements (Claims) from that approved summary. A person edits and approves
+them; the system proposes, validates, and automatically executes queries through the ordinary search pipeline. The ordinary
 report is displayed. It performs **no** evidence verification, makes **no** legal
 conclusion, and presents **no** numeric score.
 
@@ -372,10 +392,11 @@ The flag is `advanced_search`, renamed from `verification_requested` with **no a
 dual-read period**: it is an internal contract with one repository consumer.
 
 ```
-START -> understand -> expand_queries ----------------------┐
-START -> decompose -> gate_a -> propose_strategy            │
-       -> gate_strategy -> prepare_approved_search ----------┤
-                                                            v
+START -> understand -> expand_queries -----------------------┐
+START -> decompose -> gate_a -> propose_limitations          │
+       -> gate_limitations -> propose_strategy               │
+       -> select_generated_queries -> prepare_approved_search┤
+                                                             v
              search_orchestrator -> keyword_search -> validate
              -> rank -> explain -> END
 ```
@@ -397,12 +418,13 @@ durable executor then persists the report and the terminal result atomically; se
 are not, and leaving them commented would invite someone to uncomment a path whose API,
 screens and tests no longer exist. Git history is the record.
 
-**The approval boundary survives unchanged, and is the point of the branch.**
+**The approval boundary remains strict for artifacts called approved.**
 `backend/workflow/approvals.py` is still the **only** module that writes an approved
 artifact, and `tests/test_approval_boundary.py` enforces that at the AST level. A row in
 `feature_decompositions` or `approved_search_strategies` exists because a named human, at a
-recorded time, said it should. Reads filter `is_approved` **in SQL**: an unapproved row is
-not fetched and then rejected, it is not fetched.
+recorded time, said it should. Flow-version-2 query proposals are machine output and remain
+in `search_strategy_proposals`; the automatic selector writes execution state only and
+never fabricates a row in an approval table.
 
 **The resume value is a signal, never a decision.** Each gate node discards `interrupt()`'s
 return value and re-reads the approved artifact through those readers. It travels through an
@@ -411,19 +433,18 @@ those three points would be approving. `tests/test_workflow_gates.py` asserts at
 level that no gate node captures the return value and that none calls an approval writer.
 
 **`search_orchestrator` has exactly two incoming edges** — `expand_queries` (the Quick
-Search branch) and `prepare_approved_search` (the Advanced branch, reachable only after
-`gate_strategy`). That is what makes "no provider call before all three approvals" a
-property of the graph rather than a convention, and
-`test_no_provider_call_is_reachable_before_all_three_approvals` asserts the count by name.
-The Advanced chain is deliberately sequential: `decompose -> gate_a ->
-propose_limitations -> gate_limitations -> propose_strategy -> gate_strategy`. Stage 2 is
-therefore generated only from the exact summary approved at Stage 1.
+Search branch) and `prepare_approved_search` (the Advanced branch). The latter has two
+versioned inputs: `select_generated_queries` for current runs and `gate_strategy` for
+legacy runs. Both sit behind `decompose -> gate_a -> propose_limitations ->
+gate_limitations -> propose_strategy`, so no provider call can occur before the two
+invention approvals. Stage 2 is generated only from the exact summary approved at Stage 1.
 
-**What the three pauses approve, and how it is stored.** The public payloads are flat
+**What the two current pauses approve, and how it is stored.** The public payloads are flat
 (spec §4.2): Gate `A` first carries only `original_description` and
 `technical_summary`; after that summary is approved, Gate `A` pauses again with
-`technical_elements` (a list of **strings**) generated from the approved summary. Gate
-`STRATEGY` carries `queries` (a list of **strings**). No capability objects, no `core`, no
+`technical_elements` (a list of **strings**) generated from the approved summary. The UI
+names this second artifact **Invention Requirements (Claims)**. Gate `STRATEGY` carries
+`queries` only for legacy flow-version-1 runs. No capability objects, no `core`, no
 relationships, no per-element or per-query ids, no enable/disable, no coverage claim.
 `api/runs.py` translates that into storage:
 
@@ -436,28 +457,27 @@ relationships, no per-element or per-query ids, no enable/disable, no coverage c
 - `decomposition_relationships` gets **no rows**. Relationships are gone from the product,
   and `llm.regenerate_relationships`, `RELATIONSHIP_PROMPT_MARKER` and the
   `DANGLING_RELATIONSHIP_REFERENCE` check went with them;
-- one `approved_strategy_queries` row per query, ids minted `Q1..Qn`, **every one enabled**.
+- for legacy runs only, one `approved_strategy_queries` row per approved query. Current
+  generated queries remain machine proposals and are copied only into graph execution state.
 
 Core semantics are **never exposed**: no API response, no screen and no export mentions
 core, and `tests/test_flat_public_payloads.py` greps the two payload builders and fails on
 a hit.
 
-**Exactly three blocking rules, and nothing else blocks** (spec §3.5):
+**Exactly two user-review blocking rules in the current flow:**
 
 1. the technical summary must not be empty after trimming;
 2. at least one non-empty technical element;
-3. at least one non-empty search query.
-
-`workflow/review.py` is the binding check; the reviewer's on-screen list pairs one-to-one
-and in the same order with `GATE_A_RULES` / `GATE_STRATEGY_RULES`, and
-`tests/test_frontend_review_contract.py` compares the counts. **Both sides shrink
-together** — a check with no rule beside it refuses an approval for a reason the screen
-never showed.
+Generated queries are validated after Stage 2: the proposal must match the approved
+understanding version and every generated query must be non-empty and enabled. Any failure
+fails the run before provider contact; it is not turned into a partial query set. The
+legacy strategy screen retains its own non-empty-query approval rule.
 
 **The coverage rule is gone, and that is a real reduction worth stating.** It guaranteed
 every core element was searched for, so "no prior art found" could not rest on a search
 nobody performed for part of the invention. Advanced Search makes no such guarantee and
-states no such conclusion: it shows the queries to a person and asks them to approve them.
+states no such conclusion. Current runs execute the validated generated query set; legacy
+runs still expose it for human review.
 
 **The inventor's description is never rewritten.** Not by a proposal, not by an edit, not by
 an approval. `verification_runs.description` is the source input; the approved summary is
@@ -469,10 +489,11 @@ and the stage-1 screen renders it as a `<p>`, never as a form control.
 **Thirty-four tables now, created by `backend/migrations/` (yoyo, applied with
 `python migrate.py`), plus four more that yoyo deliberately does not own.** The first four
 below are the original search schema and are the only ones the *search* endpoints touch.
-Migrations `0006`-`0023` add the durable-workflow schema; `0021` adds the invention
+Migrations `0006`-`0026` add the durable-workflow schema; `0021` adds the invention
 understanding stage's three tables and the two optional Stage 1 columns on
 `verification_runs` (see "The Invention Understanding stage" below), and `0022`/`0023` add
-the search strategy stage (see "The Search Strategy stage").
+the search strategy stage. `0026` adds `advanced_search_flow_version`: existing rows are
+backfilled as version 1, then the default changes to version 2 for new two-stage runs.
 
 **`0022` exists only to add one enum label, and it is deliberately non-transactional.**
 `ALTER TYPE ... ADD VALUE` cannot have its new label *used* by any statement in the
@@ -807,28 +828,28 @@ secret field needs the same declaration — `tests/test_secrets_do_not_leak.py` 
 the dataclass, not on today's values, because an empty field would pass a value check while
 still leaking wherever it is set.
 
-### The three stages, and a real frontend test runner
+### The two-stage Advanced Search UI, and a real frontend test runner
 
-`frontend/src/app/screens/advanced-search-stages.ts` is **one component owning all three
-stages**, plus `gate-shell.ts` (the shared frame, the **twelve** states, `STAGE_LABELS` and
+`frontend/src/app/screens/advanced-search-stages.ts` is **one component owning the two
+current stages plus legacy Stage 3 compatibility**, with `gate-shell.ts` (the shared frame,
+the **twelve** states, `STAGE_LABELS` and
 `classify`). It replaced `understanding-review.ts` and `strategy-review.ts`, which replaced
 one generic editor before them.
 
-**Why one component for three stages.** Stages 1 and 2 are a single backend approval (the
-summary, stage 2 approves the generated limitations, and stage 3 approves the strategy — three approvals, three screens —
-but the three screens are one flow a person walks forward and back through, so the drafts
-live in one place. Splitting them would put the drafts behind a router or a shared store
-purely so that pressing Back could find them again.
+Current runs show two reviews. The legacy query editor stays in the same component because
+version-1 runs may already be parked at `STRATEGY` and must remain resumable.
 
 - **Stage 1** — the inventor's description read-only beside an editable technical summary.
-- **Stage 2** — a flat, editable list of searchable technical limitations: add, edit,
-  delete. The machine aims for 4–7 compound limitations, keeps relationships/triggers in
-  the same line, and uses fewer rather than padding with generic components. The proposal
+- **Stage 2: Invention Requirements (Claims)** — a flat, editable list of searchable
+  technical requirements: add, edit,
+  delete. The machine aims for 4–7 independently checkable technical relationships,
+  keeps each trigger with its action but separates otherwise distinct core operations,
+  and uses fewer rather than padding with generic components. The proposal
   explicitly identifies the combination-critical mechanism before writing JSON: an
   addition, comparison, trigger, absence-of-a-corresponding-signal condition, or coordinated
   output stays in one limitation instead of being fragmented into component nouns. This is
   a search-quality instruction, not a claim that the inventor's stated addition is novel.
-- **Stage 3** — a plain, editable list of search query strings. The proposal normally
+- **Legacy Stage 3** — a plain, editable list of search query strings. The proposal normally
   combines 2–3 compatible approved limitations per query instead of emitting one query per
   isolated noun. `propose_search_strategy` enforces that a majority of proposed queries
   genuinely cover two or three limitations: each claimed limitation must contribute at
@@ -847,20 +868,21 @@ purely so that pressing Back could find them again.
   inserts the minimum missing approved vocabulary needed by the lexical audit before the
   query is shown. It does not add a coverage id or make another LLM request; unknown ids
   still fail at the approval gate.
-- Each renders `1 / 3`, `2 / 3`, `3 / 3` as **rendered text**, not an aria-label.
+- Current runs render `Step 1 of 2` and `Step 2 of 2` as text. Legacy runs at STRATEGY
+  retain `Step 3 of 3`.
 
-**Navigation preserves every edit.** Only two transitions mutate anything: leaving stage 2
-the first time, and leaving stage 3. `1 -> 2` calls no
-approval endpoint, which is asserted rather than assumed — a stage that quietly approved on
-its way past would make "Next" an approval the reviewer never recognised as one.
+**Navigation preserves every edit.** Stage 1 approval generates Stage 2. Leaving Stage 2
+approves the requirements and, for current runs, returns to the running screen while the
+system generates queries. Legacy runs instead continue to their query review.
 
 **The shell owns one durable SSE watcher for the whole run.** After the understanding
 approval the component emits which approval committed; the shell reconnects from the last
-event id and changes the same mounted component's `gate` input when STRATEGY pauses. The
+event id. Current runs leave review after Stage 2; when a legacy STRATEGY pause arrives the
+shell changes the same mounted component's `gate` input. The
 component does not run its own poller, so there is one authority for progress, pauses,
 terminal results and failures. Keeping the component mounted preserves stage 1 and 2 drafts.
-`understandingApproved` makes a later `2 -> 3` plain navigation, so walking back and forward
-cannot attempt a second approval.
+`understandingApproved` keeps legacy backward/forward navigation from attempting a second
+approval.
 
 **Twelve states, and collapsing any two would report one situation as another** — the
 backend's zero-tolerance policy, moved into the UI: `loading` (not `empty`), `empty` (a real
@@ -881,7 +903,8 @@ the wire field is typed `StoredGate`, which is wider. That split is what forces 
 blank review screen. The run's data is retained; there is simply no way to carry it forward.
 
 **`npm test` runs Vitest through `@angular/build:unit-test`** — **50** specs covering the API
-client, the SSE reader, the cursor, account-namespaced run persistence, the three stages and
+client, the SSE reader, the cursor, account-namespaced run persistence, both current stages,
+legacy Stage 3 and
 the report. `vitest.config.ts` pins `pool: 'threads'` because the default `forks` pool never
 starts a worker on this machine. `@types/node` is a declared devDependency: `tsconfig.spec.json`
 requires the `node` type library, and without it the specs do not compile after a clean install.
@@ -897,14 +920,15 @@ them — each named part of the verification matrix, and a translation table for
 screen shows reads as evidence that some screen still shows them. The Python enums behind
 them are retained.
 
-### The three-stage mock, and how an Advanced Search run is exercised for free
+### The two-stage mock, and how an Advanced Search run is exercised for free
 
-**`python run_mock.py --workflow` is the deterministic three-stage mock**, and it is what
+**`python run_mock.py --workflow` is the deterministic two-stage mock**, and it is what
 makes every claim above checkable at zero cost. It serves the real application with the real
 graph, the real executor, the real lease, the real event log and the real database, and stubs
 only the metered boundaries: discovery, EPO enrichment, and the LLM. A run admitted against
-it pauses twice at Workflow Gate A (summary, then limitations) and once at the search strategy stage, and
-completes with the standard report.
+it pauses twice at Workflow Gate A (Summary, then Invention Requirements (Claims)), generates
+and validates its queries automatically, and completes with the standard report. It never
+parks at the legacy search-strategy gate.
 
 Three things about it are load-bearing:
 
@@ -914,19 +938,22 @@ Three things about it are load-bearing:
   is the same `Executor` class running the same claim/lease/reconcile/finalize loop on a
   daemon thread. The **separate-process** worker is exercised by
   `acceptance/real_process_acceptance.py`, which kills and restarts it.
-- **The env vars are set at import time**, before `config` is imported, because
-  `DEPLOYMENT_PROFILE` and `WORKFLOW_GRAPH_ADAPTER` are read at import and have no defaults.
-  **No verifier policy is set any more**: this block used to supply `DATE_SCREENING_POLICY`,
+- **Workflow intent is declared before imports and reapplied to the shared settings object
+  before the server loads.** Local `.env` deliberately overrides ordinary process settings,
+  so mock mode explicitly forces `WORKFLOW_EXECUTOR=inprocess` and the production graph
+  adapter without weakening that precedence in `config.py`. **No verifier policy is set any
+  more**: this block used to supply `DATE_SCREENING_POLICY`,
   `TEXT_VERSION_POLICY` and a capability deferral because admission refused a run without
   them, and admission now consults none of it.
 - **Patches are applied at each consuming module's import site.** `from llm import _llm_chat`
   binds a local name, so patching `llm._llm_chat` never reaches such a caller.
 
 `python acceptance/advanced_search_acceptance.py` drives it end to end over HTTP: admission,
-all three approvals, an edited element and a replaced query, the search, the standard report,
+both invention approvals, automatic query generation, the search, the standard report,
 ownership 404s, idempotent replay, one History row carrying the same matches, and every
 withdrawn route answering 404. **53 checks, zero paid calls**, transcript at
-`docs/acceptance/advanced-search-transcript.txt`. It **replaces** `four_gate_acceptance.py`
+`docs/acceptance/advanced-search-two-stage-transcript.txt`. The earlier acceptance
+transcript is retained as a historical record. This script **replaces** `four_gate_acceptance.py`
 and `journey_acceptance.py`, which are deleted along with their transcripts — a transcript
 path that keeps working while the thing it describes has been withdrawn is how an acceptance
 claim quietly stops meaning anything. `acceptance/browser_acceptance.py` drives the same
@@ -1134,10 +1161,9 @@ decompose -> gate_a -> [route_after_gate_a] -> regenerate_understanding -> decom
                                             -> propose_strategy
 ```
 
-**The approved branch goes to `propose_strategy`, not to the search.** The search strategy
-stage sits between this approval and `search_orchestrator` (see "The Search Strategy
-stage"), so the invariant this route guards -- nothing is searched for that a person did not
-approve -- now has three approvals in front of the first provider call rather than one.
+**The approved branch goes to `propose_strategy`, not directly to the search.** Current runs
+validate the generated query set automatically; legacy runs pause for query approval. Both
+routes remain behind the two approved invention artifacts.
 
 `gate_a_node` checks for a pending regeneration **before** reading any approved artifact and
 returns `{}` if it finds one — a rejection is not an approval, and reading one there would
@@ -1178,20 +1204,29 @@ the same reason. Every nested edit goes through `touch()`, which re-publishes th
 capabilities array. The new CSS classes all carry dark counterparts in `styles/gates.css`, written in
 the same change rather than discovered later — see the specificity trap note below.
 
-### The Search Strategy stage (what runs between the analysis and the search)
+### Automatic query generation and the legacy Search Strategy gate
 
-**A verified run now pauses a second time, before any provider is contacted.** The
-inventor approves what the invention is; then a person approves *what will be searched
-for*. `POST /api/analyze` and `/api/analyze/stream` are untouched — a search-only run
-still goes straight from `expand_queries` to `search_orchestrator` and emits exactly the
-phases it did before.
+Current Advanced Search runs have no query-review pause. After the summary and Invention
+Requirements (Claims) are approved, the worker generates the search strategy, adds bounded
+deterministic lexical anchors from the approved, independently checkable requirements in
+their order plus the original invention's platform phrase. The anchors do not use the tails
+of model-generated combination queries, which can omit a core mechanism or over-constrain
+retrieval. The worker validates the complete plan and continues to the patent search. Both
+the strategy angles and anchors remain downstream of both approvals. Quick Search
+first uses adjacent keyword-phrase pairs so separately extracted structural concepts stay
+joined in retrieval. Both routes reserve three of their ten-or-fewer query slots for
+these anchors, so an added subsystem cannot consume every discovery angle; this adds no LLM
+call and is documented in
+`docs/decisions/2026-09-14-retrieval-lexical-anchors-all-search-paths.md`.
 
-`propose_strategy` reads the **approved** summary and limitations and proposes a flat list
-of query strings. `gate_strategy` pauses; on resume it re-reads the approved strategy from
-the approval store. `prepare_approved_search` then constructs the shared search state from
-those reviewed artifacts without another LLM call. A proposal is never dispatched.
+`propose_strategy` reads the **approved** summary and requirements and persists a machine
+proposal. For flow version 2, `select_generated_queries` requires a matching understanding
+version and a non-empty, fully valid query list, then copies only query text into execution
+state. It does not write `approved_search_strategies`. Flow version 1 routes to
+`gate_strategy`, whose existing approval behavior is retained for old checkpoints.
+`prepare_approved_search` then constructs shared search state without another LLM call.
 
-The strategy screen intentionally has no enable flags, coverage map, element ids, or
+The legacy strategy screen intentionally has no enable flags, coverage map, element ids, or
 regeneration loop. Every non-empty query the person approves executes. Its single blocking
 condition is `NO_QUERIES`; the understanding gate separately requires a non-empty summary
 and at least one non-empty technical limitation.
@@ -1205,24 +1240,24 @@ The retained persistence tables still separate machine proposals from approved a
 withdrawn regeneration and coverage columns may remain in historical schema, but no live
 route or screen exposes them.
 
-**Frontend.** Stage 3 of `advanced-search-stages.ts` edits the flat query list. It is the
-same mounted component as stages 1 and 2, so Back can revisit the approved understanding
-without fetching or reconstructing the drafts.
+**Frontend.** Current runs show two stages and `Approve and search` on Stage 2. The running
+checklist begins with `strategy`, then search. Stage 3 remains renderable only when a legacy
+run is actually parked at `STRATEGY`.
 
-### Human-in-the-Loop: the two gates, and who may resume a run
+### Human-in-the-Loop: two current pauses and one legacy gate
 
-An Advanced Search run pauses **twice** and a person decides whether it continues.
-`graph/gates.py` holds the two `interrupt()` nodes and they are wired into
-`graph/pipeline.py`:
+Current Advanced Search pauses **twice**, both under Gate A: once for the summary and once
+for Invention Requirements (Claims). The versioned route after query generation is:
 
 ```
-decompose -> gate_a -> propose_strategy -> gate_strategy
+decompose -> gate_a -> propose_limitations -> gate_limitations -> propose_strategy
+          -> [v2: select_generated_queries | v1: gate_strategy]
           -> prepare_approved_search -> search_orchestrator -> … -> explain -> END
 ```
 
-Gate A sits **before** the strategy that is built from the understanding, and the strategy
-gate **before** the search that dispatches its queries — so nothing is searched for that a
-person did not approve. `gates.GATE_NODES` maps the **live** gates only (`A`, `STRATEGY`).
+Both Gate-A pauses sit before query generation. `gate_strategy` and the `STRATEGY` API/UI
+remain live only for flow-version-1 runs; a missing flow version defaults to 1 so an old
+checkpoint cannot accidentally skip its promised review.
 
 **`WorkflowGate` still has `B`, `C` and `D`, and that is deliberate.** Runs parked at those
 gates before the withdrawal hold them in `verification_runs.current_gate`; removing the
@@ -1297,12 +1332,15 @@ is connection-local and deliberately **not** in the `workflow_event_type` enum.
   would occupy an API worker for minutes to days to deliver nothing.
 - **A slow client is disconnected, never buffered** (`SSE_WRITE_TIMEOUT_SECONDS`), and
   nothing is lost: every frame is still in `workflow_events`.
-- **The SSE reader never guesses cancellation from a disconnect.** The product instead
-  issues authenticated `DELETE /api/runs/{id}` on `pagehide`, and repeats that cancellation
-  on startup from the account-scoped remembered id if the unload request was lost. The
-  delete removes only a live run; completed and failed runs remain in history. Removing the
-  run cascades to its lease, so the next heartbeat fences the worker. An external request
-  already in flight can return, but it cannot commit after the fence.
+- **The SSE reader never guesses cancellation from a disconnect.** The active id is kept
+  in account-scoped `sessionStorage`, so opening another tab cannot adopt or cancel it.
+  Reload verifies ownership and status through `GET /api/runs/{id}` before reattaching to
+  the durable stream. Leaving the first review still sends an explicit authenticated
+  `DELETE /api/runs/{id}`. The delete removes only a live run; completed and failed runs
+  remain in history. Removing the run cascades to its lease, so the next heartbeat fences
+  the worker. An external request already in flight can return, but it cannot commit after
+  the fence. If a followed run disappears, the UI reports that it is unavailable instead
+  of reconnecting forever to a 404.
 - **Leaving the first review is explicit cancellation.** Back opens an in-app confirmation;
   confirming calls the same authenticated delete before returning to the submit screen.
   Dismissing it keeps the reviewer and the run exactly where they were.
@@ -1946,26 +1984,46 @@ Qdrant threshold is not evidence for that separate boundary.
 
 ### Mock mode: `python run_mock.py`, for looking at the app without paying for it
 
+For side-by-side local presentation, `docker-compose.mock.yml` runs the same
+`run_mock.py --workflow --pace 8.5` behind a second copy of the built frontend
+on `http://localhost:4201` and API on `http://localhost:8002`. It has its own
+Postgres and Qdrant volumes, so the production/local real site remains on
+4200/8001 with its worker and database untouched. The overlay's opening
+comments give the first-run migration and checkpoint commands. This remains
+a separately launched developer mock; neither the shipped API nor the live
+search path selects fabricated results after a failure.
+
+The mock frontend prefills the dry-pet-food dispenser example. For that example,
+Quick Search returns the first eight publications and Advanced Search returns all
+nine publications in `backend/mock_pet_food_report.json`; both use its eight
+recommendations. The original eight publications were transcribed from the owner's
+supplied PDF, and the ninth is the locally retrieved `US11013214B2` record added for
+the Advanced Search presentation.
+The report has no browser-visible mock marker. `run_mock.py` refuses to start
+unless its database and vector-store hosts are the overlay's isolated services;
+operator logs still identify the process as a mock.
+
 **`--workflow` additionally serves the verified reviewed workflow** — see "The
-three-stage mock" section above for what that stubs and why the executor has to be
+two-stage mock" section above for what that stubs and why the executor has to be
 in-process for it. Without the flag, `run_mock.py` is exactly what it always was:
 the search pipeline, no run row, no gates.
 
-**Use this for any frontend or UI work.** It serves the real application on 8001 with only
-the metered boundaries replaced, so a full run — login, SSE progress, report, History —
-costs nothing instead of ~25 SerpAPI searches. `--fast` drops the pacing delays; `--port`
-moves it. Postgres and Qdrant still need to be up, and the frontend needs no change,
-because the mock takes the port the frontend already targets.
+**Use the overlay for presentation and UI work.** It serves the real Angular
+frontend and FastAPI transport with metered boundaries replaced, so login, SSE
+progress, report and History spend no external quota. `--pace 8.5` yielded about
+one minute in the pet-food acceptance run. Both local stores must be healthy.
 
 Faked: `llm._llm_chat` (including the feature-disclosure verifier — see that section above),
 `compare.embed_texts`, `search.vector_store.embed_texts`,
 `search.search.SOURCES`, and both `graph.searching.enrich_*` functions. **Everything else
 is real** — the FastAPI app, the auth gate, the graph and its routing, the SSE framing,
 prompt construction, JSON parsing, dedup, chunking, cosine scoring, the risk thresholds,
-Postgres persistence, and `GET /api/history`. It is a stub at the network boundary, not a
-mock of the pipeline, which is what makes it worth trusting for UI work.
+Postgres persistence, and `GET /api/history`. The pet-food example also replaces
+the terminal report and persistence inputs with the fixed PDF-derived fixture,
+while keeping the original progress route. Other requests use the metered-boundary
+doubles alone.
 
-Four things about it are load-bearing:
+Three things about it are load-bearing:
 
 - **It is a developer tool and must never become a runtime mode.** It patches from the
   outside and is reachable only by running that file; nothing in `server.py` or `graph/`
@@ -1976,10 +2034,10 @@ Four things about it are load-bearing:
   is wrapped to raise `PaidCallAttempted` on any non-local host, so a boundary someone
   forgets to mock fails loudly instead of quietly spending quota. `qdrant-client` (httpx)
   and Postgres (psycopg) are untouched and stay real.
-- **Every fabricated record carries `MOCK DATA - no live search` in `source`**, which the
-  report screen prints beside each publication number. Mock runs are written to the real
-  database, so that string is also how you find them again:
-  `DELETE FROM search_runs WHERE id IN (SELECT run_id FROM search_run_matches WHERE source LIKE 'MOCK DATA%');`
+- **The presentation data is isolated.** Its fabricated source text matches the
+  PDF's Lens.org label in the browser, so mock runs must never enter the real
+  database. The startup host check enforces the overlay's `mock-postgres` and
+  `mock-qdrant` targets; the containers publish separate API/frontend ports.
 - **The mock embedder emits 1024-dim vectors**, matching BAAI/bge-large-en-v1.5. A Qdrant
   collection fixes its width on creation, so a wrong-width vector would fail against a
   `patents` collection a real run already made. Nothing writes today (indexing is disabled
@@ -2010,9 +2068,9 @@ reasoning is worth keeping because it reversed twice:
 1. One generic editor was tried first. It could not implement any of the gates' completion
    rules faithfully, because the gates enforced genuinely different rules.
 2. Five screens replaced it, one per gate.
-3. Feature verification was withdrawn, leaving two gates presented as three stages of one
-   flow — and because a person walks that flow forward and back, the drafts belong in one
-   component again. See "The three stages" above.
+3. Feature verification was withdrawn, leaving one component with three stages.
+4. Flow version 2 removed query review from new runs, leaving two current stages while the
+   same component retains Stage 3 solely for legacy checkpoints.
 
 The claim from that era still worth carrying forward: **one idempotency key per user action,
 not per request.** A retry of an action reuses its key so the backend replays the stored
@@ -2359,7 +2417,7 @@ against them; the *shape* of the analysis (what dominates, and why) is what stil
 | `compare.py` chunked embeddings | 55.6s | **12.8s** (small concurrent batches) |
 | `store_patents` → Qdrant indexing | 21.8s | **8.1s** (documents truncated) |
 | `enrich_with_full_text` (2 HTTP calls/patent, 8 workers) | 13.8s | 15-20s (unchanged; varies with provider) |
-| Keyword search (5 queries) | 13.4s | **2.5-3.6s** (queries concurrent) |
+| Keyword search (historical 5-query measurement) | 13.4s | **2.5-3.6s** (queries concurrent) |
 | `analyze_all_matches` LLM | 10.3s | 9.5-12.3s (unchanged) |
 | `validate_relevance` LLM | 4.0s | 2.8s (unchanged) |
 | `understand_invention` LLM | 3.1s | 2.9s (unchanged) |

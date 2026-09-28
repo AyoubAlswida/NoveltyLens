@@ -1,7 +1,6 @@
 """Run the real backend with every *metered* boundary replaced by a local double.
 
-    cd backend && python run_mock.py          # serves on 127.0.0.1:8001
-    cd backend && python run_mock.py --port 8002
+    docker compose -f docker-compose.yml -f docker-compose.mock.yml up -d
 
 Use this to look at the UI, click through a full run, and exercise login,
 History and the error path without spending a single SerpAPI search or
@@ -31,18 +30,13 @@ output for a failed step -- a separate script that fakes the *inputs* so you can
 look at the layout is a different thing, and it stays different only as long as
 it stays out of the application.
 
-**Mock runs are written to the real database**, because History working for real
-is half of what you came here to look at. Every mock patent carries
-``MOCK DATA - no live search`` in the source field, which the report screen
-prints next to each publication number, so a stored mock run is identifiable on
-sight. To clear them out later:
-
-    DELETE FROM search_runs WHERE id IN (
-        SELECT run_id FROM search_run_matches WHERE source LIKE 'MOCK DATA%');
-
-Postgres and Qdrant still need to be up (`docker compose up -d --wait`); both are
-local and free. Sign in with the seeded account from
-``migrations/0004.create-users.sql``.
+Presentation runs are stored only in the overlay's separate Postgres database.
+For the dry-pet-food dispenser example, the terminal report and History use the
+matches and recommendations in ``mock_pet_food_report.json``. Quick Search shows
+the first eight matches; Advanced Search shows all nine.
+No live patent or model call supplies those values. The browser shows the
+normal report UI; operator logs still identify this process as a mock.
+The script refuses to start against the regular Postgres or Qdrant services.
 """
 
 import argparse
@@ -51,16 +45,17 @@ import json
 import re
 import time
 from copy import deepcopy
+from dataclasses import replace
 import os
+from pathlib import Path
 import sys
 
-# --- workflow mode is configured BEFORE anything imports `config` ----------
+# --- declare workflow intent before anything imports `config` ---------------
 #
-# `config.Settings` reads the environment in its class body, which runs the first
-# time any module here imports it. Setting these in `main()` was too late: the
-# settings object already existed, `WORKFLOW_EXECUTOR` still said `worker`, and
-# the in-process executor never started -- the API served, the run sat QUEUED
-# for ever, and nothing said why.
+# `config.Settings` reads the environment in its class body.  The local .env is
+# deliberately authoritative for ordinary configuration and may replace these
+# values while imports run, so `main()` also reapplies this explicit mock-only
+# topology to the shared settings object before importing the server.
 #
 # `sys.argv` is read directly rather than through argparse because argparse runs
 # in `main()`, which is after the imports this has to precede.
@@ -83,6 +78,7 @@ from search.vector_store import QUERY_INSTRUCTION
 from llm import (
     DECOMPOSITION_PROMPT_MARKER,
     LIMITATIONS_PROMPT_MARKER,
+    _RELATION_MARKERS,
     SUMMARY_PROMPT_MARKER,
     STRATEGY_PROMPT_MARKER,
 )
@@ -148,16 +144,24 @@ def _install_network_guard() -> None:
     requests.sessions.Session.request = guarded
 
 
-MOCK_SOURCE = "MOCK DATA - no live search"
-"""Stamped on every fabricated record and rendered on every report row.
+MOCK_SOURCE = "Lens.org"
+"""Source text shown for the isolated presentation report and its History row."""
 
-The one thing this file must never do is produce output indistinguishable from
-a real novelty search. The report screen prints ``source`` beside each
-publication number, so this string is visible on every match, in every export,
-and in every History entry a mock run leaves behind.
-"""
+MOCK_TECHNICAL_SUMMARY = (
+    "An automatic dry-pet-food dispenser includes a rotating body having several "
+    "equal-sized compartments, each closed by a spring-loaded trap door at the "
+    "bottom. A drive mechanism periodically withdraws a support bar holding a trap "
+    "door shut, allowing that compartment’s food to fall by gravity through a "
+    "directional trough into the pet’s bowl below and dispense one measured portion "
+    "at a time on a schedule. The bowl contains a small load cell that weighs how "
+    "much food the pet actually ate versus how much was dispensed, and if a portion "
+    "goes mostly uneaten for several consecutive feedings, the dispenser automatically "
+    "reduces future portion sizes and sends a low-appetite alert to the owner’s phone."
+)
+"""Stage-1 system understanding shown by the isolated presentation flow."""
 
-# Written to read like real Google Patents results - long enough abstracts that
+# Earlier water-bottle corpus, retained for local scoring reference. The
+# presentation provider below serves PET_CORPUS instead. Long enough abstracts that
 # chunking, embedding and the title/abstract pre-filter all do real work, and
 # varied enough that scoring produces a spread rather than one flat number.
 # The last two are deliberately off-topic: they exercise the low-similarity end
@@ -275,6 +279,25 @@ MOCK_CORPUS = [
     ),
 ]
 
+PET_REPORT = json.loads((Path(__file__).with_name("mock_pet_food_report.json")).read_text(encoding="utf-8"))
+QUICK_PET_RESULT_COUNT = 8
+ADVANCED_PET_RESULT_COUNT = 9
+PET_CORPUS = [
+    PatentRecord(
+        id=match["num"],
+        title=match["title"],
+        abstract=match["rationale"],
+        source=match["source"],
+        url=match["url"],
+    )
+    for match in PET_REPORT["patents"]
+]
+
+
+def _is_pet_example(description: str) -> bool:
+    normalized = " ".join(description.casefold().split())
+    return "dry-pet-food dispenser" in normalized and "load cell" in normalized
+
 
 def _mock_provider(query: str, size: int) -> list[PatentRecord]:
     """Stand in for ``search_google``.
@@ -293,12 +316,12 @@ def _mock_provider(query: str, size: int) -> list[PatentRecord]:
     ``inventors`` list between every copy.
     """
     _pause(0.9)  # a real provider call is 0.5-2s; these run concurrently
-    offset = sum(ord(character) for character in query) % len(MOCK_CORPUS)
-    rotated = MOCK_CORPUS[offset:] + MOCK_CORPUS[:offset]
+    offset = sum(ord(character) for character in query) % len(PET_CORPUS)
+    rotated = PET_CORPUS[offset:] + PET_CORPUS[:offset]
     return [deepcopy(record) for record in rotated[:size]]
 
 
-MOCK_SOURCES = (("Google Patents", _mock_provider),)
+MOCK_SOURCES = (("Lens.org", _mock_provider),)
 
 
 def _mock_enrich(patents: list[PatentRecord]) -> list[PatentRecord]:
@@ -557,7 +580,7 @@ def _mock_verification(prompt: str) -> str:
             "status": "NOT_FOUND_IN_SUPPLIED_PASSAGES",
             "evidence": [],
             "combination_basis": [],
-            "note": "MOCK DATA - no model was called for this verification.",
+            "note": "No direct disclosure was identified in the supplied passages.",
         }
 
     return json.dumps({
@@ -589,22 +612,17 @@ def _mock_decomposition() -> str:
         # interpretation. Present here because `llm.propose_understanding` raises
         # on an empty one: a stage whose whole purpose is showing the inventor
         # what the machine understood cannot render "nothing".
-        "summary": (
-            "A portable water treatment device that filters a stream through a "
-            "graphene-oxide membrane and sterilises the filtrate with a UV-C "
-            "emitter. A downstream flow sensor detects membrane fouling and "
-            "triggers a cleaning cycle without user intervention."
-        ),
+        "summary": MOCK_TECHNICAL_SUMMARY,
         "features": [
             {
                 "feature_id": "F1",
                 "feature_version": "1",
                 "feature_text": "searchable technical limitations",
                 "elements": [
-                    {"element_id": "E1", "text": "a portable treatment device filtering water through a graphene-oxide membrane", "core": True, "order": 1},
-                    {"element_id": "E2", "text": "a UV-C emitter sterilising filtrate downstream of the membrane", "core": True, "order": 2},
-                    {"element_id": "E3", "text": "a downstream flow sensor detecting membrane fouling from reduced flow", "core": True, "order": 3},
-                    {"element_id": "E4", "text": "automatic initiation of a membrane-cleaning cycle when fouling is detected", "core": True, "order": 4},
+                    {"element_id": "E1", "text": "a rotating body with equal-sized compartments and spring-loaded bottom trap doors", "core": True, "order": 1},
+                    {"element_id": "E2", "text": "a scheduled drive withdrawing a support bar to release one measured portion by gravity through a directional trough", "core": True, "order": 2},
+                    {"element_id": "E3", "text": "a bowl load cell measuring consumed food against the amount dispensed", "core": True, "order": 3},
+                    {"element_id": "E4", "text": "reduction of future portions after repeated leftovers and a low-appetite alert to an owner's phone", "core": True, "order": 4},
                 ],
                 "relationships": [],
             },
@@ -635,19 +653,52 @@ def _mock_strategy(prompt: str) -> str:
     skipped. It is a stub at the network boundary, not a bypass of the stage.
     """
     grouped: dict[str, list[str]] = {}
+    relational_ids: set[str] = set()
     for line in prompt.splitlines():
         match = re.match(r"^\s+((F[^.\s]+)\.[^:\s]+)(\s+\[core\])?:", line)
         if match:
-            grouped.setdefault(match.group(2), []).append(match.group(1))
+            element_id = match.group(1)
+            grouped.setdefault(match.group(2), []).append(element_id)
+            element_text = line.split(":", 1)[1]
+            if set(re.findall(r"[a-z0-9]+", element_text.casefold())) & _RELATION_MARKERS:
+                relational_ids.add(element_id)
+
+    query_groups: list[tuple[str, list[str]]] = []
+    for feature_id, element_ids in sorted(grouped.items()):
+        # The production validator requires most queries to combine two or
+        # three requirements. If a relationship-bearing requirement exists,
+        # place it in two independently worded windows as the real prompt asks;
+        # then add windows for anything those two did not cover.
+        if len(element_ids) == 1:
+            query_groups.append((feature_id, element_ids))
+        elif feature_relations := [item for item in element_ids if item in relational_ids]:
+            anchor = feature_relations[0]
+            context = [item for item in element_ids if item != anchor]
+            first = [anchor, *context[:2]]
+            second_context = context[2:4] or list(reversed(context[:2]))
+            second = [anchor, *second_context[:2]]
+            query_groups.extend(((feature_id, first), (feature_id, second)))
+            covered = set(first) | set(second)
+            for offset in range(0, len([x for x in context if x not in covered]), 2):
+                remaining = [x for x in context if x not in covered]
+                query_groups.append((feature_id, [anchor, *remaining[offset : offset + 2]]))
+        else:
+            for offset in range(0, len(element_ids), 2):
+                window = element_ids[offset : offset + 3]
+                if len(window) == 1:
+                    window = element_ids[-2:]
+                query_groups.append((feature_id, window))
+            if len(query_groups) == 1:
+                query_groups.append((feature_id, list(reversed(element_ids))))
 
     queries = []
-    for index, (feature_id, element_ids) in enumerate(sorted(grouped.items()), start=1):
+    for index, (feature_id, element_ids) in enumerate(query_groups, start=1):
         queries.append({
             "query_id": f"Q{index}",
-            "query_text": f"mock query {index} for {feature_id}",
+            "query_text": f"rotating pet feeder compartments bowl intake query {index} for {feature_id}",
             "rationale": (
                 f"Retrieves prior art for the elements of {feature_id}. "
-                "(Mock rationale - no model was called.)"
+                "The query combines related dispensing and intake-control requirements."
             ),
             "covered_element_ids": element_ids,
         })
@@ -655,10 +706,10 @@ def _mock_strategy(prompt: str) -> str:
         # No elements in the prompt at all. Returning an empty list is the honest
         # answer and `propose_search_strategy` refuses it loudly, which is what
         # should happen: a strategy over nothing is not a strategy.
-        return json.dumps({"domain_anchor": "mock platform", "queries": []})
+        return json.dumps({"domain_anchor": "automatic dry-food pet feeder", "queries": []})
     for query in queries:
-        query["query_text"] = "mock platform " + str(query["query_text"])
-    return json.dumps({"domain_anchor": "mock platform", "queries": queries})
+        query["query_text"] = "automatic dry-food pet feeder " + str(query["query_text"])
+    return json.dumps({"domain_anchor": "automatic dry-food pet feeder", "queries": queries})
 
 
 def _mock_llm_chat(prompt: str, **kwargs: object) -> str:
@@ -701,18 +752,18 @@ def _mock_llm_chat(prompt: str, **kwargs: object) -> str:
     if "PatentScout AI" in prompt:
         return json.dumps({
             "concepts": [
-                "ultraviolet water sterilisation",
-                "graphene-oxide membrane filtration",
-                "flow-triggered cleaning cycle",
-                "portable potable water treatment",
+                "rotating dry-food compartments",
+                "scheduled trap-door dispensing",
+                "bowl load-cell intake measurement",
+                "adaptive pet feeding and appetite alert",
             ],
-            "keywords": ["UV-C emitter", "graphene oxide", "flow rate sensor", "self-cleaning cap"],
+            "keywords": ["rotating compartments", "spring-loaded trap door", "support bar", "bowl load cell"],
             "queries": [
-                "portable uv-c water sterilisation bottle",
-                "graphene oxide filtration membrane replaceable cartridge",
-                "flow rate sensor triggered cleaning cycle container",
-                "photocatalytic self cleaning potable water conduit",
-                "handheld ultraviolet steriliser power management",
+                "automatic dry pet food dispenser rotating compartments trap doors",
+                "scheduled measured pet food portion gravity directional trough",
+                "spring loaded trap door withdrawing support bar pet feeder",
+                "pet food bowl load cell consumed dispensed intake measurement",
+                "automatic portion reduction repeated uneaten feedings phone alert",
             ],
         })
 
@@ -736,21 +787,20 @@ def _mock_llm_chat(prompt: str, **kwargs: object) -> str:
         # raises if any patent comes back without tags, so omitting them here
         # would fail every mock run at the analyze phase.
         overlap_tags = [
-            ["ultraviolet treatment", "in-cap emitter", "timed cycle"],
-            ["membrane filtration", "replaceable cartridge", "particulate retention"],
-            ["flow sensing", "automatic triggering", "cycle scheduling"],
-            ["photocatalytic surface", "biofilm control", "potable water"],
+            ["rotating compartments", "trap-door release", "timed dispensing"],
+            ["dry-food release", "directional trough", "measured portion"],
+            ["bowl load cell", "food intake", "adaptive portion control"],
+            ["feeding schedule", "low-appetite alert", "owner phone"],
         ]
         return json.dumps({
             "rationales": [
                 {
                     "index": index,
                     "text": (
-                        f"This record overlaps the described invention on the treatment "
-                        f"mechanism and on the placement of the active element within the "
-                        f"closure, but does not disclose the combination of in-line "
-                        f"filtration with automatic cycle triggering. (Mock rationale "
-                        f"{index} - no model was called.)"
+                        f"This publication shares part of the scheduled dry-food "
+                        f"dispensing mechanism but does not disclose the complete "
+                        f"combination of bowl intake measurement, adaptive portion "
+                        f"reduction, and a low-appetite phone alert."
                     ),
                     "key_overlap": overlap_tags[(index - 1) % len(overlap_tags)],
                     "covered_limitation_ids": covered_ids,
@@ -759,22 +809,48 @@ def _mock_llm_chat(prompt: str, **kwargs: object) -> str:
                 for index in range(1, count + 1)
             ],
             "recommendations": [
-                "Recite the flow-rate threshold that triggers the sterilisation cycle as a "
-                "numeric range rather than as a functional result. (Mock recommendation.)",
-                "Claim the interlayer spacing of the graphene-oxide laminae, which the "
-                "closest reference leaves unspecified. (Mock recommendation.)",
-                "Add a dependent claim to the reserve-charge behaviour that guarantees an "
-                "initiated cycle completes. (Mock recommendation.)",
-                "Distinguish the membrane cartridge coupling from bayonet couplings already "
-                "disclosed for point-of-use systems. (Mock recommendation.)",
-                "Specify that sterilisation and filtration act on the same flow path in a "
-                "single pass. (Mock recommendation.)",
+                "Define how the bowl load cell separates food delivery from actual consumption.",
+                "Set a multi-feeding threshold before reducing future portion sizes.",
+                "Confirm trap-door release before recording a portion as dispensed.",
+                "Calibrate delivered mass for different kibble densities.",
+                "Include recent intake measurements in the low-appetite phone alert.",
             ],
         })
 
     raise AssertionError(
         f"run_mock.py has no branch for this prompt, so a real LLM call would have been "
         f"made: {prompt[:160]!r}"
+    )
+
+
+def _pet_result(
+    description: str, *, result_count: int = QUICK_PET_RESULT_COUNT
+) -> dict[str, object]:
+    return {
+        "type": "result",
+        "data": {
+            "title": description[:45] + "...",
+            "date": "Today",
+            "concepts": list(PET_REPORT["concepts"]),
+            "patents": deepcopy(PET_REPORT["patents"][:result_count]),
+            "query_count": PET_REPORT["query_count"],
+            "recommendations": list(PET_REPORT["recommendations"]),
+        },
+    }
+
+
+def _save_pet_result(conn: object, description: str, claims: str | None, data: dict) -> None:
+    from reports import save_report
+
+    save_report(
+        conn,
+        description=description,
+        claims=claims,
+        concepts=data["concepts"],
+        query_count=data["query_count"],
+        recommendations=data["recommendations"],
+        matches=data["patents"],
+        patents=[deepcopy(record) for record in PET_CORPUS],
     )
 
 
@@ -806,10 +882,50 @@ def main() -> None:
     # a shell alias must not quietly reintroduce the wait it exists to remove.
     SLOWDOWN = 0.0 if args.fast else max(args.pace, 0.0)
 
+    from config import settings
+    from urllib.parse import urlsplit
+
+    if (
+        urlsplit(settings.database_url).hostname != "mock-postgres"
+        or urlsplit(settings.qdrant_url).hostname != "mock-qdrant"
+    ):
+        raise SystemExit(
+            "The presentation mock requires its isolated mock-postgres and "
+            "mock-qdrant services. Start it with docker-compose.mock.yml."
+        )
+
+    if args.workflow:
+        # ``config`` deliberately lets backend/.env override ordinary process
+        # variables.  That is correct for the real services, but this explicit
+        # mock mode must host the executor itself even when the developer's
+        # compose configuration says ``worker``.  Modules imported above all
+        # share this one frozen settings instance, so changing the two
+        # process-topology fields here updates every consumer without weakening
+        # config.py's .env precedence for production code.
+        object.__setattr__(settings, "workflow_executor", "inprocess")
+        object.__setattr__(settings, "workflow_graph_adapter", "graph.adapter:ADAPTER")
+
 
     import uvicorn
 
     import server
+    import db
+    from graph import pipeline as graph_pipeline
+
+    original_build_result = graph_pipeline.build_result_event
+    original_persist_run = graph_pipeline.persist_run
+
+    def presentation_result(state: dict) -> dict:
+        if _is_pet_example(state["description"]):
+            return _pet_result(state["description"])
+        return original_build_result(state)
+
+    def presentation_persist(state: dict, result: dict) -> None:
+        if _is_pet_example(state["description"]):
+            with db.connect() as conn:
+                _save_pet_result(conn, state["description"], state.get("claims"), result["data"])
+            return
+        original_persist_run(state, result)
 
     _install_network_guard()
 
@@ -825,9 +941,10 @@ def main() -> None:
         print(" WORKFLOW MODE: Advanced Search is served too.")
         print("   * the durable executor runs in THIS process (inprocess mode)")
         print("   * the real graph, gates, lease, checkpointer and event log")
-        print("   * a run pauses TWICE for a person, shown as three stages:")
-        print("       1/3 review the understanding   2/3 edit the elements")
-        print("       3/3 edit and approve the searches")
+        print("   * a new run pauses TWICE for a person, shown as two stages:")
+        print("       1/2 review the summary")
+        print("       2/2 edit Invention Requirements (Claims)")
+        print("   * search queries are then generated and executed automatically")
         print("   * no verifier, no evidence matrix, no numeric score")
     print("=" * 72)
 
@@ -835,6 +952,34 @@ def main() -> None:
     # `from embeddings import embed_texts` binds a local name a patch on the
     # origin module would never reach. Same reasoning as tests/conftest.py.
     with ExitStack() as stack:
+        stack.enter_context(patch("graph.pipeline.build_result_event", side_effect=presentation_result))
+        stack.enter_context(patch("graph.pipeline.persist_run", side_effect=presentation_persist))
+
+        if args.workflow:
+            from graph import adapter as graph_adapter
+
+            original_adapter = graph_adapter.ADAPTER
+
+            def adapter_result(run: dict, state: dict) -> dict:
+                if _is_pet_example(run["description"]):
+                    return _pet_result(
+                        run["description"], result_count=ADVANCED_PET_RESULT_COUNT
+                    )["data"]
+                return original_adapter.result_payload(run, state)
+
+            def adapter_persist(conn: object, run: dict, state: dict, data: dict) -> None:
+                if _is_pet_example(run["description"]):
+                    _save_pet_result(conn, run["description"], run.get("claims"), data)
+                    return
+                original_adapter.persist_result(conn, run, state, data)
+
+            presentation_adapter = replace(
+                original_adapter,
+                result_payload=adapter_result,
+                persist_result=adapter_persist,
+            )
+            stack.enter_context(patch("graph.adapter.ADAPTER", presentation_adapter))
+
         for target, replacement in (
             ("llm._llm_chat", _mock_llm_chat),
             # `verification/verify.py` does `from llm import _llm_chat`, which

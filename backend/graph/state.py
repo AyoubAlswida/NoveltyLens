@@ -137,10 +137,12 @@ class GraphState(TypedDict, total=False):
     advanced_search: bool
     """Whether this run goes through the Advanced Search branch at all.
 
-    Advanced Search is a standard prior-art search preceded by guided editing:
-    the run pauses three times for a person (summary, limitations, then search
-    queries) and then executes the ordinary search pipeline. It performs no
-    evidence verification and reaches no legal conclusion.
+    Advanced Search is a standard prior-art search preceded by guided editing.
+    Version-2 runs pause twice for a person (summary, then invention
+    requirements), generate queries automatically, and execute the ordinary
+    search pipeline. Version-1 checkpoints retain their historical third query
+    review. Neither flow performs evidence verification or reaches a legal
+    conclusion.
 
     A search-only run must traverse exactly the nodes it does today and emit
     exactly today's phases -- `tests/test_verification_integration.py` asserts
@@ -202,6 +204,13 @@ class GraphState(TypedDict, total=False):
     ``summary`` is proposed and approved first. Only then may ``limitations``
     be generated from that approved text. Both pauses use durable Workflow Gate
     A, while this state value keeps their business meaning unambiguous.
+    """
+
+    advanced_search_flow_version: int
+    """Durable Advanced Search route selected at admission.
+
+    Version 1 pauses for legacy query review. Version 2 executes the generated
+    queries automatically after the two invention-review pauses.
     """
 
     candidate_search_strategy: dict | None

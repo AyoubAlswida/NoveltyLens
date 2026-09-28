@@ -67,12 +67,11 @@ export const QUICK_SEARCH_PHASE_ORDER: readonly Phase[] = [
   'analyze',
 ];
 
-/** The exact durable Advanced Search route, including both review pauses. */
+/** The version-2 Advanced Search route, including both invention-review pauses. */
 export const ADVANCED_SEARCH_PHASE_ORDER: readonly Phase[] = [
   'decompose',
   'gate_a',
   'strategy',
-  'gate_strategy',
   'search',
   'filter',
   'enrich',
@@ -84,8 +83,9 @@ export const ADVANCED_SEARCH_PHASE_ORDER: readonly Phase[] = [
 /** What the running screen shows before the first human review. */
 export const ADVANCED_PRE_REVIEW_PHASE_ORDER: readonly Phase[] = ['decompose'];
 
-/** What the running screen shows after the queries have been approved. */
+/** What the running screen shows after invention requirements are approved. */
 export const ADVANCED_EXECUTION_PHASE_ORDER: readonly Phase[] = [
+  'strategy',
   'search',
   'filter',
   'enrich',

@@ -62,6 +62,22 @@ def test_quick_search_prompt_balances_core_and_distinctive_feature_queries():
     assert "Do not spend most queries on the addition" in prompt
 
 
+@pytest.mark.parametrize(
+    "queries",
+    [
+        ["q1", "q2", "q3", "q4"],
+        ["q1", "q2", "q3", "q4", "q1"],
+        ["q1", "q2", "q3", "q4", "   "],
+        ["q1", "q2", "q3", "q4", 5],
+    ],
+)
+def test_quick_search_refuses_incomplete_or_degraded_query_plans(queries):
+    payload = {"concepts": ["c1"], "keywords": ["k1"], "queries": queries}
+    with patch("llm._llm_json", return_value=payload):
+        with pytest.raises(LLMResponseError, match="Quick Search quer"):
+            llm.understand_invention("an invention")
+
+
 def _response(content: str, finish_reason: str = "stop") -> object:
     """A stand-in for the provider's HTTP response object."""
     class FakeResponse:

@@ -26,17 +26,17 @@ Everything above those lines is real: the two approval transactions, the lease
 and its fencing, the LangGraph checkpoint and resume, the event log, the SSE
 contract, ownership scoping and every API rule.
 
-**Neither approval is bypassed and nothing is auto-approved.** Each goes through
-the real `POST /api/runs/{id}/gates/{gate}/approve` with an idempotency key, and
+**Neither invention approval is bypassed and query generation is not auto-approved.**
+Each review goes through the real `POST /api/runs/{id}/gates/A/approve` with an idempotency key, and
 `workflow/approvals.py` remains the only writer of an `approved_*` field. This
 script never touches an approval table.
 
 ## What it proves
 
-Admission -> stage 1 -> stage 2 -> stage 3 -> the search -> the standard report,
+Admission -> stage 1 -> stage 2 -> automatic queries -> search -> standard report,
 plus the properties that are easy to lose and hard to notice:
 
-* only the **edited** queries are dispatched, and no proposal string survives;
+* no STRATEGY pause occurs and generated queries have no human-approval rows;
 * the report carries **no `pct`, `top_score` or `verdict`** anywhere in it;
 * a completed run leaves **exactly one** standard History row, and the report the
   endpoint returns is the same object the terminal `result` event carried;
@@ -161,13 +161,16 @@ def stream(run_id: str, token: str, last_event_id: int | None) -> list[tuple[int
 
 
 
-TRANSCRIPT = BACKEND.parent / "docs" / "acceptance" / "advanced-search-transcript.txt"
+TRANSCRIPT = (
+    BACKEND.parent
+    / "docs"
+    / "acceptance"
+    / "advanced-search-two-stage-transcript.txt"
+)
 
 
 EDITED_SUMMARY = "A drinking vessel that sterilises with UV-C and filters through a membrane."
 EDITED_ELEMENT = "a replaceable graphene-oxide filtration membrane"
-EDITED_QUERY = "graphene oxide membrane ultraviolet drinking vessel"
-
 DESCRIPTION = (
     "A portable, refillable drinking-water bottle that sterilises its contents "
     "with an integrated UV-C emitter and filters particulates through a "
@@ -222,6 +225,7 @@ def main() -> int:
     env["SERVER_PORT"] = str(API_PORT)
     env["SERVER_HOST"] = "127.0.0.1"
     env["DEPLOYMENT_PROFILE"] = "test"
+    env["WORKFLOW_EXECUTOR"] = "inprocess"
     env["PYTHONUNBUFFERED"] = "1"
 
     server = None
@@ -277,59 +281,55 @@ def main() -> int:
         check(status == 200, f"gate A payload returned {status}")
         check(payload["original_description"] == DESCRIPTION,
               "the inventor's description was rewritten")
-        check(isinstance(payload["technical_elements"], list)
-              and all(isinstance(e, str) for e in payload["technical_elements"]),
-              "technical_elements is not a flat list of strings")
+        check(payload["review_stage"] == "summary", "the first review is not the summary")
+        check(payload["strategy_review_required"] is False,
+              "a new run was admitted into the legacy strategy-review flow")
+        check(payload["technical_elements"] == [],
+              "requirements were exposed before summary approval")
         for withdrawn in ("candidate_decomposition", "problem_solved",
                           "inventor_novelty_statement", "proposal"):
             check(withdrawn not in payload, f"{withdrawn} is back in the gate A payload")
-        say(f"    {len(payload['technical_elements'])} elements, as plain strings")
-
-        proposed_elements = list(payload["technical_elements"])
-        step("APPROVE the understanding, with an edit")
+        step("APPROVE stage 1, with an edited summary")
         status, approved = call("POST", f"/api/runs/{run_id}/gates/A/approve", token, {
-            "idempotency_key": f"understanding-{stamp}",
+            "idempotency_key": f"summary-{stamp}",
+            "review_stage": "summary",
             "technical_summary": EDITED_SUMMARY,
-            "technical_elements": [EDITED_ELEMENT, *proposed_elements[1:]],
         })
-        check(status == 200, f"the understanding approval returned {status}")
+        check(status == 200, f"the summary approval returned {status}")
         say("    committed; the executor resumes the run on its next poll")
 
         step("a REPLAYED approval returns the stored response rather than mutating twice")
         status, replay = call("POST", f"/api/runs/{run_id}/gates/A/approve", token, {
-            "idempotency_key": f"understanding-{stamp}",
+            "idempotency_key": f"summary-{stamp}",
+            "review_stage": "summary",
             "technical_summary": EDITED_SUMMARY,
-            "technical_elements": [EDITED_ELEMENT, *proposed_elements[1:]],
         })
         check(status == 200 and replay == approved, "the replay did not return the stored response")
 
         # -----------------------------------------------------------------
-        step("STAGE 3: the searches")
-        wait_for_gate(token, run_id, "STRATEGY")
-        status, payload = call("GET", f"/api/runs/{run_id}/gates/STRATEGY", token)
-        check(status == 200, f"strategy payload returned {status}")
-        check(isinstance(payload["queries"], list)
-              and all(isinstance(q, str) for q in payload["queries"]),
-              "queries is not a flat list of strings")
-        for withdrawn in ("candidate_search_strategy", "elements", "approved_summary",
-                          "understanding_version", "proposal"):
-            check(withdrawn not in payload, f"{withdrawn} is back in the strategy payload")
-        proposed_queries = list(payload["queries"])
-        say(f"    {len(proposed_queries)} queries, as plain strings")
+        step("STAGE 2: Invention Requirements (Claims)")
+        wait_for_gate(token, run_id, "A")
+        status, payload = call("GET", f"/api/runs/{run_id}/gates/A", token)
+        check(status == 200, f"requirements payload returned {status}")
+        check(payload["review_stage"] == "limitations", "the second review is not requirements")
+        proposed_elements = list(payload["technical_elements"])
+        check(proposed_elements and all(isinstance(e, str) for e in proposed_elements),
+              "technical_elements is not a non-empty flat list of strings")
 
         step("another account cannot read or approve this run")
-        status, denied = call("GET", f"/api/runs/{run_id}/gates/STRATEGY", intruder_token)
+        status, denied = call("GET", f"/api/runs/{run_id}/gates/A", intruder_token)
         check(status == 404 and denied.get("code") == "RUN_NOT_FOUND",
               f"a non-owner got {status} {denied}, not 404 RUN_NOT_FOUND")
         say("    404, identical to an unknown run: never 403")
 
-        step("APPROVE the searches, replacing one entirely")
-        status, _ = call("POST", f"/api/runs/{run_id}/gates/STRATEGY/approve", token, {
-            "idempotency_key": f"strategy-{stamp}",
-            "queries": [EDITED_QUERY],
+        step("APPROVE stage 2; query generation continues automatically")
+        status, _ = call("POST", f"/api/runs/{run_id}/gates/A/approve", token, {
+            "idempotency_key": f"requirements-{stamp}",
+            "review_stage": "limitations",
+            "technical_elements": [EDITED_ELEMENT, *proposed_elements[1:]],
         })
-        check(status == 200, f"the strategy approval returned {status}")
-        say("    the run is released into the search")
+        check(status == 200, f"the requirements approval returned {status}")
+        say("    the run is released into automatic query generation")
 
         # -----------------------------------------------------------------
         step("THE SEARCH RUNS, and the run completes")
@@ -350,24 +350,28 @@ def main() -> int:
         wait_for(completed, what="the run to complete", timeout=180.0)
         say("    COMPLETED")
 
-        step("ONLY the approved queries were dispatched")
+        step("GENERATED queries were persisted without a human approval")
         with psycopg.connect(settings.database_url, autocommit=True) as conn:
-            # Keyed by (run_id, version), not by a surrogate id: the approved
-            # strategy tables are versioned per run, and reading the enabled rows
-            # of the latest version is what the graph itself dispatches from.
-            stored = conn.execute(
-                "SELECT query_text FROM approved_strategy_queries"
-                " WHERE run_id = %s AND enabled"
-                " ORDER BY version DESC, ord",
+            proposal = conn.execute(
+                "SELECT queries FROM search_strategy_proposals"
+                " WHERE run_id = %s AND source = 'LLM' ORDER BY version DESC LIMIT 1",
                 (run_id,),
-            ).fetchall()
-        stored_queries = [row[0] for row in stored]
-        check(stored_queries == [EDITED_QUERY],
-              f"the approved queries are {stored_queries}, not the edited one")
-        dropped = [q for q in proposed_queries if q != EDITED_QUERY]
-        check(all(q not in stored_queries for q in dropped),
-              "a query the reviewer removed was approved anyway")
-        say(f"    approved: {stored_queries}")
+            ).fetchone()
+            approved_count = conn.execute(
+                "SELECT count(*) FROM approved_search_strategies WHERE run_id = %s",
+                (run_id,),
+            ).fetchone()[0]
+            strategy_pauses = conn.execute(
+                "SELECT count(*) FROM workflow_events"
+                " WHERE run_id = %s AND event_type = 'review_required'"
+                " AND payload->>'gate' = 'STRATEGY'",
+                (run_id,),
+            ).fetchone()[0]
+        generated_queries = list(proposal[0] if proposal else [])
+        check(generated_queries, "no generated strategy proposal was persisted")
+        check(approved_count == 0, "generated queries were falsely recorded as human-approved")
+        check(strategy_pauses == 0, "the new run paused at legacy STRATEGY")
+        say(f"    {len(generated_queries)} generated queries, zero approval rows")
 
         # -----------------------------------------------------------------
         step("THE REPORT: the standard one, with no score anywhere")
@@ -376,6 +380,8 @@ def main() -> int:
         check(set(report) == {"title", "date", "concepts", "patents",
                               "recommendations", "query_count"},
               f"the report shape is {sorted(report)}")
+        check(report["query_count"] == len(generated_queries),
+              "the report query count does not match the generated strategy")
 
         banned = {"pct", "top_score", "verdict", "score", "similarity", "percent"}
         offenders = [(p, k) for p, k, _ in _walk(report) if k.lower() in banned]

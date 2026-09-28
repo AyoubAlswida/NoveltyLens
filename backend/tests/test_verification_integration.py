@@ -628,9 +628,12 @@ def test_the_validated_result_itself_refuses_collection_mutation():
 
 def test_run_mock_serves_guided_search_with_no_outbound_http():
     """`run_mock.py` follows the live flat-limitation proposal without HTTP."""
-    from run_mock import _mock_decomposition, _mock_llm_chat
+    from run_mock import MOCK_TECHNICAL_SUMMARY, _mock_decomposition, _mock_llm_chat
 
     decomposition = json.loads(_mock_decomposition())
+    assert decomposition["summary"] == MOCK_TECHNICAL_SUMMARY
+    assert decomposition["summary"].startswith("An automatic dry-pet-food dispenser includes")
+    assert decomposition["summary"].endswith("low-appetite alert to the owner’s phone.")
     assert len(decomposition["features"]) == 1
     assert len(decomposition["features"][0]["elements"]) == 4
     assert decomposition["features"][0]["relationships"] == []
@@ -641,6 +644,21 @@ def test_run_mock_serves_guided_search_with_no_outbound_http():
         f"...{llm_module.DECOMPOSITION_PROMPT_MARKER}...", system=""
     )
     assert json.loads(routed)["features"], "the decomposition prompt reaches its double"
+
+
+def test_run_mock_keeps_quick_at_eight_matches_and_advanced_at_nine():
+    from run_mock import ADVANCED_PET_RESULT_COUNT, PET_REPORT, _pet_result
+
+    description = PET_REPORT["description"]
+    quick = _pet_result(description)["data"]["patents"]
+    advanced = _pet_result(
+        description, result_count=ADVANCED_PET_RESULT_COUNT
+    )["data"]["patents"]
+
+    assert len(quick) == 8
+    assert len(advanced) == 9
+    assert advanced[:8] == quick
+    assert advanced[8]["num"] == "US11013214B2"
 
 
 def test_the_mock_verifier_never_fabricates_a_finding():

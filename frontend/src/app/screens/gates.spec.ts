@@ -23,6 +23,7 @@ const UNDERSTANDING = {
   editable: true,
   completion_rules: [],
   review_stage: 'summary',
+  strategy_review_required: false,
 };
 
 const LIMITATIONS = { ...UNDERSTANDING, review_stage: 'limitations' };
@@ -155,7 +156,7 @@ describe('Advanced Search — stage 1, the understanding', () => {
     // the counter is rendered text, never an aria-label alone -- and the owner
     // chose this wording. The requirement is unchanged; only the phrasing moved.
     const fixture = await atStageOne(runs);
-    expect(text(fixture)).toContain('Step 1 of 3');
+    expect(text(fixture)).toContain('Step 1 of 2');
   });
 
   it('blocks on an empty summary, and on one that is empty after trimming', async () => {
@@ -185,7 +186,7 @@ describe('Advanced Search — stage 1, the understanding', () => {
     fixture.detectChanges();
 
     const transition = text(fixture).toLowerCase();
-    expect(transition).toContain('preparing your technical limitations');
+    expect(transition).toContain('preparing your invention requirements');
     expect(transition).toContain('approved invention summary');
     expect(transition).not.toContain('search strategy');
   });
@@ -226,7 +227,9 @@ describe('Advanced Search — stage 2, the technical elements', () => {
       'a graphene-oxide membrane',
       'a UV-C emitter',
     ]);
-    expect(text(fixture)).toContain('Step 2 of 3');
+    expect(text(fixture)).toContain('Step 2 of 2');
+    expect(text(fixture)).toContain('Invention Requirements (Claims)');
+    expect(text(fixture)).toContain('Approve and search');
   });
 
   it('adds, edits and deletes an element', async () => {
@@ -524,19 +527,22 @@ describe('Advanced Search — the next stage arrives with no page reload', () =>
    * app-level durable stream moves the same component from A to STRATEGY by
    * updating its gate input.
    */
-  it('drives all three approvals without remounting', async () => {
+  it('releases a current run after two approvals without showing queries', async () => {
     const runs = new FakeRuns();
     const fixture = await atStageOne(runs);
     const component = fixture.componentInstance;
 
     const resumed: string[] = [];
+    let released = 0;
     component.resumed.subscribe((gate) => resumed.push(gate));
+    component.searchReleased.subscribe(() => released += 1);
 
     await component.next(); // summary approval -> stage 2
     await component.next(); // limitations approval
     await settle(fixture);
     expect(component.state()).toBe('resuming');
-    expect(resumed).toEqual(['A', 'A']);
+    expect(resumed).toEqual(['A']);
+    expect(released).toBe(1);
 
     const transitionText = text(fixture).toLowerCase();
     expect(transitionText).toContain('preparing your search strategy');
@@ -548,25 +554,12 @@ describe('Advanced Search — the next stage arrives with no page reload', () =>
     expect(fixture.nativeElement.querySelector('.gate-transition-progress')).not.toBeNull();
     expect(fixture.nativeElement.querySelector('.gate-head button')).toBeNull();
 
-    await arriveAtStrategy(fixture);
-
-    expect(component.stage()).toBe(3);
-    expect(component.state()).toBe('review');
-    // The queries the worker proposed are on screen with no reload or remount.
-    expect(component.queries().map((row) => row.text)).toEqual(STRATEGY.queries);
-
-    await component.next(); // approval two
-    await settle(fixture);
-
     expect(runs.sent.map((call) => call.method)).toEqual([
       'approveGateSummary',
       'approveGateLimitations',
-      'approveGateStrategy',
     ]);
-    expect(component.state()).toBe('resuming');
-    expect(resumed).toEqual(['A', 'A', 'STRATEGY']);
-    expect(text(fixture).toLowerCase()).toContain('starting your prior-art search');
-    expect(text(fixture).toLowerCase()).toContain('searches you approved');
+    expect(component.stage()).toBe(2);
+    expect(text(fixture)).not.toContain('Review search queries');
   });
 });
 

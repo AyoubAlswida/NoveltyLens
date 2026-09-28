@@ -551,6 +551,9 @@ def _llm_json(
     ) from last_error
 
 
+QUICK_SEARCH_PRIMARY_QUERY_COUNT = 5
+
+
 def understand_invention(invention: str) -> InventionAnalysis:
     """Convert the LLM's JSON response into a typed invention analysis."""
     trace("understand_invention.start", invention_chars=len(invention))
@@ -559,9 +562,23 @@ def understand_invention(invention: str) -> InventionAnalysis:
 Analyze the invention below.
 
 Tasks:
-1. Extract the primary technical concepts that define the invention.
+1. Extract the primary technical concepts that define the invention. Order the
+   underlying structural and functional mechanism first, followed by added or
+   feedback-driven subsystems. Each concept must state one independently
+   checkable technical relationship, not a bare component and not a long chain
+   of otherwise separable actions. Give storage/arrangement, actuation,
+   material or signal path, timing, measurement, and feedback their own concepts
+   when the invention describes them as distinct operations. Keep a causal
+   condition with the action it triggers, but do not merge several independent
+   core operations merely to make room for novel additions. Do not invent or
+   duplicate concepts. This consistent granularity is used to compare prior art
+   with the whole invention, not just to generate search terms.
 2. Extract the essential engineering keywords that distinguish the invention from existing technology.
-3. Generate exactly 5 high-quality patent search queries that maximize retrieval of patents describing the SAME invention.
+   Order the connected core mechanism's component phrases first, adjacent to
+   one another; list added or feedback-driven subsystems afterward. Keep
+   multi-word mechanical phrases intact rather than reducing them to isolated
+   nouns.
+3. Generate exactly {QUICK_SEARCH_PRIMARY_QUERY_COUNT} high-quality patent search queries that maximize retrieval of patents describing the SAME invention.
 
 Search query guidelines:
 - Focus on the invention's primary functionality, purpose, and claimed mechanism.
@@ -591,8 +608,22 @@ Invention:
     # token limit and truncate it. Removing it shrinks the response and deletes
     # a failure mode, at the cost of nothing.
     data = _llm_json(prompt, max_tokens=1200, temperature=0.0, timeout=40)
+    raw_queries = data.get("queries")
+    if not isinstance(raw_queries, list) or len(raw_queries) != QUICK_SEARCH_PRIMARY_QUERY_COUNT:
+        raise LLMResponseError(
+            "LLM did not return exactly five primary Quick Search queries"
+        )
+    if any(not isinstance(value, str) or not value.strip() for value in raw_queries):
+        raise LLMResponseError("LLM returned a blank or malformed Quick Search query")
+    queries = [" ".join(value.split()) for value in raw_queries]
+    normalized_queries = {
+        " ".join(re.findall(r"[a-z0-9]+", query.casefold())) for query in queries
+    }
+    if len(normalized_queries) != len(queries):
+        raise LLMResponseError("LLM returned duplicate Quick Search queries")
+
     analysis = InventionAnalysis(
-        queries=[str(value) for value in data.get("queries", []) if str(value).strip()],
+        queries=queries,
         keywords=[str(value) for value in data.get("keywords", []) if str(value).strip()],
         concepts=[str(value) for value in data.get("concepts", []) if str(value).strip()],
     )
@@ -943,16 +974,24 @@ searchable technical limitations from that text only. Do not use an earlier draf
 or the original submission, and do not add capabilities absent from the approved
 summary.
 
-Preserve the invention's combination-critical mechanisms: keep interacting parts,
-comparisons, triggers, conditions, and coordinated outputs together when splitting
-them would lose what is technically distinctive. Avoid generic component-only
-lines and semantic duplicates.
+Preserve combination-critical mechanisms: keep interacting parts, comparisons,
+triggers, conditions, and coordinated outputs together when splitting them would
+lose the technical relationship. Separately list independently checkable
+arrangements and actions rather than merging a whole operational chain into one
+line merely because its parts are conventional. A line is not an isolated noun:
+it must state what the component does, where it acts, or what triggers it. Keep
+the granularity of core operations and added subsystems comparable so several
+new additions do not reduce a substantial core prior-art overlap to one vote.
+Avoid generic component-only lines and semantic duplicates.
 
 Rules:
 - Choose one 1-to-3-word domain_anchor naming the invention's concrete platform (for example "folding bicycle", "video baby monitor", or "photoelectric smoke detector"). Every query must contain every domain-anchor word so a relationship query cannot drift into an unrelated field.
 - Return exactly one feature, F1.
 - Aim for 4 to {max_elements} limitations; use fewer rather than padding.
 - Every limitation must be independently searchable and technically checkable.
+- Order the platform's structure, actuation, and output path first; put added
+  sensing, feedback, and alerts afterward. This order reserves short lexical
+  recall queries for the underlying mechanism before narrower additions.
 - Mark every element core=true and use E1, E2, ... in order.
 - Return relationships as an empty array.
 - At most {max_elements} elements.
@@ -1281,19 +1320,19 @@ def propose_search_strategy(
 
     Returns a list of ``{"query_id", "query_text", "rationale",
     "covered_element_ids"}``. Each query names the approved element ids it is
-    meant to retrieve prior art for, which is what the coverage check at the
-    stage's gate is computed from -- a core element no enabled query covers
-    blocks approval.
+    meant to retrieve prior art for. Legacy flow version 1 uses that metadata at
+    its strategy-review gate; flow version 2 validates the complete generated
+    set and releases it automatically after the two understanding approvals.
 
     Ids are **feature-qualified** (``F1.E2``). A requirement id is unique within
     one feature and not across a run, so a bare ``E1`` would name an element in
     every feature that happens to have one -- and a coverage claim that resolves
     to more than one element is not a coverage claim.
 
-    **This output is never approved and never dispatched as it stands.** It is
-    written to ``candidate_search_strategy`` and to ``search_strategy_proposals``,
-    neither of which the search reads; only the queries a human approved and left
-    enabled are executed.
+    **This output is machine-generated, never human-approved.** It is written to
+    ``candidate_search_strategy`` and ``search_strategy_proposals``. Version 2
+    dispatches its query text only through the strict automatic selector;
+    version 1 dispatches only the queries a human approved and left enabled.
 
     `existing_queries` are the queries the understanding call already produced.
     They are offered as material rather than as a floor: the model may keep,
@@ -1304,10 +1343,9 @@ def propose_search_strategy(
     regeneration produces a whole new strategy at a new version.
 
     A coverage claim naming an element id that is not in `features` is left
-    exactly as the model returned it. It is refused at the gate
-    (`UNKNOWN_ELEMENT_REFERENCE`) rather than dropped here, because silently
-    discarding a claim would turn a model that misunderstood the requirements into
-    a strategy that merely looks like it covers fewer of them.
+    exactly as the model returned it. The legacy gate refuses it as
+    `UNKNOWN_ELEMENT_REFERENCE`; version 2's automatic selector never rewrites
+    or silently drops individual generated queries.
 
     No `except`: a failed or malformed response fails the request, like every
     other LLM call in this file.

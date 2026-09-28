@@ -15,7 +15,7 @@ import pytest
 from graph.searching import index_patents_node, keyword_search_node
 from models import PatentRecord
 from search.retrieve import retrieve_similar_patents
-from search.search import search_all_providers_strict
+from search.search import KeywordSearchResults, search_all_providers_strict
 from search.vector_store import known_ids, store_patents
 
 
@@ -61,6 +61,43 @@ def test_candidates_are_taken_per_query_not_from_the_flattened_head():
 
     ids = {p.id[:2] for p in found.candidates}
     assert ids == {"AA", "BB"}, f"one query dominated the candidate set: {ids}"
+
+
+def test_search_progress_reports_completed_provider_responses_not_a_timer():
+    first, second = _corpus(2, "AA"), _corpus(3, "BB")
+    updates: list[tuple[int, int, int]] = []
+    sources = (("Lens.org", lambda q, size: first if q == "q1" else second),)
+
+    with patch("search.search.SOURCES", sources):
+        search_all_providers_strict(
+            ["q1", "q2"],
+            on_progress=lambda completed, total, received: updates.append(
+                (completed, total, received)
+            ),
+        )
+
+    assert updates == [(1, 2, 2), (2, 2, 5)]
+
+
+def test_keyword_node_emits_actual_request_progress_on_the_search_phase():
+    def fake_search(queries, **kwargs):
+        assert queries == ["q1", "q2"]
+        kwargs["on_progress"](1, 2, 3)
+        kwargs["on_progress"](2, 2, 5)
+        return KeywordSearchResults([], [])
+
+    with patch("graph.searching.search_all_providers_strict", side_effect=fake_search), \
+         patch("graph.searching.emit_progress") as emit:
+        keyword_search_node({"queries": ["q1", "q2"], "invention_text": "an invention"})
+
+    search_updates = [
+        call.kwargs for call in emit.call_args_list
+        if call.args[0] == "search" and "received" in call.kwargs
+    ]
+    assert search_updates == [
+        {"current": 1, "total": 2, "received": 3},
+        {"current": 2, "total": 2, "received": 5},
+    ]
 
 
 @pytest.mark.skip(

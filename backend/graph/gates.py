@@ -1,14 +1,12 @@
 """The Human-in-the-Loop gate nodes.
 
-An Advanced Search run is not a black box that emits a report. It **pauses**, and
-a person decides whether it continues. These two nodes are where it pauses.
+An Advanced Search run is not a black box that emits a report. Current runs pause
+twice under Gate A, and a person decides whether the understanding continues.
 
 `gate_a_node` and `gate_limitations_node` independently review the summary and
-limitations; `gate_strategy_node`
-is the search strategy (stage 3), and it sits between the approved understanding
-and the search: nothing is dispatched to a provider until a person has approved
-both what the invention is and what the run will go looking for. Gates B, C and D
-were removed with feature verification -- see the note where they used to be.
+Invention Requirements (Claims). `gate_strategy_node` is retained only for
+flow-version-1 runs and checkpoints that were promised query review. Gates B, C
+and D were removed with feature verification -- see the note where they used to be.
 
 ## What an `interrupt()` here does and does not do
 
@@ -134,7 +132,7 @@ def gate_a_node(state: GraphState) -> dict[str, Any]:
 def gate_limitations_node(state: GraphState) -> dict[str, Any]:
     """Pause independently for Stage 2 after its input summary was approved."""
     run_id = _run_id(state, WorkflowGate.A)
-    emit_progress("gate_a", "Awaiting your review of the technical limitations…")
+    emit_progress("gate_a", "Awaiting your review of the invention requirements…")
     interrupt(
         {
             "gate": str(WorkflowGate.A),
@@ -241,11 +239,10 @@ together."""
 
 
 def gate_strategy_node(state: GraphState) -> dict[str, Any]:
-    """Pause for the search strategy -- a human approves what will be searched for.
+    """Legacy pause where a human approves what will be searched for.
 
-    Placed between the approved understanding and `search_orchestrator`, so
-    **no provider is contacted until all three approvals exist**: the summary,
-    the limitations, and what the run will go looking for.
+    Flow-version-2 runs do not reach this node. It stays registered so a version-1
+    run already parked here can resume against the same durable node name.
 
     The payload carries `candidate_search_strategy`, which is **machine output**.
     The field name is the guard, exactly as at the understanding stage: the search
@@ -302,7 +299,7 @@ def gate_strategy_node(state: GraphState) -> dict[str, Any]:
 GATE_STRATEGY_RULES: tuple[str, ...] = (
     "at least one non-empty search query",
 )
-"""What stage 3 requires, surfaced to the reviewer.
+"""What legacy stage 3 requires, surfaced to the reviewer.
 
 Advisory here and **binding** in `workflow/review.py`. The third and last of spec
 section 3.5's rules; nothing else blocks.

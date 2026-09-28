@@ -7,7 +7,7 @@ import { SubmitScreen } from './submit-screen';
  *
  * Advanced Search used to be a second button. It is now a switch on the
  * description box, so the single action starts either a quick search or the
- * guided three-stage run. The primary action keeps one stable product label;
+ * guided two-stage run. The primary action keeps one stable product label;
  * the switch communicates which mode will run.
  */
 

@@ -198,7 +198,7 @@ describe('ActiveRunStore', () => {
   let runs: RunsService;
 
   beforeEach(() => {
-    localStorage.clear();
+    sessionStorage.clear();
     auth = new FakeAuth();
     TestBed.configureTestingModule({
       providers: [RunsService, ActiveRunStore, { provide: AuthService, useValue: auth }],
@@ -210,8 +210,8 @@ describe('ActiveRunStore', () => {
   it('namespaces the remembered run by account', () => {
     store.remember('a@example.invalid', 'run-a');
     store.remember('b@example.invalid', 'run-b');
-    expect(localStorage.getItem('novelty-lens-active-run:a@example.invalid')).toBe('run-a');
-    expect(localStorage.getItem('novelty-lens-active-run:b@example.invalid')).toBe('run-b');
+    expect(sessionStorage.getItem('novelty-lens-active-run:a@example.invalid')).toBe('run-a');
+    expect(sessionStorage.getItem('novelty-lens-active-run:b@example.invalid')).toBe('run-b');
   });
 
   it('exposes the remembered id for cancellation without fetching the run', () => {
@@ -223,15 +223,15 @@ describe('ActiveRunStore', () => {
   it('forgets a remembered run explicitly after cancellation', () => {
     store.remember('a@example.invalid', 'run-a');
     store.forget('a@example.invalid');
-    expect(localStorage.getItem('novelty-lens-active-run:a@example.invalid')).toBeNull();
+    expect(sessionStorage.getItem('novelty-lens-active-run:a@example.invalid')).toBeNull();
   });
 
   it('forgets every account when the signed-in identity changes', () => {
     store.remember('a@example.invalid', 'run-a');
     store.remember('b@example.invalid', 'run-b');
     store.forgetAll();
-    expect(localStorage.getItem('novelty-lens-active-run:a@example.invalid')).toBeNull();
-    expect(localStorage.getItem('novelty-lens-active-run:b@example.invalid')).toBeNull();
+    expect(sessionStorage.getItem('novelty-lens-active-run:a@example.invalid')).toBeNull();
+    expect(sessionStorage.getItem('novelty-lens-active-run:b@example.invalid')).toBeNull();
   });
 
   it('returns null when nothing was ever remembered', () => {

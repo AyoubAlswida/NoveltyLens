@@ -108,8 +108,8 @@ def test_gate_a_precedes_the_search_that_uses_its_decomposition():
 
     The path is now longer by two approved stages: the approved summary leads to
     limitation generation and its own pause, then the approved limitations lead
-    to the query strategy. There are three approvals in front of the first
-    provider call, so this asserts the complete path.
+    to automatic query generation. There are two approvals in front of the first
+    provider call, so this asserts both current and legacy exits.
     """
     edges = {(edge.source, edge.target) for edge in build_graph().get_graph().edges}
     assert ("decompose", "gate_a") in edges
@@ -117,20 +117,22 @@ def test_gate_a_precedes_the_search_that_uses_its_decomposition():
     assert ("propose_limitations", "gate_limitations") in edges
     assert ("gate_limitations", "propose_strategy") in edges
     assert ("propose_strategy", "gate_strategy") in edges
+    assert ("propose_strategy", "select_generated_queries") in edges
+    assert ("select_generated_queries", "prepare_approved_search") in edges
     assert ("gate_strategy", "prepare_approved_search") in edges
     assert ("prepare_approved_search", "search_orchestrator") in edges
     assert ("decompose", "search_orchestrator") not in edges
     assert ("gate_a", "search_orchestrator") not in edges
 
 
-def test_no_provider_call_is_reachable_before_all_three_approvals():
-    """**The property the SEARCH STRATEGY stage exists for.**
+def test_no_provider_call_is_reachable_before_both_invention_approvals():
+    """Both versioned routes stay behind the two invention approvals.
 
     `search_orchestrator` is the first node that can reach a provider. On the
     verified branch it must be reachable only from `prepare_approved_search`,
-    which is reachable only from `gate_strategy`, then `propose_strategy`, then
-    `gate_limitations`, then the first `gate_a`. Any other incoming edge would be
-    a path to a provider call that skips one of the three approvals -- and it would be silent, because a run that
+    which is reachable from either validated generated queries or the legacy
+    strategy gate. Both follow `propose_strategy`, `gate_limitations`, and the
+    first `gate_a`. Any other incoming edge could skip one of the two approvals.
     searched early would look exactly like one that searched on time.
 
     `expand_queries` is the search-only branch and is asserted separately: that
@@ -143,10 +145,15 @@ def test_no_provider_call_is_reachable_before_all_three_approvals():
     into_prepare = {
         source for source, target in edges if target == "prepare_approved_search"
     }
-    assert into_prepare == {"gate_strategy"}
+    assert into_prepare == {"gate_strategy", "select_generated_queries"}
 
     into_strategy_gate = {source for source, target in edges if target == "gate_strategy"}
     assert into_strategy_gate == {"propose_strategy"}
+
+    into_generated = {
+        source for source, target in edges if target == "select_generated_queries"
+    }
+    assert into_generated == {"propose_strategy"}
 
     into_propose = {source for source, target in edges if target == "propose_strategy"}
     # `gate_limitations` alone. This set used to also carry

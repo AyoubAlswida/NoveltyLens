@@ -3,13 +3,10 @@
 This stage sits between the approved invention understanding and the first
 provider call, and three properties dominate everything here:
 
-1. **No provider is contacted until all three approvals exist.** Summary and
-   limitations are independently approved before the strategy, and
-   `search_orchestrator` is reachable on the verified branch only from this
-   stage's gate.
-2. **Only the queries a human approved and left enabled are dispatched.** A
-   proposal is never dispatched, and a disabled query is kept as the record of
-   what was deliberately not searched for.
+1. **No provider is contacted until both invention approvals exist.** New runs
+   validate and dispatch generated queries; legacy runs retain human review.
+2. **Generated output is never recorded as human-approved.** Version 2 copies
+   validated text into execution state without writing approval tables.
 3. **A core element nobody will search for blocks approval.** Reporting no prior
    art for something nobody looked for is not a finding.
 
@@ -49,8 +46,8 @@ def _query(query_id="Q1", text="graphene oxide membrane", covers=("F1.E1",), ena
 # =========================================================================
 
 
-def test_the_strategy_stage_sits_between_the_approved_understanding_and_the_search():
-    """Approved queries are prepared before the shared search pipeline.
+def test_query_generation_sits_between_the_approved_understanding_and_the_search():
+    """Both current and legacy query routes rejoin the shared search pipeline.
 
     Nothing is dispatched to a provider until a person has approved both what the
     invention is and what will be searched for.
@@ -62,6 +59,8 @@ def test_the_strategy_stage_sits_between_the_approved_understanding_and_the_sear
     assert ("propose_limitations", "gate_limitations") in edges
     assert ("gate_limitations", "propose_strategy") in edges
     assert ("propose_strategy", "gate_strategy") in edges
+    assert ("propose_strategy", "select_generated_queries") in edges
+    assert ("select_generated_queries", "prepare_approved_search") in edges
     assert ("gate_strategy", "prepare_approved_search") in edges
     assert ("prepare_approved_search", "search_orchestrator") in edges
 
@@ -101,6 +100,138 @@ def test_a_search_only_run_never_reaches_the_strategy_stage():
     from graph.pipeline import _route_from_start
 
     assert _route_from_start({"advanced_search": False}) == "understand"
+
+
+def test_flow_version_routes_new_runs_automatically_and_old_runs_to_review():
+    from graph.pipeline import _route_after_strategy_proposal
+
+    assert _route_after_strategy_proposal({"advanced_search_flow_version": 2}) == "select_generated_queries"
+    assert _route_after_strategy_proposal({"advanced_search_flow_version": 1}) == "gate_strategy"
+    assert _route_after_strategy_proposal({}) == "gate_strategy"
+
+
+def test_generated_queries_are_validated_and_released_without_human_approval():
+    from graph.strategy import select_generated_queries_node
+
+    state = {
+        "decomposition_version": 4,
+        "candidate_search_strategy": {
+            "understanding_version": 4,
+            "queries": [_query("Q1", "  first query  "), _query("Q2", "second query")],
+        },
+    }
+    with patch("graph.strategy.emit_progress"):
+        written = select_generated_queries_node(state)
+    assert written == {"queries": ["first query", "second query"]}
+    assert "approved_search_strategy" not in written
+
+
+def test_advanced_strategy_adds_lexical_requirement_anchors_without_another_llm_call():
+    """A novel added subsystem cannot consume every retrieval angle.
+
+    The anchors are built from the approved requirements and original description,
+    so they are equally available to the automatic current flow and a legacy
+    strategy reviewer.
+    """
+    from graph.strategy import propose_strategy_node
+
+    features = [{
+        "feature_id": "F1",
+        "elements": [
+            {"element_id": "E1", "text": "rotating body with equal-sized food compartments"},
+            {"element_id": "E2", "text": "spring-loaded trap door released by a support bar"},
+            {"element_id": "E3", "text": "bowl-integrated load cell tracks uneaten food"},
+        ],
+    }]
+    generated = [
+        _query("Q1", "automatic dry-pet food rotating body equal-sized compartments spring-loaded trap door"),
+        _query("Q2", "automatic dry-pet food drive withdraws support bar spring-loaded trap door trough bowl"),
+        _query("Q3", "automatic dry-pet bowl load cell weighs eaten versus dispensed food"),
+        _query("Q4", "automatic dry-pet food uneaten feedings reduces portions phone alert"),
+        _query("Q5", "automatic dry-pet food scheduled measured portion gravity trough"),
+    ]
+    state = {
+        "description": "An automatic dry-pet-food dispenser with rotating compartments and trap doors.",
+        "approved_summary": "An automatic dry-pet-food dispenser.",
+        "approved_decomposition": {"version": 1, "features": features},
+        "decomposition_version": 1,
+        "advanced_search_flow_version": 2,
+    }
+
+    with patch("graph.strategy.llm.propose_search_strategy", return_value=generated) as planned, patch(
+        "graph.strategy.emit_progress"
+    ):
+        result = propose_strategy_node(state)
+
+    assert planned.call_args.kwargs["max_queries"] == 5
+    proposed = result["candidate_search_strategy"]["queries"]
+    assert len(proposed) == 8
+    anchor_texts = [item["query_text"] for item in proposed[5:]]
+    assert any("equal-sized compartments" in text for text in anchor_texts)
+    assert any("support bar" in text for text in anchor_texts)
+    assert any("load cell" in text for text in anchor_texts)
+    assert all(item["covered_element_ids"] == [] for item in proposed[5:])
+    assert all(len(item["query_text"].split()) <= 7 for item in proposed[5:])
+
+
+def test_advanced_core_anchor_is_not_the_tail_of_an_over_combined_query():
+    """A dense combined strategy query can be too restrictive for the source
+    patent. Its tail must not replace a short approved core requirement anchor.
+    """
+    from graph.strategy import propose_strategy_node
+
+    features = [{
+        "feature_id": "F1",
+        "elements": [
+            {"element_id": "E1", "text": "pet food dispenser rotating body having equal-sized compartments, each closed by a spring-loaded trap door"},
+            {"element_id": "E2", "text": "pet food dispenser drive mechanism withdraws a support bar so a trap door releases food through a directional trough on a schedule"},
+            {"element_id": "E3", "text": "pet food dispenser bowl load cell measures eaten food"},
+            {"element_id": "E4", "text": "pet food dispenser reduces portions after uneaten feedings and sends an alert"},
+        ],
+    }]
+    generated = [
+        _query("Q1", "automatic dry-pet food rotating body spring-loaded trap door periodic support bar gravity trough"),
+        _query("Q2", "automatic dry-pet food scheduled measured portion bowl load cell compares eaten"),
+        _query("Q3", "automatic dry-pet food bowl load cell consecutive uneaten feedings reduce portions phone alert"),
+    ]
+    state = {
+        "description": "An automatic dry-pet-food dispenser with rotating compartments.",
+        "approved_summary": "An automatic dry-pet-food dispenser.",
+        "approved_decomposition": {"version": 1, "features": features},
+        "decomposition_version": 1,
+        "advanced_search_flow_version": 2,
+    }
+
+    with patch("graph.strategy.llm.propose_search_strategy", return_value=generated) as planned, \
+         patch("graph.strategy.emit_progress"):
+        result = propose_strategy_node(state)
+
+    anchors = [item["query_text"] for item in result["candidate_search_strategy"]["queries"][3:]]
+    assert len(anchors) == 3
+    assert anchors[0].startswith("pet food dispenser ")
+    assert "spring-loaded trap door" in anchors[0]
+    assert "load cell" not in anchors[0]
+    assert "support bar gravity trough" not in anchors[0]
+    planned.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "candidate,match",
+    [
+        (None, "no strategy"),
+        ({"understanding_version": 3, "queries": [_query()]}, "does not match"),
+        ({"understanding_version": 4, "queries": []}, "no queries"),
+        ({"understanding_version": 4, "queries": [_query(text="")]}, "is empty"),
+        ({"understanding_version": 4, "queries": [_query(enabled=False)]}, "not enabled"),
+    ],
+)
+def test_invalid_generated_queries_fail_before_search(candidate, match):
+    from graph.strategy import select_generated_queries_node
+
+    with pytest.raises(ValueError, match=match):
+        select_generated_queries_node(
+            {"decomposition_version": 4, "candidate_search_strategy": candidate}
+        )
 
 
 def test_the_gate_refuses_to_pause_a_run_it_cannot_be_resumed_for():

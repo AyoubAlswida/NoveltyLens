@@ -105,8 +105,8 @@ const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.pdf', '.docx'];
                   </summary>
                   <p class="inline-help-popover">
                     Advanced Search pauses for your review before searching. You’ll
-                    confirm the invention summary, technical limitations, and search
-                    queries first.
+                    confirm the invention summary and Invention Requirements (Claims).
+                    The system then generates queries and starts the search.
                   </p>
                 </details>
               </span>
@@ -150,7 +150,7 @@ export class SubmitScreen {
   readonly description = input.required<string>();
   readonly descriptionChange = output<string>();
   readonly run = output<void>();
-  /** An Advanced Search run: the guided three-stage flow, rather than a search
+  /** An Advanced Search run: the guided two-stage flow, rather than a search
    * on its own. Still a separate output from `run` -- the two are genuinely
    * different code paths in the shell, and collapsing them into one event with
    * a boolean would push the branch into `app.ts` for no gain. */

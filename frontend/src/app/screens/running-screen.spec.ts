@@ -23,22 +23,65 @@ describe('RunningScreen', () => {
 
     const text = fixture.nativeElement.textContent;
     expect(text).toContain('Advanced Search');
-    expect(text).not.toContain('Searching for relevant prior art');
+    expect(fixture.nativeElement.querySelectorAll('.progress-step')).toHaveLength(1);
+    expect(text).toContain('Preparing the technical summary');
   });
 
-  it('names the search task after query approval', () => {
+  it('shows four high-level execution stages after Advanced Search approval', () => {
     fixture.componentRef.setInput('mode', 'advanced');
     fixture.componentRef.setInput('phaseOrder', ADVANCED_EXECUTION_PHASE_ORDER);
+    fixture.componentRef.setInput('phaseMessages', {
+      strategy: 'Generated 6 search queries; starting the search',
+      search: 'Searching patent databases... 6/6 · 23 found',
+    });
     fixture.detectChanges();
 
-    expect(fixture.nativeElement.querySelector('.progress-card-header')).toBeNull();
+    const steps = [...fixture.nativeElement.querySelectorAll('.progress-step')];
+    expect(steps.map((step: Element) => step.querySelector('.phase-label')?.textContent)).toEqual([
+      'Planning the search',
+      'Searching patent databases',
+      'Evaluating prior art',
+      'Preparing your analysis',
+    ]);
+    expect(fixture.nativeElement.textContent).not.toContain('6/6');
+    expect(fixture.nativeElement.textContent).not.toContain('23 found');
   });
 
-  it('names Quick Search without adding workflow navigation', () => {
+  it('groups Quick Search progress by real phase events rather than counts', () => {
     fixture.componentRef.setInput('mode', 'quick');
     fixture.componentRef.setInput('phaseOrder', QUICK_SEARCH_PHASE_ORDER);
+    fixture.componentRef.setInput('phaseMessages', {
+      queries: 'Generated 8 search queries',
+      search: 'Searching patent databases... 8/8 · 37 found',
+      enrich: 'Full text retrieved for 18/20 patents',
+    });
     fixture.detectChanges();
 
     expect(fixture.nativeElement.textContent).toContain('Novelty search');
+    expect(fixture.nativeElement.querySelectorAll('.progress-step')).toHaveLength(4);
+    expect(fixture.nativeElement.textContent).not.toContain('8/8');
+    expect(fixture.nativeElement.textContent).not.toContain('18/20');
+
+    fixture.componentRef.setInput('phaseIdx', QUICK_SEARCH_PHASE_ORDER.indexOf('search'));
+    fixture.detectChanges();
+    let steps = [...fixture.nativeElement.querySelectorAll('.progress-step')];
+    expect(steps[0].classList.contains('complete')).toBe(true);
+    expect(steps[1].classList.contains('active')).toBe(true);
+    expect(steps[1].querySelector('.phase-detail')).toBeNull();
+
+    fixture.componentRef.setInput('phaseIdx', QUICK_SEARCH_PHASE_ORDER.indexOf('enrich'));
+    fixture.detectChanges();
+    steps = [...fixture.nativeElement.querySelectorAll('.progress-step')];
+    expect(steps[1].classList.contains('complete')).toBe(true);
+    expect(steps[2].classList.contains('active')).toBe(true);
+  });
+
+  it('does not display an elapsed-time footer', () => {
+    fixture.componentRef.setInput('phaseOrder', QUICK_SEARCH_PHASE_ORDER);
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.progress-meta')).toBeNull();
+    expect(fixture.nativeElement.textContent).not.toContain('Elapsed on this screen');
+    expect(fixture.nativeElement.textContent).not.toContain('Current step');
   });
 });

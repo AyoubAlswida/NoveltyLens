@@ -31,9 +31,9 @@ MAX_SEARCH_WORKERS = 8
 """How many (query, provider) calls are in flight at once.
 
 Every pair is an independent outbound HTTP request, so running them one at a
-time made search latency scale linearly with query count for no reason:
-5 queries measured 13.4s serially, 11% of a 123s request, essentially all of it
-spent waiting. The cap bounds outbound concurrency against providers that meter
+time made search latency scale linearly with query count for no reason. In the
+historical five-query plan, search measured 13.4s serially, 11% of a 123s
+request, essentially all of it spent waiting. The cap bounds outbound concurrency against providers that meter
 per call - it is not a throughput knob to raise casually.
 """
 
@@ -42,7 +42,8 @@ FETCH_PER_QUERY = 10
 
 SerpAPI bills per *call*, not per result, and its Google Patents engine has
 always returned 10 for the price of one - ``search_google`` was requesting 10
-and discarding all but ``results_per_query`` of them. Across 5 queries that
+and discarding all but ``results_per_query`` of them. Across the historical
+five-query plan that
 threw away ~30 patents per search that had already been paid for.
 
 The discards now become ``index_only``: not enriched, not ranked, just indexed
@@ -112,6 +113,7 @@ def search_all_providers_strict(
     queries: list[str],
     results_per_query: int = 10,
     fetch_per_query: int = FETCH_PER_QUERY,
+    on_progress: Callable[[int, int, int], None] | None = None,
 ) -> KeywordSearchResults:
     """Search every provider for every query, failing if any single call fails.
 
@@ -126,7 +128,10 @@ def search_all_providers_strict(
     original query-major order**, which matters: ``merge_patents`` keeps the
     first record it sees for a given id, so collecting in completion order would
     make which copy of a duplicate survives depend on network timing, and the
-    same search could return subtly different records run to run.
+    same search could return subtly different records run to run. ``on_progress``
+    runs on this collecting thread after each completed provider response. Its
+    three values are completed requests, total requests, and raw records received;
+    no guessed percentage or timer-driven progress is reported.
 
     Raises:
         PatentSearchError: if any provider call raises, wrapping the original
@@ -143,6 +148,8 @@ def search_all_providers_strict(
 
     top: list[PatentRecord] = []
     rest: list[PatentRecord] = []
+    completed = 0
+    received = 0
     with ThreadPoolExecutor(max_workers=min(len(tasks), MAX_SEARCH_WORKERS)) as executor:
         pending = [
             (provider_name, query, executor.submit(provider, query, fetch_per_query))
@@ -157,6 +164,10 @@ def search_all_providers_strict(
                 ) from error
             top.extend(results[:results_per_query])
             rest.extend(results[results_per_query:])
+            completed += 1
+            received += len(results)
+            if on_progress is not None:
+                on_progress(completed, len(tasks), received)
             logger.info("%s returned %d patents for %r", provider_name, len(results), query)
 
     candidates = merge_patents(top)

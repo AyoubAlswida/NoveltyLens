@@ -37,6 +37,12 @@ HIGH_SCORE_THRESHOLD = 0.75
 MEDIUM_SCORE_THRESHOLD = 0.45
 HIGH_COVERAGE_RATIO = 0.75
 MEDIUM_COVERAGE_RATIO = 0.40
+SUBSTANTIVE_UNIT_SIMILARITY = 0.55
+"""Embedding evidence for one independently meaningful invention unit.
+
+Used only with at least one excerpt-grounded covered limitation. Semantic
+similarity alone cannot claim that a patent discloses a mechanism.
+"""
 
 
 def _risk_for(
@@ -63,15 +69,23 @@ def _risk_for(
     if result.similarity_score >= HIGH_SCORE_THRESHOLD and broad_coverage:
         return "High"
     # A strong hit on one isolated subsystem is still narrow prior art. Medium
-    # requires both meaningful aggregate similarity and coverage of at least
-    # two fifths of the independently approved limitations. This avoids a
-    # granularity cliff where the same disclosure moves from Medium to Low
-    # merely because one compound limitation was reviewed as two atomic ones.
+    # requires meaningful aggregate similarity plus either direct coverage of
+    # two fifths of the reviewed units or evidence across at least two
+    # independently meaningful units with one directly excerpt-supported unit.
+    # The latter prevents a granularity cliff: several new additions should not
+    # make a substantial core mechanism disclosed by prior art count as only
+    # one of many units merely because its steps were merged into one line.
     if result.similarity_score < MEDIUM_SCORE_THRESHOLD:
         return "Low"
-    if coverage_ratio < MEDIUM_COVERAGE_RATIO:
-        return "Low"
-    return "Medium"
+    if coverage_ratio >= MEDIUM_COVERAGE_RATIO:
+        return "Medium"
+    substantive_units = sum(
+        score >= SUBSTANTIVE_UNIT_SIMILARITY
+        for score in result.unit_similarity_scores
+    )
+    if unique_covered and substantive_units >= 2:
+        return "Medium"
+    return "Low"
 
 
 def format_matches(
@@ -91,8 +105,9 @@ def format_matches(
     The aggregate embedding score and the excerpt-grounded structured coverage
     are read here and published nowhere. High requires both ``>= 75`` and broad
     support in the same patent excerpt. Medium requires both ``>= 45`` aggregate
-    similarity and coverage of at least two fifths of the limitations. Narrow subsystem
-    overlap is Low regardless of how strongly that isolated subsystem matches.
+    similarity and either excerpt-grounded coverage of at least two fifths of
+    the limitations or breadth across two meaningful embedding units with at
+    least one directly covered limitation. An isolated subsystem remains Low.
     """
     scored: list[tuple[float, dict[str, object]]] = []
     for result, rationale, tags, covered_ids in zip(

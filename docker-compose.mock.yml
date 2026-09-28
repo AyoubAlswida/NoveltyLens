@@ -1,0 +1,73 @@
+# Start alongside docker-compose.yml to keep the presentation mock isolated.
+# Real: frontend 4200 / API 8001. Mock: frontend 4201 / API 8002.
+# First use, after the base images have been built:
+#   docker compose -f docker-compose.yml -f docker-compose.mock.yml up -d --wait mock-postgres mock-qdrant
+#   docker compose -f docker-compose.yml -f docker-compose.mock.yml run --rm --no-deps --user 0 mock-backend python migrate.py
+#   docker compose -f docker-compose.yml -f docker-compose.mock.yml run --rm --no-deps mock-backend python checkpointer.py setup
+#   docker compose -f docker-compose.yml -f docker-compose.mock.yml up -d --wait mock-backend mock-frontend
+# --user 0 is local to the yoyo migration command: the image's arbitrary UID
+# has no passwd name, and yoyo needs one for its migration log.
+services:
+  mock-postgres:
+    image: postgres:17.10-alpine
+    container_name: agenticai-mock-postgres
+    environment:
+      POSTGRES_USER: agenticai
+      POSTGRES_PASSWORD: agenticai
+      POSTGRES_DB: agenticai
+    volumes:
+      - mock-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agenticai -d agenticai"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  mock-qdrant:
+    image: qdrant/qdrant:v1.18.3
+    container_name: agenticai-mock-qdrant
+    volumes:
+      - mock-qdrant-data:/qdrant/storage
+    mem_limit: 2g
+    healthcheck:
+      test: ['CMD', 'bash', '-c', 'exec 3<>/dev/tcp/127.0.0.1/6333 && printf "GET /readyz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 && grep -q "200 OK" <&3']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  mock-backend:
+    build:
+      context: ./backend
+    image: agenticai-mock-backend:pet-demo
+    container_name: agenticai-mock-backend
+    env_file:
+      - backend/.env
+    environment:
+      DATABASE_URL: postgresql://agenticai:agenticai@mock-postgres:5432/agenticai
+      QDRANT_URL: http://mock-qdrant:6333
+    command: ["python", "run_mock.py", "--workflow", "--host", "0.0.0.0", "--pace", "8.5"]
+    ports:
+      - "127.0.0.1:8002:8001"
+    depends_on:
+      mock-postgres:
+        condition: service_healthy
+      mock-qdrant:
+        condition: service_healthy
+
+  mock-frontend:
+    build:
+      context: ./frontend
+    image: agenticai-mock-frontend:pet-demo
+    container_name: agenticai-mock-frontend
+    environment:
+      API_URL: http://localhost:8002
+    ports:
+      - "127.0.0.1:4201:8080"
+    depends_on:
+      - mock-backend
+
+volumes:
+  mock-postgres-data:
+  mock-qdrant-data:

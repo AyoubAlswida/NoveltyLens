@@ -1,6 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   effect,
   inject,
   input,
@@ -19,17 +20,12 @@ export interface DraftRow {
   text: string;
 }
 
-/** Which of the three stages is on screen. */
+/** Stage 3 exists only for a legacy run already committed to query review. */
 export type StageNumber = 1 | 2 | 3;
 
-/**
- * The three stages, named as the reviewer meets them.
- *
- * Not "Results": the third stage approves the searches, and the results come
- * after the run finishes. Naming a step for the thing that happens next would
- * promise a stage this flow does not have.
- */
-export const STAGE_NAMES = ['Summary', 'Limitations', 'Queries'];
+/** The two current stages, plus the legacy query-review label. */
+export const STAGE_NAMES = ['Summary', 'Invention Requirements (Claims)'];
+export const LEGACY_STAGE_NAMES = [...STAGE_NAMES, 'Queries'];
 
 export const TOTAL_STAGES = STAGE_NAMES.length;
 
@@ -48,33 +44,29 @@ export const TOTAL_STAGES = STAGE_NAMES.length;
  * them in advance.
  */
 /**
- * **Advanced Search: three stages, three approvals, one screen.**
+ * **Advanced Search: two current stages, with legacy query-review support.**
  *
  * A standard prior-art search preceded by guided editing. The system first
  * proposes only a technical summary. After the user edits and approves that
- * summary, it generates searchable technical limitations from the approved
- * text. The user approves those independently, then reviews and approves the
- * generated search queries before the ordinary search pipeline executes.
+ * summary, it generates searchable invention requirements from the approved
+ * text. The user approves those independently, then the system generates and
+ * validates search queries before the ordinary search pipeline executes.
  *
  * It performs **no** evidence verification, makes **no** legal conclusion, and
  * presents **no** numeric score.
  *
- * ## Why one component for three stages
+ * ## Why legacy stage 3 remains in this component
  *
- * Stage 1 approves the summary before Stage 2 can be generated. Stage 2 then
- * approves those limitations, and Stage 3 approves the strategy. Three
- * approvals, three screens — and the three
- * screens are one flow a person walks forward and back through, so the drafts
- * live in one place. Splitting them across components would put the drafts
- * behind a router or a shared store purely so that pressing Back could find them
- * again.
+ * Runs admitted before flow version 2 can already be parked at STRATEGY. Their
+ * query editor stays here so those durable checkpoints remain resumable, while
+ * new runs expose only Summary and Invention Requirements (Claims).
  *
  * ## What navigation does and does not do
  *
  * Moving backward preserves every edit and never touches the server. Each
- * forward transition approves the artifact visible on that stage: 1 → 2 saves
- * the summary, 2 → 3 saves the limitations, and leaving stage 3 saves the
- * queries and starts the search.
+ * forward transition approves the artifact visible on that stage. For current
+ * runs, leaving stage 2 starts automatic query generation and search. Legacy
+ * runs still move to stage 3 and approve their queries.
  *
  * Once the understanding is approved the run moves to the strategy gate, so
  * going back to stage 2 and forward again must **not** try to approve it a
@@ -101,12 +93,12 @@ export const TOTAL_STAGES = STAGE_NAMES.length;
       [detail]="detail()"
       [title]="stageTitle()"
       [subtitle]="stageLede()"
-      [steps]="STAGE_NAMES"
+      [steps]="stageNames()"
       [current]="stage()"
       [blocking]="blocking()"
       [busy]="state() === 'validating'"
       [canApprove]="violations().length === 0"
-      [approveLabel]="stage() === TOTAL_STAGES ? 'Approve and search' : 'Next'"
+      [approveLabel]="approveLabel()"
       (approve)="next()"
       (back)="previous()"
       (reload)="load(runId(), gate())"
@@ -169,7 +161,7 @@ export const TOTAL_STAGES = STAGE_NAMES.length;
               @for (row of elements(); track row.key; let i = $index) {
                 <li class="draft-row">
                   <label class="sr-only" [attr.for]="'element-' + row.key">
-                    Technical limitation {{ i + 1 }}
+                    Invention requirement (claim) {{ i + 1 }}
                   </label>
                   <input
                     class="draft-input"
@@ -181,18 +173,18 @@ export const TOTAL_STAGES = STAGE_NAMES.length;
                     class="draft-remove"
                     type="button"
                     (click)="removeRow(elements, row.key)"
-                    [attr.aria-label]="'Remove technical limitation ' + (i + 1)"
+                    [attr.aria-label]="'Remove invention requirement (claim) ' + (i + 1)"
                   >
                     <app-icon name="X" [size]="16" />
                   </button>
                 </li>
               } @empty {
-                <li class="empty-state">No technical limitations yet. Add the first one.</li>
+                <li class="empty-state">No invention requirements yet. Add the first one.</li>
               }
             </ul>
 
             <button class="secondary-button" type="button" (click)="addRow(elements, 'E')">
-              <app-icon name="Plus" [size]="16" /> Add limitation
+              <app-icon name="Plus" [size]="16" /> Add requirement
             </button>
           </section>
         }
@@ -250,9 +242,13 @@ export class AdvancedSearchStages {
   readonly gate = input.required<string>();
   readonly back = output<void>();
   readonly resumed = output<WorkflowGate>();
+  readonly searchReleased = output<void>();
 
   readonly TOTAL_STAGES = TOTAL_STAGES;
-  readonly STAGE_NAMES = STAGE_NAMES;
+  readonly strategyReviewRequired = signal(false);
+  readonly stageNames = computed(() =>
+    this.strategyReviewRequired() ? LEGACY_STAGE_NAMES : STAGE_NAMES,
+  );
 
   readonly state = signal<GateState>('loading');
   readonly detail = signal('');
@@ -296,6 +292,7 @@ export class AdvancedSearchStages {
     this.state.set('loading');
     try {
       if (gate === 'STRATEGY') {
+        this.strategyReviewRequired.set(true);
         const payload = await this.runs.gateStrategy(runId);
         this.queries.set(((payload['queries'] as string[]) ?? []).map((q) => this.row(q)));
         // The understanding is already approved; stages 1 and 2 are still
@@ -306,6 +303,7 @@ export class AdvancedSearchStages {
         this.stage.set(3);
       } else {
         const payload = await this.runs.gateA(runId);
+        this.strategyReviewRequired.set(Boolean(payload['strategy_review_required']));
         this.originalDescription.set(String(payload['original_description'] ?? ''));
         this.summary.set(String(payload['technical_summary'] ?? ''));
         const technicalElements = this.technicalElements(payload);
@@ -339,7 +337,13 @@ export class AdvancedSearchStages {
    * wrong stage on the one screen whose job is to say where you are.
    */
   stageGate(): string {
-    return this.stage() === TOTAL_STAGES ? 'STRATEGY' : 'A';
+    return this.stage() === 3 ? 'STRATEGY' : 'A';
+  }
+
+  approveLabel(): string {
+    if (this.stage() === 2 && !this.strategyReviewRequired()) return 'Approve and search';
+    if (this.stage() === 3) return 'Approve and search';
+    return 'Next';
   }
 
   stageTitle(): string {
@@ -347,7 +351,7 @@ export class AdvancedSearchStages {
       case 1:
         return 'Review and edit invention summary';
       case 2:
-        return 'Edit the technical limitations';
+        return 'Edit the Invention Requirements (Claims)';
       default:
         return 'Review search queries';
     }
@@ -359,7 +363,7 @@ export class AdvancedSearchStages {
       case 1:
         return 'This is how Novelty Lens understood your invention. Edit it if needed.';
       case 2:
-        return 'Edit the technical limitations to be searched. Add anything missing and remove anything not being claimed.';
+        return 'Edit the invention requirements to be searched. Add anything missing and remove anything not being claimed.';
       default:
         return 'These are the search queries that will run. Approving them starts the search.';
     }
@@ -409,7 +413,7 @@ export class AdvancedSearchStages {
       problems.push('The technical summary cannot be empty.');
     }
     if (this.stage() === 2 && !this.nonEmpty(this.elements()).length) {
-      problems.push('At least one technical limitation is needed.');
+      problems.push('At least one invention requirement (claim) is needed.');
     }
     if (this.stage() === 3 && !this.nonEmpty(this.queries()).length) {
       problems.push('At least one search query is needed.');
@@ -452,7 +456,7 @@ export class AdvancedSearchStages {
       // Already approved earlier in this session: walking back and forward is
       // navigation, not a second approval.
       if (this.understandingApproved()) {
-        this.stage.set(3);
+        if (this.strategyReviewRequired()) this.stage.set(3);
         return;
       }
       await this.commit('limitations', () =>
@@ -503,7 +507,11 @@ export class AdvancedSearchStages {
       }
       if (action === 'limitations') {
         this.understandingApproved.set(true);
-        this.resumed.emit('A');
+        if (this.strategyReviewRequired()) {
+          this.resumed.emit('A');
+        } else {
+          this.searchReleased.emit();
+        }
         return;
       }
       this.resumed.emit('STRATEGY');
@@ -538,7 +546,7 @@ export class AdvancedSearchStages {
         // The worker is between checkpoints. The durable stream remains active.
       }
     }
-    this.detail.set('The approved summary was saved, but the technical limitations are not ready yet.');
+    this.detail.set('The approved summary was saved, but the invention requirements are not ready yet.');
     this.state.set('reconnecting');
   }
 

@@ -49,6 +49,201 @@ def test_quick_search_preserves_understood_concepts_as_similarity_units():
     assert result["similarity_units"] == analysis.concepts
 
 
+def test_quick_search_adds_generic_lexical_anchors_for_the_core_concepts():
+    """A paraphrase may be semantically good while missing an older patent's
+    literal mechanism vocabulary. The retrieval plan must carry both views.
+
+    This fixture describes a domain and components only; the implementation is
+    forbidden from knowing a patent number or special-casing pet feeders.
+    """
+    from graph.understanding import build_quick_retrieval_queries
+    from models import InventionAnalysis
+
+    description = (
+        "An automatic dry-pet-food dispenser with a rotating body containing "
+        "several equal-sized compartments."
+    )
+    analysis = InventionAnalysis(
+        queries=[
+            "rotary compartment trapdoor feeder",
+            "gravity-fed measured portion dispenser",
+            "bowl load cell appetite monitoring",
+            "uneaten food based portion reduction",
+            "automatic pet feeder portion control",
+        ],
+        keywords=["draw bar", "trap door", "directional trough"],
+        concepts=[
+            "Rotating body with multiple equal-sized compartments for metered food storage",
+            "Spring-loaded trap door closure with a support bar release mechanism",
+            "Periodic gravity discharge of one compartment into a pet bowl via a trough",
+            "Bowl-integrated load cell measuring actual consumption",
+        ],
+    )
+
+    queries = build_quick_retrieval_queries(description, analysis)
+
+    assert queries[:5] == analysis.queries
+    assert len(queries) == 8
+    assert any(
+        "pet food dispenser" in query.casefold()
+        and "trap door" in query.casefold()
+        and "bar" in query.casefold()
+        for query in queries
+    )
+    assert any("directional trough" in query.casefold() for query in queries)
+
+
+def test_quick_search_joins_adjacent_keyword_phrases_when_concepts_are_split():
+    """Regression from a live miss: every isolated concept was too broad for Lens.
+
+    The fixture knows its subject matter; the retrieval implementation only
+    knows ordered keyword phrases, their adjacency, and the submitted platform.
+    """
+    from graph.understanding import build_quick_retrieval_queries
+    from models import InventionAnalysis
+
+    analysis = InventionAnalysis(
+        queries=[
+            "rotary compartment trap door feeder",
+            "metered gravity pet food dispenser",
+            "bowl load cell consumption monitor",
+            "rotary feeder load cell portion control",
+            "automatic pet feeder chute portion",
+        ],
+        keywords=[
+            "rotary compartment dispenser",
+            "spring-loaded trap door",
+            "support bar release",
+            "gravity-fed trough",
+            "metered portion dispensing",
+            "scheduled pet feeder",
+            "load cell bowl",
+        ],
+        concepts=[
+            "Rotating compartmented dispenser body with multiple equal-sized bins",
+            "Spring-loaded trap door at the bottom of each compartment",
+            "Drive mechanism that retracts a support bar to release one compartment",
+        ],
+    )
+    queries = build_quick_retrieval_queries(
+        "An automatic dry-pet-food dispenser with a rotating body containing compartments.",
+        analysis,
+    )
+
+    assert len(queries) == 8
+    assert queries[:5] == analysis.queries
+    assert "pet food dispenser compartment spring-loaded trap door" in queries[5:]
+    assert all(len(query.split()) <= 7 for query in queries[5:])
+
+
+@pytest.mark.parametrize(
+    ("description", "keywords", "joined_phrase"),
+    [
+        (
+            "A photoelectric smoke detector with an optical chamber.",
+            ["angled emitter receiver", "baffled optical chamber", "threshold alarm"],
+            "receiver baffled optical chamber",
+        ),
+        (
+            "A heat recovery controller with a bypass valve.",
+            ["exchanger temperature", "threshold bypass valve", "controller actuation"],
+            "temperature threshold bypass valve",
+        ),
+    ],
+)
+def test_quick_keyword_pair_anchors_are_domain_neutral(description, keywords, joined_phrase):
+    from graph.understanding import build_quick_retrieval_queries
+    from models import InventionAnalysis
+
+    analysis = InventionAnalysis(
+        queries=[f"planned query {index}" for index in range(1, 6)],
+        keywords=keywords,
+        concepts=["isolated component"],
+    )
+    queries = build_quick_retrieval_queries(description, analysis)
+    assert len(queries) == 8
+    assert any(joined_phrase in query.casefold() for query in queries[5:])
+
+
+@pytest.mark.parametrize(
+    ("description", "concept", "expected_domain", "expected_concept_terms"),
+    [
+        (
+            "A photoelectric smoke detector with a baffled optical chamber.",
+            "Angled emitter and receiver paths intersect inside the optical chamber",
+            {"photoelectric", "smoke", "detector"},
+            {"angled", "emitter", "receiver", "chamber"},
+        ),
+        (
+            "A closed-loop exhaust heat recovery system comprising a bypass valve.",
+            "Controller opens a bypass valve when exchanger temperature exceeds a threshold",
+            {"heat", "recovery", "system"},
+            {"controller", "bypass", "valve", "threshold"},
+        ),
+        (
+            "A refillable drinking-water bottle that sterilises a shared flow path.",
+            "UV-C emitter and membrane act sequentially on the same water flow path",
+            {"drinking", "water", "bottle"},
+            {"uv-c", "emitter", "membrane", "path"},
+        ),
+    ],
+)
+def test_lexical_anchor_generation_is_domain_neutral(
+    description, concept, expected_domain, expected_concept_terms
+):
+    from graph.understanding import build_quick_retrieval_queries
+    from models import InventionAnalysis
+
+    analysis = InventionAnalysis(
+        queries=[f"planned query {index}" for index in range(1, 6)],
+        keywords=[],
+        concepts=[concept],
+    )
+    queries = build_quick_retrieval_queries(description, analysis)
+    anchor_terms = set(queries[-1].casefold().split())
+    assert expected_domain <= anchor_terms
+    assert len(anchor_terms & expected_concept_terms) >= 2
+    assert len(queries[-1].split()) <= 7
+
+
+def test_quick_retrieval_plan_is_bounded_and_deduplicated():
+    from graph.understanding import (
+        MAX_QUICK_RETRIEVAL_QUERIES,
+        build_quick_retrieval_queries,
+    )
+    from models import InventionAnalysis
+
+    analysis = InventionAnalysis(
+        queries=["membrane-filter", "membrane filter", "flow trigger", "valve control", "sensor action"],
+        keywords=[],
+        concepts=[f"technical relationship {index} actuator response" for index in range(20)],
+    )
+    queries = build_quick_retrieval_queries("A filtration controller with a valve", analysis)
+
+    assert len(queries) <= MAX_QUICK_RETRIEVAL_QUERIES
+    assert len(queries) == 7  # four unique primary queries plus three anchors
+    assert len({" ".join(query.casefold().replace("-", " ").split()) for query in queries}) == len(queries)
+
+
+def test_essential_keywords_fill_anchor_slots_when_concepts_are_sparse():
+    from graph.understanding import build_quick_retrieval_queries
+    from models import InventionAnalysis
+
+    analysis = InventionAnalysis(
+        queries=[f"planned query {index}" for index in range(1, 6)],
+        concepts=["valve opens when pressure exceeds a threshold"],
+        keywords=["differential pressure", "spring return", "bypass conduit", "heat exchanger"],
+    )
+    queries = build_quick_retrieval_queries(
+        "A heat recovery controller comprising a bypass valve",
+        analysis,
+    )
+
+    assert len(queries) == 8
+    assert any("differential pressure" in query.casefold() for query in queries)
+    assert any("bypass conduit" in query.casefold() for query in queries)
+
+
 def _feature(feature_id="F1", elements=None, relationships=None):
     return {
         "feature_id": feature_id,
@@ -312,6 +507,35 @@ def test_summary_and_limitations_use_separate_model_calls():
     assert features == [_feature()]
 
 
+def test_active_search_prompts_keep_independent_operations_as_separate_units():
+    import llm
+
+    prompts = []
+
+    def capture(prompt, **kwargs):
+        prompts.append(prompt)
+        if llm.LIMITATIONS_PROMPT_MARKER in prompt:
+            return {"features": [_feature()]}
+        return {
+            "concepts": ["a timed actuator withdraws a support member"],
+            "keywords": ["timed actuator"],
+            "queries": [
+                "timed mechanical release", "compartmented material dispenser",
+                "gravity guided discharge", "measured output schedule",
+                "feedback controlled portions",
+            ],
+        }
+
+    with patch.object(llm, "_llm_json", side_effect=capture):
+        llm.understand_invention("a scheduled material dispenser")
+        llm.propose_technical_limitations("an approved material dispenser summary")
+
+    assert "one independently\n   checkable technical relationship" in prompts[0]
+    assert "do not merge several independent\n   core operations" in prompts[0]
+    assert "Separately list independently checkable" in prompts[1]
+    assert "not an isolated noun" in prompts[1]
+
+
 def test_limitation_generation_refuses_an_empty_or_duplicate_proposal():
     import llm
 
@@ -360,13 +584,14 @@ def test_the_understanding_stage_sits_before_the_search_in_the_graph():
     assert ("gate_a", "propose_limitations") in edges
     assert ("propose_limitations", "gate_limitations") in edges
     assert ("gate_limitations", "propose_strategy") in edges
+    assert ("select_generated_queries", "prepare_approved_search") in edges
     assert ("gate_strategy", "prepare_approved_search") in edges
     assert ("prepare_approved_search", "search_orchestrator") in edges
     assert ("gate_a", "search_orchestrator") not in edges
     assert ("decompose", "search_orchestrator") not in edges
 
 
-def test_an_approved_understanding_leads_to_the_strategy_stage_and_nowhere_else():
+def test_an_approved_understanding_leads_to_query_generation_and_nowhere_else():
     """Replaces `test_a_rejected_analysis_routes_back_to_the_analysis_not_on_to_the_search`.
 
     That test asserted the regeneration loop `gate_a -> regenerate_understanding
@@ -377,8 +602,8 @@ def test_an_approved_understanding_leads_to_the_strategy_stage_and_nowhere_else(
 
     The guarantee that survives -- and the reason the loop existed -- is that an
     approved summary leads only to limitation generation. The independently
-    approved limitations then lead to the SEARCH STRATEGY stage, so there are
-    three approvals in front of any search.
+    approved requirements then lead to query generation. New runs validate those
+    queries automatically; legacy runs retain the third review.
     """
     from graph.pipeline import build_graph
 

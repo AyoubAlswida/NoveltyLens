@@ -77,7 +77,7 @@ _RUN_COLUMNS = """
     id, description, claims, cutoff_date, date_policy, text_version_policy,
     status, current_gate, thread_id, created_by, next_sequence,
     events_compacted_below, failure_code, failure_detail, created_at, updated_at,
-    problem_solved, inventor_novelty_statement
+    problem_solved, inventor_novelty_statement, advanced_search_flow_version
 """
 
 
@@ -105,6 +105,7 @@ def _run_dict(row: tuple[Any, ...]) -> dict[str, Any]:
         # cannot tell them apart would state the second when it means the first.
         "problem_solved": row[16],
         "inventor_novelty_statement": row[17],
+        "advanced_search_flow_version": int(row[18]),
     }
 
 

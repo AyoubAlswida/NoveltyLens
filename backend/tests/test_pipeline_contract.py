@@ -44,6 +44,8 @@ QUERIES = [
     "uv-c water sterilization bottle",
     "graphene oxide filtration membrane",
     "flow rate sensor bottle cap",
+    "portable bottle sterilization filtration",
+    "water treatment bottle flow path",
 ]
 
 CORPUS = [
@@ -198,6 +200,81 @@ def test_result_payload_carries_the_whole_contract(deterministic):
     assert CORE_PATENT_FIELDS <= result["data"]["patents"][0].keys()
 
 
+def test_paraphrased_core_plus_new_subsystem_reaches_source_through_anchor_query():
+    """Regression for a real recall miss: the model's five semantic queries did
+    not retrieve the source, while its extracted core concepts still contained
+    enough literal mechanism vocabulary to form a high-precision search angle.
+
+    The implementation remains domain-neutral. Only this fixture knows the
+    expected publication, just as a benchmark must know its labelled answer.
+    """
+    description = (
+        "An automatic dry-pet-food dispenser with a rotating body containing "
+        "several equal-sized compartments, each closed by a spring-loaded trap "
+        "door. A support bar is withdrawn so food falls through a trough. The "
+        "bowl also has a load cell that reduces later portions after leftovers."
+    )
+    concepts = [
+        "Rotating body with multiple equal-sized compartments for metered food storage",
+        "Spring-loaded trap door closure with a support bar release mechanism",
+        "Periodic gravity discharge of one compartment into a pet bowl via a trough",
+        "Bowl-integrated load cell measuring consumption and reducing future portions",
+    ]
+    primary_queries = [
+        "rotary compartment trapdoor feeder",
+        "gravity-fed measured portion dispenser",
+        "bowl load cell appetite monitoring",
+        "uneaten food based portion reduction",
+        "automatic pet feeder portion control",
+    ]
+    source = PatentRecord(
+        id="US5109799A",
+        title="Automatic dry pet food dispenser",
+        abstract=(
+            "Like-sized compartments have bottom trap door panels released when "
+            "a supporting draw bar is withdrawn so food falls through a trough."
+        ),
+        full_text=(
+            "A drive recoils a draw bar supporting trap doors beneath a plurality "
+            "of compartments and sequentially dispenses measured dry pet food."
+        ),
+        source="Lens.org",
+    )
+    searched: list[str] = []
+
+    def source_only_for_the_mechanism_anchor(query: str, size: int):
+        searched.append(query)
+        if "trap door" in query.casefold() and "support bar" in query.casefold():
+            return [source]
+        return []
+
+    def llm_boundary(prompt: str, **kwargs: object) -> str:
+        if "PatentScout AI" in prompt:
+            return json.dumps(
+                {
+                    "concepts": concepts,
+                    "keywords": ["trap door", "support bar", "directional trough"],
+                    "queries": primary_queries,
+                }
+            )
+        return _fake_llm_chat(prompt, **kwargs)
+
+    with patch("llm._llm_chat", side_effect=llm_boundary), patch(
+        "search.search.SOURCES",
+        (("Lens.org", source_only_for_the_mechanism_anchor),),
+    ):
+        result = list(run_graph_pipeline(description, None))[-1]["data"]
+
+    assert result["query_count"] == 8
+    assert [patent["num"] for patent in result["patents"]] == ["US5109799A"]
+    assert any(
+        "pet food dispenser" in query.casefold()
+        and "trap door" in query.casefold()
+        and "bar" in query.casefold()
+        for query in searched
+    )
+
+
 # --------------------------------------------------------------------------
 # Zero-tolerance failure behavior
 # --------------------------------------------------------------------------
@@ -261,7 +338,9 @@ def test_empty_corpus_returns_an_honest_empty_report():
     assert "verdict" not in data
     # Real values -- the LLM did run, so these are measured, not invented.
     assert data["concepts"] == CONCEPTS
-    assert data["query_count"] == len(QUERIES)
+    # Five model-planned angles plus one lexical anchor for each of the three
+    # concepts. The report counts provider queries actually executed.
+    assert data["query_count"] == len(QUERIES) + len(CONCEPTS)
 
 
 def test_canned_recommendation_appears_nowhere_in_the_graph_package():

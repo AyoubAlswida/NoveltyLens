@@ -184,7 +184,7 @@ export class RunsService {
     });
   }
 
-  /** Stage 2 approval of the limitations generated from the approved summary. */
+  /** Stage 2 approval of invention requirements generated from the summary. */
   approveGateLimitations(runId: string, elements: string[], key: string) {
     return this.post(`/api/runs/${runId}/gates/A/approve`, {
       review_stage: 'limitations',
@@ -194,8 +194,7 @@ export class RunsService {
   }
 
   /**
-   * Approve the search queries: stage 3, and the approval that releases the run
-   * into the search.
+   * Legacy only: approve search queries for a pre-version-2 run.
    *
    * A plain list of strings. Every approved query runs -- enable/disable is gone,
    * so there is no "sent but not dispatched" state to represent, and nothing
@@ -291,11 +290,12 @@ export class RunsService {
 }
 
 /**
- * The active verified run, remembered only so a reload can cancel it.
+ * The active Advanced Search in this tab, remembered across reloads.
  *
  * The key is namespaced by account so one user can never cancel another user's
- * remembered run. It is not navigation state and is never used to restore a
- * screen.
+ * remembered run. The id is only a hint: the API verifies ownership and status
+ * before the screen is restored. Session storage keeps another tab from
+ * cancelling or adopting this tab's run.
  */
 @Injectable({ providedIn: 'root' })
 export class ActiveRunStore {
@@ -306,18 +306,17 @@ export class ActiveRunStore {
   /** Remember the run this account is working on. */
   remember(email: string, runId: string): void {
     try {
-      localStorage.setItem(this.key(email), runId);
+      sessionStorage.setItem(this.key(email), runId);
     } catch {
-      // A browser with storage disabled loses the startup cancellation retry;
-      // pagehide still makes its best-effort request. Do not fail a working
-      // session merely because storage is unavailable.
+      // A browser with storage disabled loses reload recovery. Do not fail a
+      // working session merely because storage is unavailable.
     }
   }
 
-  /** Read the id to cancel. It is never sufficient authority to render a run. */
+  /** Read the id to verify with the API. It is never rendering authority. */
   peek(email: string): string | null {
     try {
-      return localStorage.getItem(this.key(email));
+      return sessionStorage.getItem(this.key(email));
     } catch {
       return null;
     }
@@ -326,7 +325,7 @@ export class ActiveRunStore {
   /** Forget it after cancellation, completion, failure, sign-out, or a 404. */
   forget(email: string): void {
     try {
-      localStorage.removeItem(this.key(email));
+      sessionStorage.removeItem(this.key(email));
     } catch {
       /* see remember() */
     }
@@ -335,9 +334,9 @@ export class ActiveRunStore {
   /** Forget every account's key. Used when the signed-in email changes. */
   forgetAll(): void {
     try {
-      for (let i = localStorage.length - 1; i >= 0; i -= 1) {
-        const key = localStorage.key(i);
-        if (key?.startsWith('novelty-lens-active-run:')) localStorage.removeItem(key);
+      for (let i = sessionStorage.length - 1; i >= 0; i -= 1) {
+        const key = sessionStorage.key(i);
+        if (key?.startsWith('novelty-lens-active-run:')) sessionStorage.removeItem(key);
       }
     } catch {
       /* see remember() */

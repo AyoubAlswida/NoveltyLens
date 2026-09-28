@@ -1,10 +1,12 @@
 """The Advanced Search HTTP surface.
 
-Advanced Search is a standard prior-art search preceded by guided editing: the
-run pauses three times for a person -- first on the summary, then on limitations
-generated from that approved summary, and finally on the search queries -- and then executes
-the ordinary search pipeline. It performs no evidence verification, reaches no
-legal conclusion, and presents no numeric score.
+Advanced Search is a standard prior-art search preceded by guided editing: a
+new run pauses twice for a person -- first on the summary, then on Invention
+Requirements (Claims) generated from that approved summary. It then generates
+and validates search queries automatically before executing the ordinary search
+pipeline. Version-1 runs retain their historical query-review pause. The flow
+performs no evidence verification, reaches no legal conclusion, and presents no
+numeric score.
 
 The Gate B/C/D surface that used to live here -- candidate curation, the
 verification matrix and its cells, the draft report and its approval, and both
@@ -381,6 +383,11 @@ async def gate_a(run_id: str, email: CurrentUser) -> dict[str, Any]:
         "approved_version": version,
         "completion_rules": list(completion_rules),
         "limits": {"max_elements_total": MAX_ELEMENTS_TOTAL},
+        # Additive compatibility signal: the UI uses two stages for new runs,
+        # while a run admitted before flow version 2 still gets its query review.
+        "strategy_review_required": int(
+            run.get("advanced_search_flow_version") or 1
+        ) < 2,
     }
 
 
@@ -539,7 +546,7 @@ async def approve_gate_a(
                         approved_at=approved_at,
                     )
                     field = "limitations_version"
-                    reason = "Technical limitations approved."
+                    reason = "Invention requirements (claims) approved."
                     response = {
                         "decomposition_version": written,
                         "understanding_version": version,
@@ -579,7 +586,7 @@ async def approve_gate_a(
             raise to_http(error, run_id=run_id) from error
 
 
-# --- Workflow Gate STRATEGY: the search queries (stage 3) -------------------
+# --- Legacy Workflow Gate STRATEGY: pre-version-2 runs only -----------------
 
 
 @router.get("/{run_id}/gates/STRATEGY")
@@ -602,7 +609,7 @@ async def gate_strategy(run_id: str, email: CurrentUser) -> dict[str, Any]:
 
     with db.connect() as conn:
         try:
-            store.get_run(conn, run_id=run_id, actor_email=email)
+            _own_at_gate(conn, run_id, email, WorkflowGate.STRATEGY)
             version = approvals.latest_approved_search_strategy_version(
                 conn, run_id=run_id
             )

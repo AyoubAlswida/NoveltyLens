@@ -1,6 +1,17 @@
 import { Component, ChangeDetectionStrategy, input, computed } from '@angular/core';
 import { Icon } from '../shared/icon';
-import { Phase, PHASE_LABELS, PHASE_ICONS, SearchMode } from '../models/report';
+import { Phase, SearchMode } from '../models/report';
+
+const EXECUTION_STAGES: readonly {
+  label: string;
+  icon: string;
+  phases: readonly Phase[];
+}[] = [
+  { label: 'Planning the search', icon: 'Search', phases: ['understand', 'queries', 'strategy'] },
+  { label: 'Searching patent databases', icon: 'Database', phases: ['search'] },
+  { label: 'Evaluating prior art', icon: 'Radar', phases: ['filter', 'enrich', 'validate', 'compare'] },
+  { label: 'Preparing your analysis', icon: 'PenLine', phases: ['analyze'] },
+];
 
 @Component({
   selector: 'app-running-screen',
@@ -20,7 +31,7 @@ import { Phase, PHASE_LABELS, PHASE_ICONS, SearchMode } from '../models/report';
 
         <section class="progress-card glass-card" aria-live="polite" aria-busy="true">
           <div class="progress-list">
-            @for (step of steps(); track step.phase) {
+            @for (step of steps(); track step.label) {
               <div class="progress-step {{ step.status }}">
                 <div class="phase-track">
                   <div class="phase-icon">
@@ -37,7 +48,6 @@ import { Phase, PHASE_LABELS, PHASE_ICONS, SearchMode } from '../models/report';
               </div>
             }
           </div>
-
         </section>
       </div>
     </div>
@@ -48,7 +58,6 @@ export class RunningScreen {
   readonly phaseMessages = input.required<Partial<Record<Phase, string>>>();
   readonly phaseOrder = input.required<readonly Phase[]>();
   readonly mode = input<SearchMode>('quick');
-
   readonly supportingText = computed(() =>
     this.mode() === 'advanced'
       ? 'We’ll pause when your input is needed.'
@@ -56,19 +65,24 @@ export class RunningScreen {
   );
 
   readonly steps = computed(() => {
-    const activeIndex = Math.max(this.phaseIdx(), 0);
-    const messages = this.phaseMessages();
     const phaseOrder = this.phaseOrder();
-    return phaseOrder.map((phase, index) => {
+    const stages = phaseOrder.length === 1 && phaseOrder[0] === 'decompose'
+      ? [{ label: 'Preparing the technical summary', icon: 'Sparkles', phases: ['decompose'] as readonly Phase[] }]
+      : EXECUTION_STAGES;
+    const currentPhase = phaseOrder[Math.max(this.phaseIdx(), 0)];
+    const activeIndex = Math.max(
+      stages.findIndex((stage) => stage.phases.includes(currentPhase)),
+      0,
+    );
+    return stages.map((stage, index) => {
       const complete = index < activeIndex;
       const active = index === activeIndex;
       return {
-        phase,
-        icon: PHASE_ICONS[phase],
-        label: messages[phase] || PHASE_LABELS[phase],
+        icon: stage.icon,
+        label: stage.label,
         complete,
         active,
-        last: index === phaseOrder.length - 1,
+        last: index === stages.length - 1,
         status: complete ? 'complete' : active ? 'active' : 'pending',
       };
     });

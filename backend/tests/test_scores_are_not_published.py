@@ -276,6 +276,48 @@ def test_two_of_seven_limitations_remains_low_despite_meaningful_similarity():
     assert match["risk"] == "Low"
 
 
+@pytest.mark.parametrize("similarity, expected", [(0.62, "Medium"), (0.44, "Low")])
+def test_substantial_core_overlap_is_medium_despite_several_new_additions(
+    similarity, expected
+):
+    """A grouped covered relation plus another substantive unit is not an
+    isolated hit merely because new feedback features occupy three lines.
+    """
+    comparison = ComparisonResult(
+        patent=PatentRecord(id="US-CORE", title="Prior core mechanism"),
+        similarity_score=similarity,
+        unit_similarity_scores=[0.72, 0.63, 0.27, 0.21, 0.18],
+    )
+    match = format_matches(
+        [comparison], ["shares a substantial mechanism"], [[]], [["L1"]], 5
+    )[0]
+    assert match["risk"] == expected
+
+
+def test_semantic_breadth_without_excerpt_coverage_cannot_become_medium():
+    comparison = ComparisonResult(
+        patent=PatentRecord(id="US-SEMANTIC-ONLY", title="Similar vocabulary"),
+        similarity_score=0.78,
+        unit_similarity_scores=[0.72, 0.63, 0.27, 0.21, 0.18],
+    )
+    match = format_matches(
+        [comparison], ["no direct disclosed relationship"], [[]], [[]], 5
+    )[0]
+    assert match["risk"] == "Low"
+
+
+def test_substantial_core_overlap_without_broad_coverage_does_not_become_high():
+    comparison = ComparisonResult(
+        patent=PatentRecord(id="US-PARTIAL", title="Prior core mechanism"),
+        similarity_score=0.88,
+        unit_similarity_scores=[0.82, 0.69, 0.27, 0.21, 0.18],
+    )
+    match = format_matches(
+        [comparison], ["new additions absent"], [[]], [["L1"]], 5
+    )[0]
+    assert match["risk"] == "Medium"
+
+
 def test_risk_refuses_missing_reviewed_limitations():
     comparison = ComparisonResult(
         patent=PatentRecord(id="US-NO-PROFILE", title="Missing profile"),

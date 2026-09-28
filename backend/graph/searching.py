@@ -95,7 +95,18 @@ def keyword_search_node(state: GraphState) -> dict:
         PatentSearchError: if any single provider call fails.
     """
     queries = state["queries"]
-    found = search_all_providers_strict(queries, results_per_query=RESULTS_PER_QUERY)
+    found = search_all_providers_strict(
+        queries,
+        results_per_query=RESULTS_PER_QUERY,
+        on_progress=lambda completed, total, received: emit_progress(
+            "search",
+            f"Searching patent databases… {completed}/{total} requests completed"
+            f" · {received} records received",
+            current=completed,
+            total=total,
+            received=received,
+        ),
+    )
     patents = found.candidates
 
     emit_progress(

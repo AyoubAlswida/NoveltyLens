@@ -46,9 +46,10 @@ anyone to review."""
 MAX_PROPOSED_SEARCH_LIMITATIONS = 7
 """Maximum number of machine-proposed limitations shown at Stage 2.
 
-The live product presents one flat list, not verifier capabilities.  The model is
-asked to aim for four to seven focused, compound limitations and to use fewer
-rather than pad the list with generic components.  This cap applies to the
+The live product presents one flat list, not verifier capabilities. The model is
+asked to aim for four to seven focused, independently checkable technical
+relationships, keeping each causal trigger with its action rather than isolated
+component nouns, and to use fewer rather than pad with generic components. This cap applies to the
 machine proposal only: the reviewer remains free to edit the flat list before
 approving it.
 """

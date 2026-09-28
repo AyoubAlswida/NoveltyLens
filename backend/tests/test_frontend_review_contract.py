@@ -302,11 +302,12 @@ def test_the_active_run_key_is_namespaced_by_account():
     assert "forgetAll" in source
 
 
-def test_the_remembered_run_is_only_a_cancellation_hint():
-    """Never render or fetch a run from localStorage; startup only cancels it."""
+def test_the_remembered_run_is_only_a_recovery_hint():
+    """A remembered id is a hint, never authority to render a run."""
     source = read(RUNS_SERVICE)
     active_store = source.split("export class ActiveRunStore", 1)[1]
     assert "peek(email" in active_store
+    assert "sessionStorage" in active_store
     assert "getRun(" not in active_store
     assert "restore(" not in active_store
 
@@ -402,15 +403,16 @@ def test_component_specs_exist_for_the_review_workflow():
 # --- the gate screens are reachable from a cold start -----------------------
 
 
-def test_reload_cancels_the_remembered_run_instead_of_restoring_it():
-    """Reload is an explicit cancellation boundary for Advanced Search."""
+def test_reload_verifies_the_remembered_run_before_restoring_it():
+    """Reload must reattach through the owned API run, without deleting it."""
     app = (FRONTEND / "app.ts").read_text(encoding="utf-8")
     startup = app.split("restore()", 1)
     assert len(startup) > 1, "app.ts no longer restores the session on startup"
-    assert "this.cancelRememberedRun()" in startup[1]
-    assert "restoreActiveRun" not in app
-    assert "@HostListener('window:pagehide')" in app
-    assert "this.runs.cancelRun(runId, true)" in app
+    assert "this.restoreActiveRun()" in startup[1]
+    restore = app.split("private async restoreActiveRun()", 1)[1]
+    assert "await this.runs.getRun(runId)" in restore
+    assert "this.followAdvancedRun(runId)" in restore
+    assert "@HostListener('window:pagehide')" not in app
 
 
 def test_a_verified_run_can_be_started_from_the_product():
@@ -496,7 +498,8 @@ def test_progress_and_retry_preserve_the_selected_search_branch():
     assert "this.startRunning()" in retry
 
     assert "const phaseOrder = this.phaseOrder()" in running
-    assert "phaseOrder.map" in running
+    assert "const currentPhase = phaseOrder[Math.max(this.phaseIdx(), 0)]" in running
+    assert "stages.map" in running
     assert "this.phaseOrder().map" in error
 
 
@@ -712,7 +715,7 @@ def test_a_broken_rule_is_named_on_screen_rather_than_listed_in_advance():
     source = read(STAGES)
     body = source.split("violations(): string[] {", 1)[1].split("\n  }", 1)[0]
 
-    for phrase in ("technical summary", "technical limitation", "search"):
+    for phrase in ("technical summary", "invention requirement", "search"):
         assert phrase in body, f"no violation message names {phrase!r}"
 
     # The messages are not decorative: this is what actually blocks approval.

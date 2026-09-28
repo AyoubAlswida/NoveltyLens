@@ -5,7 +5,6 @@ import {
   signal,
   effect,
   inject,
-  HostListener,
 } from '@angular/core';
 import { Icon } from './shared/icon';
 import { SubmitScreen } from './screens/submit-screen';
@@ -53,8 +52,12 @@ const RECENTS_SHOWN = 8;
  * set; this is a shortcut, and a sidebar that scrolls past the sign-out button
  * stops being one. */
 
+const PET_EXAMPLE_DESC =
+  "An automatic dry-pet-food dispenser with a rotating body containing several equal-sized compartments, each closed by a spring-loaded trap door at the bottom. A drive mechanism periodically withdraws a support bar holding a trap door shut, letting that compartment's food fall by gravity through a directional trough into the pet's bowl below, dispensing one measured portion at a time on a schedule. UNIQUE ADDITION (not in the source patent): the dispenser also has a small load cell built into the bowl itself that weighs how much food the pet actually ate versus how much was dispensed, and if a portion goes mostly uneaten for several consecutive feedings, it automatically reduces future portion sizes and sends a low-appetite alert to the owner's phone.";
 const EXAMPLE_DESC =
-  'A portable, refillable drinking-water bottle that automatically sterilizes its contents with an integrated UV-C emitter and filters particulates through a replaceable graphene-oxide membrane. A flow-rate sensor in the cap detects use and triggers a self-cleaning sterilization cycle without manual activation.';
+  window.location.port === '4201'
+    ? PET_EXAMPLE_DESC
+    : 'A portable, refillable drinking-water bottle that automatically sterilizes its contents with an integrated UV-C emitter and filters particulates through a replaceable graphene-oxide membrane. A flow-rate sensor in the cap detects use and triggers a self-cleaning sterilization cycle without manual activation.';
 
 @Component({
   selector: 'app-root',
@@ -264,6 +267,7 @@ const EXAMPLE_DESC =
                     [gate]="activeReviewGate()"
                     (back)="requestReviewExit()"
                     (resumed)="afterDecision($event)"
+                    (searchReleased)="afterRequirementsApproved()"
                   />
                 } @else {
                     <!--
@@ -398,8 +402,8 @@ export class App {
 
   /** The branch currently shown. It controls both progress order and retry. */
   readonly runMode = signal<SearchMode>('quick');
-  /** False while Advanced Search is preparing the first review; true only
-   * after the reviewer releases the approved queries into the live search. */
+  /** False while Advanced Search is preparing either review; true after the
+   * reviewer approves the requirements and automatic query planning begins. */
   readonly advancedSearchReleased = signal(false);
   readonly phaseOrder = computed(() =>
     this.runMode() === 'advanced'
@@ -482,6 +486,9 @@ export class App {
             if (controller.signal.aborted || this.reviewRunId() !== runId) return;
 
             if (event.type === 'progress') {
+              if (ADVANCED_EXECUTION_PHASE_ORDER.includes(event.phase)) {
+                this.advancedSearchReleased.set(true);
+              }
               const visibleOrder = this.phaseOrder();
               const idx = visibleOrder.indexOf(event.phase);
               if (idx >= 0) {
@@ -533,6 +540,13 @@ export class App {
         );
       } catch (error) {
         if (controller.signal.aborted || stoppedByEvent || this.reviewRunId() !== runId) return;
+        if (error instanceof RunApiError && error.status === 404) {
+          this.errorDetail.set('This search is no longer available.');
+          this.failedPhase.set(this.currentAdvancedPhase());
+          this.screen.set('error');
+          this.finishAdvancedRun(runId);
+          return;
+        }
         // A dropped stream says nothing about the run. Reconnect from the last
         // durable event id instead of presenting it as a backend failure.
         await new Promise((resolve) => setTimeout(resolve, 750));
@@ -561,7 +575,14 @@ export class App {
           this.finishAdvancedRun(runId);
           return;
         }
-      } catch {
+      } catch (error) {
+        if (error instanceof RunApiError && error.status === 404) {
+          this.errorDetail.set('This search is no longer available.');
+          this.failedPhase.set(this.currentAdvancedPhase());
+          this.screen.set('error');
+          this.finishAdvancedRun(runId);
+          return;
+        }
         // The run row is a recovery check, not the authority for declaring a
         // failure. The durable stream reconnect below remains the source.
       }
@@ -639,8 +660,8 @@ export class App {
    *
    * The run is `RESUMING`, not running: the executor picks it up on its next
    * stream. Gate A keeps the same editor mounted while the worker proposes the
-   * next artifact (limitations after the summary, then queries after the
-   * limitations). STRATEGY releases the run into the ordinary execution checklist.
+   * next artifact (requirements after the summary). Current runs release after
+   * those requirements; legacy STRATEGY runs release after query approval.
    */
   afterDecision(gate: WorkflowGate): void {
     const runId = this.reviewRunId();
@@ -655,33 +676,59 @@ export class App {
     if (runId) void this.followAdvancedRun(runId);
   }
 
-  /** Cancel the run remembered by the previous page instead of restoring it. */
-  private async cancelRememberedRun(): Promise<void> {
+  /** Version-2 runs leave review after Stage 2; query generation is automatic. */
+  afterRequirementsApproved(): void {
+    const runId = this.reviewRunId();
+    this.runMode.set('advanced');
+    this.advancedSearchReleased.set(true);
+    this.reviewGate.set(null);
+    this.phaseIdx.set(0);
+    this.phaseMessages.set({});
+    this.screen.set('running');
+    if (runId) void this.followAdvancedRun(runId);
+  }
+
+  /** Verify the tab's remembered id before reattaching to a durable run. */
+  private async restoreActiveRun(): Promise<void> {
     const email = this.auth.email();
     if (!email) return;
     const runId = this.activeRuns.peek(email);
     if (!runId) return;
     try {
-      await this.runs.cancelRun(runId);
-      this.activeRuns.forget(email);
+      const run = await this.runs.getRun(runId);
+      this.description.set(run.description);
+      this.runMode.set('advanced');
+      this.reviewRunId.set(runId);
+      if (run.status === 'WAITING_FOR_REVIEW' && run.current_gate) {
+        this.openReview(runId, run.current_gate);
+        return;
+      }
+      if (run.status === 'COMPLETED') {
+        this.reportData.set(await this.runs.report(runId));
+        this.screen.set('report');
+        this.finishAdvancedRun(runId);
+        return;
+      }
+      if (run.status === 'FAILED') {
+        this.errorDetail.set(run.failure_detail ?? PUBLIC_ERRORS.analysis);
+        this.screen.set('error');
+        this.finishAdvancedRun(runId);
+        return;
+      }
+      this.advancedSearchReleased.set(false);
+      this.phaseIdx.set(0);
+      this.phaseMessages.set({});
+      this.streamCursor.advance(runId, Math.max(0, (run.last_event_id ?? 1) - 1));
+      this.screen.set('running');
+      void this.followAdvancedRun(runId);
     } catch (error) {
       if (error instanceof RunApiError && error.status === 404) {
         this.activeRuns.forget(email);
         return;
       }
-      // Keep the key so a later reload retries the cancellation. The run is
-      // never restored to the screen while that retry is pending.
-      console.warn('Could not cancel the previous run:', error);
+      this.errorDetail.set(PUBLIC_ERRORS.analysis);
+      this.screen.set('error');
     }
-  }
-
-  /** Best-effort early cancellation; startup retries it if delivery is lost. */
-  @HostListener('window:pagehide')
-  cancelRunOnPageExit(): void {
-    const email = this.auth.email();
-    if (!email) return;
-    const runId = this.reviewRunId() ?? this.activeRuns.peek(email);
-    if (runId) void this.runs.cancelRun(runId, true).catch(() => undefined);
   }
   readonly description = signal(EXAMPLE_DESC);
   /** Optional Stage 1 context for a verified run. Empty is a real answer -- the
@@ -740,8 +787,7 @@ export class App {
         // Recents lives in the sidebar now, so history is fetched on sign-in
         // rather than only when the History screen opens.
         if (valid) void this.loadHistory();
-        // Reload is a cancellation boundary: never reopen the old workflow.
-        if (valid) void this.cancelRememberedRun();
+        if (valid) void this.restoreActiveRun();
       })
       .catch((failure) => {
         // A backend that is merely unreachable is NOT an ended session; keep the
