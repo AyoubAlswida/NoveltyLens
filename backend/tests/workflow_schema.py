@@ -43,6 +43,7 @@ FIRST_WORKFLOW_MIGRATION = "0006"
 
 WORKFLOW_TABLES: tuple[str, ...] = (
     "verification_runs",
+    "epo_request_clock",
     "run_status_transitions",
     "run_leases",
     "node_attempts",

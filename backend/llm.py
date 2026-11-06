@@ -243,7 +243,8 @@ def build_chat_payload(
     # Read here rather than cached at import so a test can set it, and validated
     # in `read_reasoning_effort` so an unknown value fails BEFORE the call rather
     # than being dropped or rejected by the provider.
-    effort = read_reasoning_effort()
+    # OPENAI_* settings do not configure the explicitly selected HF runtime.
+    effort = "" if target.provider in (Provider.HUGGINGFACE, Provider.FUSE) else read_reasoning_effort()
     if effort and dialect.supports_reasoning_effort:
         if effort not in dialect.reasoning_efforts:
             # Accepted by *some* family (`read_reasoning_effort` established
@@ -484,6 +485,10 @@ def _llm_chat(
         except Exception as error:
             # Transport and HTTP failures only. A truncated *successful*
             # response is handled below, outside this retry loop.
+            if isinstance(error, requests.HTTPError) and error.response is not None:
+                status = error.response.status_code
+                if 400 <= status < 500 and status not in (408, 429):
+                    raise RuntimeError(f'{target.provider.value} chat returned HTTP {status}; check provider access and billing') from None
             last_error = error
             trace("llm.attempt_failed", attempt=attempt, error=redaction.safe_log(error))
             if attempt < retries:
@@ -946,6 +951,14 @@ def propose_technical_summary(
 
 Write a 2-4 sentence technical summary that precisely restates the submitted
 invention. Preserve every stated conditional relationship and explicit addition.
+Preserve the distinction between a stated relationship and one that merely
+seems plausible. Do not introduce unstated timing or frequency (such as
+continuous operation), exclusivity (such as "only"), thresholds, causal triggers,
+control rules, locations, or components. If the submission says that two steps
+occur but does not say one triggers the other, describe both without inventing
+that dependency. In particular, do not write "based on that comparison",
+"in response to", or "when the threshold is exceeded" unless that link is
+explicit in the submission. Keep the inventor's level of specificity and uncertainty.
 Do not generate technical limitations, search queries, prior-art conclusions, or
 capabilities that the submission does not state.
 
@@ -963,8 +976,6 @@ Invention:
 
 def propose_technical_limitations(
     approved_summary: str,
-    *,
-    max_elements: int = 7,
 ) -> list[dict]:
     """Generate limitations only from the exact summary a human approved."""
     prompt = f"""You are a {LIMITATIONS_PROMPT_MARKER}.
@@ -977,8 +988,12 @@ summary.
 Preserve combination-critical mechanisms: keep interacting parts, comparisons,
 triggers, conditions, and coordinated outputs together when splitting them would
 lose the technical relationship. Separately list independently checkable
-arrangements and actions rather than merging a whole operational chain into one
-line merely because its parts are conventional. A line is not an isolated noun:
+arrangements and actions when each adds a distinct technical constraint. Do not
+split one causal action into a component statement and a restatement of its
+effect, or split one continuous output path into synonymous steps. Conversely,
+do not merge independent mechanisms merely to shorten the list. Keep explicit
+alternatives in one limitation joined by OR when either alternative satisfies it.
+A line is not an isolated noun:
 it must state what the component does, where it acts, or what triggers it. Keep
 the granularity of core operations and added subsystems comparable so several
 new additions do not reduce a substantial core prior-art overlap to one vote.
@@ -987,21 +1002,31 @@ Avoid generic component-only lines and semantic duplicates.
 Rules:
 - Choose one 1-to-3-word domain_anchor naming the invention's concrete platform (for example "folding bicycle", "video baby monitor", or "photoelectric smoke detector"). Every query must contain every domain-anchor word so a relationship query cannot drift into an unrelated field.
 - Return exactly one feature, F1.
-- Aim for 4 to {max_elements} limitations; use fewer rather than padding.
+- Return as many limitations as the approved summary supports. There is no
+  target count or fixed maximum. A simple invention may need few; a complex
+  invention may need many. Never add a line just to increase the count.
 - Every limitation must be independently searchable and technically checkable.
+- Each line must add a distinct structure, interaction, condition, or output
+  constraint that a patent could disclose independently of the other lines.
+  Before returning, compare every pair and merge semantic duplicates even when
+  their wording differs. Check that no stated technical constraint is omitted.
+- Apply this independence test to adjacent events: if one line says an action
+  releases or opens a part and the next only says the released part opens, merge
+  them into one causal limitation. Likewise, directing material into a destination
+  already includes its arrival there. Keep a separate line only when it adds a
+  further technical condition or arrangement beyond the preceding line.
 - Order the platform's structure, actuation, and output path first; put added
   sensing, feedback, and alerts afterward. This order reserves short lexical
   recall queries for the underlying mechanism before narrower additions.
 - Mark every element core=true and use E1, E2, ... in order.
 - Return relationships as an empty array.
-- At most {max_elements} elements.
 
 Return ONLY valid JSON in this exact schema:
 {{"features": [{{"feature_id": "F1", "feature_version": "1", "feature_text": "searchable technical limitations", "elements": [{{"element_id": "E1", "text": "string", "core": true, "order": 1}}], "relationships": []}}]}}
 
 APPROVED TECHNICAL SUMMARY:
 {approved_summary}"""
-    data = _llm_json(prompt, max_tokens=1300, temperature=0.0, timeout=60)
+    data = _llm_json(prompt, max_tokens=4000, temperature=0.0, timeout=90)
     features = data.get("features")
     if not isinstance(features, list) or len(features) != 1:
         raise LLMResponseError("LLM did not return exactly one technical-limitation group")
@@ -1011,8 +1036,6 @@ APPROVED TECHNICAL SUMMARY:
     elements = feature.get("elements")
     if not isinstance(elements, list) or not elements:
         raise LLMResponseError("LLM returned no searchable technical limitations")
-    if len(elements) > max_elements:
-        raise LLMResponseError("LLM returned more technical limitations than requested")
     seen: set[str] = set()
     for element in elements:
         text = str(element.get("text") or "").strip() if isinstance(element, dict) else ""

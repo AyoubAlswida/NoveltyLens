@@ -94,14 +94,16 @@ def put_many(texts: list[str], vectors: list[list[float]]) -> None:
     unique: dict[str, tuple[str, list[float]]] = {}
     for text, vector in zip(texts, vectors, strict=True):
         unique.setdefault(_point_id(text), (text, vector))
-    client.upsert(
-        collection_name=COLLECTION_NAME,
-        points=[
+    points = [
             PointStruct(
                 id=point_id,
                 vector=vector,
                 payload={"identity": _IDENTITY_HASH, "text_hash": _text_hash(text)},
             )
             for point_id, (text, vector) in unique.items()
-        ],
-    )
+        ]
+    # A 4096-dimensional provider can produce a multi-megabyte JSON body for
+    # one search. Keep writes below Qdrant's request limit without dropping any
+    # cached vector. Repeating an idempotent upsert is safe after interruption.
+    for start in range(0, len(points), 32):
+        client.upsert(collection_name=COLLECTION_NAME, points=points[start:start + 32])

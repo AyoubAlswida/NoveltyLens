@@ -163,12 +163,14 @@ export const TOTAL_STAGES = STAGE_NAMES.length;
                   <label class="sr-only" [attr.for]="'element-' + row.key">
                     Invention requirement (claim) {{ i + 1 }}
                   </label>
-                  <input
-                    class="draft-input"
+                  <textarea
+                    class="draft-input requirement-input"
+                    rows="2"
+                    wrap="soft"
                     [id]="'element-' + row.key"
                     [ngModel]="row.text"
                     (ngModelChange)="editRow(elements, row.key, $event)"
-                  />
+                  ></textarea>
                   <button
                     class="draft-remove"
                     type="button"

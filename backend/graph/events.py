@@ -24,10 +24,9 @@ QUICK_SEARCH_PHASES: tuple[str, ...] = (
     "understand",
     "queries",
     "search",
-    "filter",
-    "enrich",
-    "validate",
+    "expand",
     "compare",
+    "validate",
     "analyze",
 )
 """The exact progress route for an inline Quick Search."""
@@ -38,10 +37,9 @@ ADVANCED_SEARCH_PHASES: tuple[str, ...] = (
     "gate_a",
     "strategy",
     "search",
-    "filter",
-    "enrich",
-    "validate",
+    "expand",
     "compare",
+    "validate",
     "analyze",
 )
 """The exact progress route for a current durable Advanced Search."""
@@ -52,6 +50,8 @@ PHASES: tuple[str, ...] = tuple(
         (
             *QUICK_SEARCH_PHASES,
             *ADVANCED_SEARCH_PHASES,
+            "filter",
+            "enrich",
             "gate_strategy",  # legacy flow-version-1 checkpoints
             "semantic_search",
             "fuse",

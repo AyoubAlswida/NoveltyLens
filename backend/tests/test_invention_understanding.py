@@ -501,10 +501,35 @@ def test_summary_and_limitations_use_separate_model_calls():
     assert len(prompts) == 2
     assert llm.SUMMARY_PROMPT_MARKER in prompts[0]
     assert "Do not generate technical limitations" in prompts[0]
+    assert 'do not write "based on that comparison"' in prompts[0]
     assert llm.LIMITATIONS_PROMPT_MARKER in prompts[1]
     assert "the reviewed technical meaning" in prompts[1]
     assert "the raw inventor submission" not in prompts[1]
     assert features == [_feature()]
+
+
+def test_approved_summary_limitations_have_no_fixed_count():
+    import llm
+
+    elements = [
+        {"element_id": f"E{i}", "text": f"mechanism {i} performs distinct action {i}",
+         "core": True, "order": i}
+        for i in range(1, 12)
+    ]
+    feature = _feature(elements=elements)
+    captured = {}
+
+    def capture(prompt, **kwargs):
+        captured["prompt"] = prompt
+        captured["max_tokens"] = kwargs["max_tokens"]
+        return {"features": [feature]}
+
+    with patch.object(llm, "_llm_json", side_effect=capture):
+        assert llm.propose_technical_limitations("approved complex invention") == [feature]
+
+    assert "There is no\n  target count or fixed maximum" in captured["prompt"]
+    assert "merge semantic duplicates" in captured["prompt"]
+    assert captured["max_tokens"] >= 4000
 
 
 def test_active_search_prompts_keep_independent_operations_as_separate_units():
@@ -659,7 +684,7 @@ def test_approved_search_preparation_uses_no_unreviewed_machine_analysis():
         "approved limitation two",
     ]
     assert prepared["invention_text"] == (
-        "original description\n\noriginal claims\n\napproved summary\n\n"
+        "approved summary\n\n"
         "approved limitation one\n\napproved limitation two"
     )
     assert prepared["similarity_units"] == [

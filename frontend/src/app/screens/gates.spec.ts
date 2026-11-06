@@ -86,9 +86,9 @@ function text(fixture: ComponentFixture<unknown>): string {
   return (fixture.nativeElement as HTMLElement).textContent ?? '';
 }
 
-function inputs(fixture: ComponentFixture<unknown>): HTMLInputElement[] {
+function inputs(fixture: ComponentFixture<unknown>): (HTMLInputElement | HTMLTextAreaElement)[] {
   return Array.from(
-    (fixture.nativeElement as HTMLElement).querySelectorAll('input.draft-input'),
+    (fixture.nativeElement as HTMLElement).querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('.draft-input'),
   );
 }
 

@@ -73,6 +73,8 @@ def search_orchestrator_node(state: GraphState) -> dict:
     starting values the frontend's progress row renders until the closing event
     replaces them.
     """
+    if state.get("advanced_search") and not state.get("retrieval_plan"):
+        raise ValueError("This search predates the EPO abstract pipeline; start a new search")
     queries = state["queries"]
     emit_progress(
         "search",

@@ -66,6 +66,10 @@ export function reportFromHistory(entry: HistoryEntry): AnalysisReport {
     })),
     recommendations: entry.recommendations ?? [],
     query_count: entry.query_count ?? 0,
+    analysis_basis: entry.analysis_basis,
+    analysis_version: entry.analysis_version,
+    coverage: entry.coverage,
+    elements: entry.elements,
   };
 }
 

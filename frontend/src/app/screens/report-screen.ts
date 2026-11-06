@@ -2,6 +2,7 @@ import { Component, ChangeDetectionStrategy, input, output, computed } from '@an
 import { Icon } from '../shared/icon';
 import { ExportMenu } from '../shared/export-menu';
 import { AnalysisReport, PatentMatch, Risk } from '../models/report';
+import { recommendationBullets } from '../shared/recommendation-points';
 
 @Component({
   selector: 'app-report-screen',
@@ -19,16 +20,6 @@ import { AnalysisReport, PatentMatch, Risk } from '../models/report';
         </button>
         <div class="report-title-block">
           <h1>{{ data().title }}</h1>
-          <p>
-            Submitted {{ data().date }} &middot; {{ data().query_count }} queries &middot;
-            {{ data().patents.length }} publications
-            @if (familyCount()) {
-              &middot; {{ familyCount() }} identified patent families
-            }
-            @if (unknownFamilyPublications()) {
-              &middot; {{ unknownFamilyPublications() }} without family metadata
-            }
-          </p>
         </div>
         <div class="toolbar-actions">
           <app-export-menu [data]="data()" />
@@ -40,7 +31,6 @@ import { AnalysisReport, PatentMatch, Risk } from '../models/report';
           <article class="matches-card glass-card">
             <div class="section-heading">
               <div>
-                <p class="eyebrow">Prior-art matches</p>
                 <h2>
                   <span class="result-count">{{ data().patents.length }}</span>
                   Ranked patent results
@@ -98,11 +88,10 @@ import { AnalysisReport, PatentMatch, Risk } from '../models/report';
                   [attr.href]="patent.url || null"
                   [attr.target]="patent.url ? '_blank' : null"
                   rel="noopener noreferrer"
-                  [attr.aria-label]="'Open ' + patent.title + ' on ' + patent.source"
+                  [attr.aria-label]="'Open ' + patent.title"
                 >
                   <div class="patent-meta">
                     <span>{{ patent.num }}</span>
-                    <span>{{ patent.source }}</span>
                   </div>
                   <h3 class="patent-title">{{ patent.title }}</h3>
 
@@ -197,15 +186,12 @@ import { AnalysisReport, PatentMatch, Risk } from '../models/report';
               <h2>How to make it more unique</h2>
             </div>
           </div>
-          @if (data().recommendations.length) {
-            <ol class="recommendation-list">
-              @for (recommendation of data().recommendations; track $index) {
-                <li>
-                  <span>{{ $index + 1 }}</span>
-                  <p>{{ recommendation }}</p>
-                </li>
+          @if (suggestionPoints().length) {
+            <ul class="recommendation-list">
+              @for (point of suggestionPoints(); track $index) {
+                <li><p>{{ point }}</p></li>
               }
-            </ol>
+            </ul>
           } @else {
             <p class="empty-state">
               No recommendations were generated &mdash; no prior art was found to distinguish
@@ -220,6 +206,7 @@ import { AnalysisReport, PatentMatch, Risk } from '../models/report';
 export class ReportScreen {
   readonly data = input.required<AnalysisReport>();
   readonly back = output<void>();
+  readonly suggestionPoints = computed(() => recommendationBullets(this.data().recommendations));
 
   /**
    * The strongest match, or `undefined` when nothing was found.

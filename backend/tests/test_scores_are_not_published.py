@@ -76,6 +76,7 @@ def _numeric_ratings(payload):
         if isinstance(value, (int, float))
         and not isinstance(value, bool)
         and key.lower() not in allowed_numeric_keys
+        and path != "$.coverage"
     ]
 
 

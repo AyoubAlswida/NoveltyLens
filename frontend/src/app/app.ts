@@ -249,6 +249,7 @@ const EXAMPLE_DESC =
                 [phaseMessages]="phaseMessages()"
                 [phaseOrder]="phaseOrder()"
                 [mode]="runMode()"
+                [searchApproved]="advancedSearchReleased()"
               />
             }
             @case ('report') {
@@ -954,6 +955,7 @@ export class App {
                 }),
               concepts: backend.concepts ?? [],
               patents: (backend.patents ?? []).map((patent) => ({
+                ...patent,
                 num: patent.num || 'Unknown publication',
                 title: patent.title || 'Untitled patent record',
                 risk: patent.risk,
@@ -965,6 +967,10 @@ export class App {
               })),
               recommendations: backend.recommendations ?? [],
               query_count: backend.query_count ?? 0,
+              analysis_basis: backend.analysis_basis,
+              analysis_version: backend.analysis_version,
+              coverage: backend.coverage,
+              elements: backend.elements,
             };
           }
         },

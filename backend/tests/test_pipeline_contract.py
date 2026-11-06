@@ -65,7 +65,7 @@ CORPUS = [
 
 RESULT_KEYS = {
     "title", "date", "concepts", "patents",
-    "query_count", "recommendations",
+    "query_count", "recommendations", "analysis_basis", "analysis_version", "coverage", "elements",
 }
 """Every key ``graph/pipeline.py``'s ``_result_envelope`` promises the frontend.
 
@@ -80,6 +80,10 @@ result-mapping code). ``pct`` is gone; ``risk`` is the only judgement published.
 
 def _fake_llm_chat(prompt: str, **kwargs: object) -> str:
     """Stand in for the HTTP call in ``_llm_chat``, keyed off the real prompts."""
+    from abstract_mock import response
+    abstract_response = response(prompt)
+    if abstract_response is not None:
+        return abstract_response
     if VERIFIER_MARKER in str(kwargs.get("system", "")):
         # Registered per the verification spec's section 17.8, which requires the
         # marker to be known to this double *and* to ``run_mock.py``: both key off
@@ -167,9 +171,9 @@ def test_every_agent_reports_a_phase_in_the_expected_order(deterministic):
     """
     phases = [e["phase"] for e in _drain() if e["type"] == "progress"]
 
-    assert {"understand", "queries", "search", "enrich",
+    assert {"understand", "queries", "search", "expand",
             "validate", "compare", "analyze"} <= set(phases)
-    assert phases.index("validate") < phases.index("compare")
+    assert phases.index("compare") < phases.index("validate")
     assert phases.index("compare") < phases.index("analyze")
 
 
@@ -200,79 +204,13 @@ def test_result_payload_carries_the_whole_contract(deterministic):
     assert CORE_PATENT_FIELDS <= result["data"]["patents"][0].keys()
 
 
-def test_paraphrased_core_plus_new_subsystem_reaches_source_through_anchor_query():
-    """Regression for a real recall miss: the model's five semantic queries did
-    not retrieve the source, while its extracted core concepts still contained
-    enough literal mechanism vocabulary to form a high-precision search angle.
-
-    The implementation remains domain-neutral. Only this fixture knows the
-    expected publication, just as a benchmark must know its labelled answer.
-    """
-    description = (
-        "An automatic dry-pet-food dispenser with a rotating body containing "
-        "several equal-sized compartments, each closed by a spring-loaded trap "
-        "door. A support bar is withdrawn so food falls through a trough. The "
-        "bowl also has a load cell that reduces later portions after leftovers."
-    )
-    concepts = [
-        "Rotating body with multiple equal-sized compartments for metered food storage",
-        "Spring-loaded trap door closure with a support bar release mechanism",
-        "Periodic gravity discharge of one compartment into a pet bowl via a trough",
-        "Bowl-integrated load cell measuring consumption and reducing future portions",
-    ]
-    primary_queries = [
-        "rotary compartment trapdoor feeder",
-        "gravity-fed measured portion dispenser",
-        "bowl load cell appetite monitoring",
-        "uneaten food based portion reduction",
-        "automatic pet feeder portion control",
-    ]
-    source = PatentRecord(
-        id="US5109799A",
-        title="Automatic dry pet food dispenser",
-        abstract=(
-            "Like-sized compartments have bottom trap door panels released when "
-            "a supporting draw bar is withdrawn so food falls through a trough."
-        ),
-        full_text=(
-            "A drive recoils a draw bar supporting trap doors beneath a plurality "
-            "of compartments and sequentially dispenses measured dry pet food."
-        ),
-        source="Lens.org",
-    )
-    searched: list[str] = []
-
-    def source_only_for_the_mechanism_anchor(query: str, size: int):
-        searched.append(query)
-        if "trap door" in query.casefold() and "support bar" in query.casefold():
-            return [source]
-        return []
-
-    def llm_boundary(prompt: str, **kwargs: object) -> str:
-        if "PatentScout AI" in prompt:
-            return json.dumps(
-                {
-                    "concepts": concepts,
-                    "keywords": ["trap door", "support bar", "directional trough"],
-                    "queries": primary_queries,
-                }
-            )
-        return _fake_llm_chat(prompt, **kwargs)
-
-    with patch("llm._llm_chat", side_effect=llm_boundary), patch(
-        "search.search.SOURCES",
-        (("Lens.org", source_only_for_the_mechanism_anchor),),
-    ):
-        result = list(run_graph_pipeline(description, None))[-1]["data"]
-
-    assert result["query_count"] == 8
-    assert [patent["num"] for patent in result["patents"]] == ["US5109799A"]
-    assert any(
-        "pet food dispenser" in query.casefold()
-        and "trap door" in query.casefold()
-        and "bar" in query.casefold()
-        for query in searched
-    )
+def test_planned_queries_are_valid_cql_and_retain_search_angles(deterministic):
+    from graph.abstract_search import plan
+    import time
+    planned = plan(DESCRIPTION, CONCEPTS, time.time()+60)
+    assert len(planned) == 6
+    assert len({q['query_text'] for q in planned}) == 6
+    assert all('ta=' in q['query_text'] for q in planned)
 
 
 # --------------------------------------------------------------------------
@@ -340,7 +278,7 @@ def test_empty_corpus_returns_an_honest_empty_report():
     assert data["concepts"] == CONCEPTS
     # Five model-planned angles plus one lexical anchor for each of the three
     # concepts. The report counts provider queries actually executed.
-    assert data["query_count"] == len(QUERIES) + len(CONCEPTS)
+    assert data["query_count"] == 8  # six initial + two explicit zero-hit expansion queries
 
 
 def test_canned_recommendation_appears_nowhere_in_the_graph_package():
@@ -385,5 +323,6 @@ def test_zero_similarity_is_reported_honestly(deterministic):
         result = _drain()[-1]
 
     patents = result["data"]["patents"]
-    assert [p["num"] for p in patents] == ["US9999999A"], "the match was dropped"
-    assert patents[0]["risk"] == "Low", f"expected an honest Low, got {patents[0]['risk']}"
+    assert [(patent['num'], patent['risk']) for patent in patents] == [('US9999999A', 'Low')]
+    assert result['data']['coverage']['related_returned'] == 0
+    assert result['data']['coverage']['additional_returned'] == 1

@@ -19,6 +19,12 @@ export interface PatentMatch {
   url: string;
   family_id?: string;
   family_size?: number;
+  publication_date?: string;
+  abstract?: string;
+  abstract_language?: string;
+  evidence?: {quote: string; element_ids: string[]; relationship: boolean; span_id?: string; start?: number; end?: number}[];
+  covered_element_ids?: string[];
+  not_mentioned_element_ids?: string[];
 }
 
 export interface AnalysisReport {
@@ -28,6 +34,10 @@ export interface AnalysisReport {
   patents: PatentMatch[];
   recommendations: string[];
   query_count: number;
+  analysis_basis?: 'abstract' | 'full_text';
+  analysis_version?: string;
+  coverage?: {received: number; pages: number; unique_publications: number; analyzed_abstracts: number; missing_abstracts: number; unavailable_records: number; budget_exhausted: boolean; query_count: number; returned: number; families: number};
+  elements?: Record<string, string>;
 }
 
 /**
@@ -38,6 +48,8 @@ export interface AnalysisReport {
  * tuple MINUS `semantic_search` and `fuse`, whose nodes are currently disabled.
  */
 export const PHASE_ORDER = [
+  'filter',
+  'enrich',
   'understand',
   'queries',
   'decompose',
@@ -45,10 +57,9 @@ export const PHASE_ORDER = [
   'strategy',
   'gate_strategy',
   'search',
-  'filter',
-  'enrich',
-  'validate',
+  'expand',
   'compare',
+  'validate',
   'analyze',
 ] as const;
 
@@ -60,10 +71,9 @@ export const QUICK_SEARCH_PHASE_ORDER: readonly Phase[] = [
   'understand',
   'queries',
   'search',
-  'filter',
-  'enrich',
-  'validate',
+  'expand',
   'compare',
+  'validate',
   'analyze',
 ];
 
@@ -73,10 +83,9 @@ export const ADVANCED_SEARCH_PHASE_ORDER: readonly Phase[] = [
   'gate_a',
   'strategy',
   'search',
-  'filter',
-  'enrich',
-  'validate',
+  'expand',
   'compare',
+  'validate',
   'analyze',
 ];
 
@@ -87,18 +96,18 @@ export const ADVANCED_PRE_REVIEW_PHASE_ORDER: readonly Phase[] = ['decompose'];
 export const ADVANCED_EXECUTION_PHASE_ORDER: readonly Phase[] = [
   'strategy',
   'search',
-  'filter',
-  'enrich',
-  'validate',
+  'expand',
   'compare',
+  'validate',
   'analyze',
 ];
 
 export const PHASE_LABELS: Record<Phase, string> = {
+  filter: 'Filtering candidates...',
   understand: 'Extracting technical concepts & keywords…',
   queries: 'Expanding into search queries…',
   search: 'Searching patent databases…',
-  filter: 'Filtering candidates by title and abstract…',
+  expand: 'Reviewing retrieval gaps and expanding the search…',
   enrich: 'Fetching full patent text…',
   validate: 'Checking relevance of candidates…',
   compare: 'Scoring patent similarities…',
@@ -113,6 +122,7 @@ export const PHASE_ICONS: Record<Phase, string> = {
   understand: 'Sparkles',
   queries: 'Search',
   search: 'Database',
+  expand: 'Radar',
   filter: 'Radar',
   enrich: 'FileText',
   validate: 'ShieldCheck',
@@ -141,6 +151,10 @@ export interface HistoryEntry {
   patents: PatentMatch[];
   recommendations: string[];
   query_count: number;
+  analysis_basis?: 'abstract' | 'full_text';
+  analysis_version?: string;
+  coverage?: {received: number; pages: number; unique_publications: number; analyzed_abstracts: number; missing_abstracts: number; unavailable_records: number; budget_exhausted: boolean; query_count: number; returned: number; families: number};
+  elements?: Record<string, string>;
 }
 
 /**

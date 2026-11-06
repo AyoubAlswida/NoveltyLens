@@ -38,6 +38,7 @@ from typing import Any, Optional
 from graph.pipeline import build_graph_with_checkpointer, build_result_event
 from graph.state import GraphState
 from reports import save_report
+from graph.abstract_search import metadata as abstract_metadata
 from workflow.executor import GraphAdapter
 from workflow.types import WorkflowGate
 
@@ -61,6 +62,8 @@ def initial_input(run: dict[str, Any]) -> dict[str, Any]:
     section 3.6), they were validated at admission, and re-supplying a default at
     this point would let a run execute under a policy nobody recorded.
     """
+    if run.get("retrieval_version") != "epo-abstract-v1":
+        raise ValueError("This search predates abstract screening; start a new search")
     return {
         "description": run["description"],
         "claims": run.get("claims") or "",
@@ -153,7 +156,8 @@ def persist_result(
         query_count=result_data["query_count"],
         recommendations=result_data["recommendations"],
         matches=result_data["patents"],
-        patents=[comparison.patent for comparison in comparisons],
+        patents=final_state.get("candidates", []) if final_state.get("analysis_version") else [comparison.patent for comparison in comparisons],
+        metadata=abstract_metadata(final_state) if final_state.get("analysis_version") else None,
     )
 
 

@@ -98,13 +98,12 @@ def test_the_report_is_the_shape_the_report_screen_reads(client, pg, make_run):
     `AnalysisReport` is a whole shape: a missing key blanks a section, and an
     extra one is a field nothing renders.
     """
-    from tests.test_pipeline_contract import RESULT_KEYS
 
     run_id = make_run(created_by=OWNER)
     _complete(pg, run_id)
 
     body = client.get(f"/api/runs/{run_id}/report", headers=auth()).json()
-    assert set(body) == RESULT_KEYS
+    assert set(body) == set(REPORT)  # historical terminal events retain their original shape
 
 
 def test_the_report_publishes_no_score_or_verdict(client, pg, make_run):

@@ -1,0 +1,43 @@
+{
+  "date": "2026-11-02",
+  "status": "completed",
+  "execution_kind": "live Quick Search smoke test, not a recall benchmark",
+  "elapsed_seconds": 519.9,
+  "history_run_id": "604f3b91-0e6f-4169-8a1f-a04ff1a12d17",
+  "coverage": {
+    "received": 602,
+    "pages": 14,
+    "unique_publications": 564,
+    "analyzed_abstracts": 564,
+    "missing_abstracts": 0,
+    "unavailable_records": 0,
+    "budget_exhausted": false,
+    "query_count": 9,
+    "returned": 41,
+    "families": 564
+  },
+  "risk_counts": {
+    "High": 1,
+    "Medium": 35,
+    "Low": 5
+  },
+  "source_span_quotes_verified": true,
+  "all_available_unique_abstracts_analyzed": true,
+  "history_round_trip_verified": true,
+  "known_source_publication": "US5109799A",
+  "known_source_rank": 1,
+  "top_publications": [
+    "US5109799A",
+    "GB964795A",
+    "JP2001000066A",
+    "CN206586160U",
+    "CN201029358Y",
+    "US2003168015A1",
+    "US6557490B1",
+    "CH593605A5",
+    "SE2351148A1",
+    "US6009835A"
+  ],
+  "recommendation_count": 5,
+  "ten_case_benchmark": "deferred by user; no labelled cases ready"
+}

@@ -503,3 +503,22 @@ def capability_fixture_dir(tmp_path):
     path = tmp_path / artifact_filename(identity, "2026-08-28")
     path.write_text(json.dumps(record, indent=2), encoding="utf-8")
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def abstract_discovery_boundary():
+    """Keep old source fixtures useful at the new OPS transport boundary."""
+    from search import search as sources
+    from search.epo_abstracts import Page
+    from search.search import PatentSearchError
+    def page(query, start, deadline):
+        records=[]
+        for name, provider in sources.SOURCES:
+            try:
+                records.extend(provider(query, 50))
+            except Exception as error:
+                raise PatentSearchError(f'{name}: {error}') from error
+        return Page(records, len(records), len(records))
+    with patch('graph.abstract_search.search_page', side_effect=page), \
+         patch('graph.abstract_search.family_publications', return_value=[]):
+        yield

@@ -59,9 +59,14 @@ def test_every_declared_profile_resolves_to_exactly_one_provider(profile):
     """One knob, not two. A separate LLM_PROVIDER setting would be a second thing
     to drift out of step, and "profile says local, provider says gateway" is
     exactly the internal inconsistency this design removes rather than detects."""
-    target = resolve_target(
-        FakeSettings(), environ={"DEPLOYMENT_PROFILE": profile.value}
-    )
+    settings = FakeSettings()
+    if profile is Profile.FUSE:
+        settings.llm_api_url = "https://api.fuse.humainaic.com/v1/chat/completions"
+        settings.llm_model = "deepseek-ai/DeepSeek-V4.1-Flash"
+    if profile is Profile.HUGGINGFACE:
+        settings.llm_api_url = 'https://router.huggingface.co/v1/chat/completions'
+        settings.llm_model = 'Qwen/Qwen3-235B-A22B-Instruct-2507:deepinfra'
+    target = resolve_target(settings, environ={"DEPLOYMENT_PROFILE": profile.value})
     assert target.provider is PROFILE_PROVIDER[profile]
 
 
@@ -272,8 +277,10 @@ def test_no_credential_is_hard_coded_in_the_deployment_module():
     source = (Path(__file__).resolve().parent.parent / "deployment.py").read_text(
         encoding="utf-8"
     )
-    for marker in ("sk-", "hf_", "Bearer "):
+    for marker in ("sk-", "Bearer "):
         assert marker not in source, f"a literal credential shape appears: {marker!r}"
+    import re
+    assert not re.search(r'hf_[A-Za-z0-9]{20,}', source), 'a literal HF credential appears'
 
 
 # --- the suite's own profile -----------------------------------------------

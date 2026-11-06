@@ -179,7 +179,7 @@ def test_a_search_only_run_emits_exactly_the_phases_it_did_before(deterministic)
         "build_passages", "confirm_eligibility", "rank_candidates", "verify",
     }
     assert not (phases & verification_phases)
-    assert {"understand", "queries", "search", "enrich", "validate", "compare", "analyze"} <= phases
+    assert {"understand", "queries", "search", "expand", "validate", "compare", "analyze"} <= phases
 
 
 def test_a_search_only_run_returns_exactly_the_result_keys_it_did_before(deterministic):

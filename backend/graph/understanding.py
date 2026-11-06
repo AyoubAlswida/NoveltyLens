@@ -340,7 +340,7 @@ def prepare_approved_search_node(state: GraphState) -> dict:
     description = str(state.get("description") or "").strip()
     claims = str(state.get("claims") or "").strip()
     invention_text = "\n\n".join(
-        part for part in (description, claims, summary, *limitations) if part
+        part for part in (summary, *limitations) if part
     )
     return {
         "analysis": InventionAnalysis(

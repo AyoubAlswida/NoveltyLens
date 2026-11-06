@@ -152,6 +152,10 @@ def _embed_batch(texts: list[str], timeout: int = 60, retries: int = 2) -> list[
             trace("embeddings.batch.response", attempt=attempt, vectors=len(data), dims=len(data[0]) if data else 0)
             return data
         except Exception as error:
+            if isinstance(error, requests.HTTPError) and error.response is not None:
+                status = error.response.status_code
+                if 400 <= status < 500 and status not in (408, 429):
+                    raise RuntimeError(f'Embedding service returned HTTP {status}; check provider access and billing') from None
             last_error = error
             trace("embeddings.batch.attempt_failed", attempt=attempt, error=str(error))
             if attempt < retries:

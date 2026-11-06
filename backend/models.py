@@ -48,6 +48,8 @@ class PatentRecord:
     must not treat an empty list as "this patent has no claims"."""
     family_id: str = ""
     """Provider-backed simple-family key. Empty means the provider supplied none."""
+    abstract_language: str = ""
+    classifications: list[str] = field(default_factory=list)
     family_size: int = 0
     """Total simple-family publications reported by the provider, when known."""
 

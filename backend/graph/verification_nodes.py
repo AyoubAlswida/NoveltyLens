@@ -178,17 +178,13 @@ def decompose_features_node(state: GraphState) -> dict[str, Any]:
 
 def propose_limitations_node(state: GraphState) -> dict[str, Any]:
     """Generate Stage-2 limitations from the approved Stage-1 summary only."""
-    from graph.limits import MAX_PROPOSED_SEARCH_LIMITATIONS
-
     summary = str(state.get("approved_summary") or "").strip()
     if not summary:
         raise UnapprovedArtifactError(
             "invention requirements cannot be generated before the summary is approved"
         )
     emit_progress("decompose", "Generating invention requirements from your approved summary…")
-    features = llm.propose_technical_limitations(
-        summary, max_elements=MAX_PROPOSED_SEARCH_LIMITATIONS
-    )
+    features = llm.propose_technical_limitations(summary)
     run_id = str(state.get("run_id") or "").strip()
     version = int(state.get("understanding_version") or 0)
     if run_id:

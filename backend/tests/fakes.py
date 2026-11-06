@@ -243,6 +243,7 @@ class FakeReportStore:
                 "concepts": run["concepts"],
                 "query_count": run["query_count"],
                 "recommendations": run["recommendations"],
+                **({key: run['metadata'][key] for key in ('analysis_basis','analysis_version','coverage','elements')} if run.get('metadata') else {}),
                 "patents": [
                     {
                         **match,

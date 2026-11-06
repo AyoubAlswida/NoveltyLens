@@ -120,11 +120,12 @@ def _assemble() -> StateGraph:
     path, and :func:`build_graph_with_checkpointer` compiles the identical
     builder with the Postgres saver the executor needs for `interrupt()`.
     """
+    from graph import abstract_search as abstracts
     builder = StateGraph(GraphState)
-    builder.add_node("understand", understand_node)
-    builder.add_node("expand_queries", expand_queries_node)
+    builder.add_node("understand", abstracts.understand_node)
+    builder.add_node("expand_queries", abstracts.expand_node)
     builder.add_node("search_orchestrator", search_orchestrator_node)
-    builder.add_node("keyword_search", keyword_search_node)
+    builder.add_node("keyword_search", abstracts.discover_node)
     # builder.add_node("semantic_search", semantic_search_node)  # TEMP: disabled
     # builder.add_node("index_patents", index_patents_node)  # TEMP: disabled - only
     # semantic_search ever reads Qdrant, so writing to it while that's off is
@@ -132,9 +133,9 @@ def _assemble() -> StateGraph:
     # builder.add_node("fuse", fuse_node)  # TEMP: disabled - with only one branch
     # (keyword_search) live, fusion is a no-op re-sort of a single list.
     # validate_node reads `candidates` directly instead; see graph/validation.py.
-    builder.add_node("validate", validate_node)
-    builder.add_node("rank", rank_node)
-    builder.add_node("explain", explain_node)
+    builder.add_node("validate", lambda state: {})
+    builder.add_node("rank", abstracts.rank_node)
+    builder.add_node("explain", abstracts.explain_node)
 
     builder.add_conditional_edges(
         START,
@@ -292,6 +293,9 @@ def _result_envelope(
 
 def build_result_event(state: GraphState) -> dict[str, object]:
     """Assemble the single terminal ``result`` event from the finished state."""
+    if state.get("analysis_version") == "epo-abstract-v1":
+        from graph.abstract_search import result_data
+        return {"type": "result", "data": result_data(state)}
     if not state["candidates"]:
         # An honest empty report. The search reached every provider and found
         # nothing, which is a real answer, so it is reported rather than raised.
@@ -341,6 +345,7 @@ def persist_run(state: GraphState, result: dict[str, object]) -> None:
     empty ``patents``/``matches`` lists below are that answer, not a failure to
     record one.
     """
+    from graph.abstract_search import metadata as abstract_metadata
     data: dict = result["data"]  # type: ignore[assignment]
     comparisons = state.get("comparisons") or []
 
@@ -353,7 +358,8 @@ def persist_run(state: GraphState, result: dict[str, object]) -> None:
             query_count=data["query_count"],
             recommendations=data["recommendations"],
             matches=data["patents"],
-            patents=[comparison.patent for comparison in comparisons],
+            patents=state.get("candidates", []) if state.get("analysis_version") else [comparison.patent for comparison in comparisons],
+            metadata=abstract_metadata(state) if state.get("analysis_version") else None,
         )
 
 

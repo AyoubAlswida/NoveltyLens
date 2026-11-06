@@ -163,8 +163,6 @@ describe('ReportScreen', () => {
     expect(grouped.querySelectorAll('.patent-card')).toHaveLength(2);
     expect(grouped.textContent).toContain('2 matched publications');
     expect(grouped.textContent).toContain('4 publications reported in this family');
-    expect(text(fixture)).toContain('3 publications');
-    expect(text(fixture)).toContain('2 identified patent families');
   });
 
   it('renders matches in the order given, without re-sorting', () => {
@@ -206,6 +204,22 @@ describe('ReportScreen', () => {
 
     expect(text(fixture)).toContain('How to make it more unique');
     expect(text(fixture)).not.toContain('AI Recommendation');
+  });
+
+  it('groups advice for each publication into one bullet and omits an empty candidate count', () => {
+    const fixture = mountReport(report({
+      recommendations: [
+        'EP123A1 — Both filters use carbon.\nCheck the flow path.',
+        'EP123A1. **What to verify**: 1. Compare the frame. 2. Check the cartridge.',
+        'The report shows 2 publications identified as related to your search. 0 additional screened candidates are included for further review.',
+      ],
+    }));
+
+    const bullets = [...html(fixture).querySelectorAll('ul.recommendation-list > li')];
+    expect(bullets.map((bullet) => bullet.textContent?.trim())).toEqual([
+      'EP123A1. Both filters use carbon. Check the flow path. What to verify: Compare the frame. Check the cartridge.',
+      'The report shows 2 publications identified as related to your search.',
+    ]);
   });
 });
 

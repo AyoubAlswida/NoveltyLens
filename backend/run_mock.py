@@ -727,6 +727,10 @@ def _mock_llm_chat(prompt: str, **kwargs: object) -> str:
     the AssertionError below, or - worse, if the double were ever loosened - reach
     the outbound-HTTP guard.
     """
+    from abstract_mock import response
+    value = response(prompt)
+    if value is not None:
+        return value
     _pause(1.4)  # a real call to the HF Router is 3-12s
 
     if VERIFIER_MARKER in str(kwargs.get("system", "")):
@@ -995,6 +999,10 @@ def main() -> None:
         ):
             stack.enter_context(patch(target, side_effect=replacement))
         stack.enter_context(patch("search.search.SOURCES", MOCK_SOURCES))
+        from search.epo_abstracts import Page
+        stack.enter_context(patch("graph.abstract_search.search_page",
+            side_effect=lambda query, start, deadline: Page(_mock_provider(query,50), len(_mock_provider(query,50)), len(_mock_provider(query,50)))))
+        stack.enter_context(patch("graph.abstract_search.family_publications", return_value=[]))
 
         if args.workflow:
             # The evidence layer's own provider boundary. Patched only in

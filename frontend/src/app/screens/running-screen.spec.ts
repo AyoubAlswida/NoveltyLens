@@ -39,9 +39,9 @@ describe('RunningScreen', () => {
     const steps = [...fixture.nativeElement.querySelectorAll('.progress-step')];
     expect(steps.map((step: Element) => step.querySelector('.phase-label')?.textContent)).toEqual([
       'Planning the search',
-      'Searching patent databases',
+      'Searching patents and families',
       'Evaluating prior art',
-      'Preparing your analysis',
+      'Preparing your report',
     ]);
     expect(fixture.nativeElement.textContent).not.toContain('6/6');
     expect(fixture.nativeElement.textContent).not.toContain('23 found');
@@ -69,11 +69,18 @@ describe('RunningScreen', () => {
     expect(steps[1].classList.contains('active')).toBe(true);
     expect(steps[1].querySelector('.phase-detail')).toBeNull();
 
-    fixture.componentRef.setInput('phaseIdx', QUICK_SEARCH_PHASE_ORDER.indexOf('enrich'));
+    fixture.componentRef.setInput('phaseIdx', QUICK_SEARCH_PHASE_ORDER.indexOf('validate'));
     fixture.detectChanges();
     steps = [...fixture.nativeElement.querySelectorAll('.progress-step')];
     expect(steps[1].classList.contains('complete')).toBe(true);
     expect(steps[2].classList.contains('active')).toBe(true);
+
+    for (const [phase, activeIndex] of [['expand', 1], ['compare', 2], ['analyze', 3]] as const) {
+      fixture.componentRef.setInput('phaseIdx', QUICK_SEARCH_PHASE_ORDER.indexOf(phase));
+      fixture.detectChanges();
+      steps = [...fixture.nativeElement.querySelectorAll('.progress-step')];
+      expect(steps.findIndex((step: Element) => step.classList.contains('active'))).toBe(activeIndex);
+    }
   });
 
   it('does not display an elapsed-time footer', () => {

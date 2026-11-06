@@ -371,6 +371,7 @@ def test_the_adapter_derives_advanced_search_from_the_run_row_existing():
     graph_input = initial_input(
         {
             "run_id": "r",
+            "retrieval_version": "epo-abstract-v1",
             "description": "d",
             "claims": None,
             "cutoff_date": None,
@@ -386,7 +387,7 @@ def test_the_adapter_supplies_no_policy_default():
     """Spec §3.6: the policies have no default anywhere. Re-supplying one here
     would let a run execute under a policy nobody recorded."""
     with pytest.raises(KeyError):
-        initial_input({"run_id": "r", "description": "d"})
+        initial_input({"run_id": "r", "description": "d", "retrieval_version": "epo-abstract-v1"})
 
 
 def test_the_production_adapter_is_the_one_the_executor_would_load():
@@ -443,7 +444,7 @@ def test_the_cutoff_date_reaches_the_graph_as_a_string():
     from datetime import date
 
     run = {
-        "run_id": "r", "description": "d", "claims": None,
+        "run_id": "r", "description": "d", "claims": None, "retrieval_version": "epo-abstract-v1",
         "date_policy": "publication_lt_cutoff",
         "text_version_policy": "provider_publication_date",
         "cutoff_date": date(2024, 1, 1),

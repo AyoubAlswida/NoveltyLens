@@ -499,6 +499,8 @@ class Executor:
                 )
             run = {**run, "status": RunStatus.RUNNING}
 
+        if self.adapter.initial_input.__module__ == "graph.adapter" and run.get("retrieval_version") != "epo-abstract-v1":
+            raise ValueError("This search predates abstract screening; start a new search")
         final_state, pending = self._stream(graph, run, fence_token, graph_input, config, beat)
 
         if pending is not None:

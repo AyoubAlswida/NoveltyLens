@@ -9,6 +9,7 @@ report. See CLAUDE.md's zero-tolerance failure policy.
 Nothing here catches a psycopg exception. A down database fails the request.
 """
 
+from psycopg.types.json import Jsonb
 import psycopg
 
 from models import PatentRecord
@@ -68,6 +69,7 @@ def save_report(
     recommendations: list[str],
     matches: list[dict[str, object]],
     patents: list[PatentRecord],
+    metadata: dict | None = None,
 ) -> str:
     """Store the run and its ranked matches; returns the new run id.
 
@@ -96,11 +98,11 @@ def save_report(
 
         cur.execute(
             """
-            INSERT INTO search_runs (description, claims, concepts, query_count, recommendations)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO search_runs (description, claims, concepts, query_count, recommendations, analysis_metadata)
+            VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (description, claims, concepts, query_count, recommendations),
+            (description, claims, concepts, query_count, recommendations, Jsonb(metadata) if metadata is not None else None),
         )
         row = cur.fetchone()
         assert row is not None
@@ -109,8 +111,8 @@ def save_report(
         for rank, match in enumerate(matches):
             cur.execute(
                 """
-                INSERT INTO search_run_matches (run_id, rank, patent_id, risk, rationale, key_overlap, source, family_id, family_size)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO search_run_matches (run_id, rank, patent_id, risk, rationale, key_overlap, source, family_id, family_size, analysis_snapshot)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     run_id,
@@ -124,6 +126,7 @@ def save_report(
                     match["source"],
                     str(match.get("family_id") or ""),
                     int(match.get("family_size") or 0),
+                    Jsonb(match) if metadata is not None else None,
                 ),
             )
     return str(run_id)
@@ -171,7 +174,7 @@ def list_history(conn: psycopg.Connection, limit: int = 50) -> list[dict[str, ob
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT id, description, concepts, query_count, recommendations, created_at
+            SELECT id, description, concepts, query_count, recommendations, created_at, analysis_metadata
             FROM search_runs
             ORDER BY created_at DESC
             LIMIT %s
@@ -192,7 +195,7 @@ def list_history(conn: psycopg.Connection, limit: int = 50) -> list[dict[str, ob
         cur.execute(
             """
             SELECT srm.run_id, srm.patent_id, p.title, srm.risk, srm.rationale,
-                   srm.key_overlap, srm.source, p.url, srm.family_id, srm.family_size
+                   srm.key_overlap, srm.source, p.url, srm.family_id, srm.family_size, srm.analysis_snapshot
             FROM search_run_matches srm
             JOIN patents p ON p.id = srm.patent_id
             WHERE srm.run_id = ANY(%s)
@@ -201,7 +204,7 @@ def list_history(conn: psycopg.Connection, limit: int = 50) -> list[dict[str, ob
             (run_ids,),
         )
         matches_by_run: dict[str, list[dict[str, object]]] = {str(rid): [] for rid in run_ids}
-        for run_id, patent_id, title, risk, rationale, key_overlap, source, url, family_id, family_size in cur.fetchall():
+        for run_id, patent_id, title, risk, rationale, key_overlap, source, url, family_id, family_size, snapshot in cur.fetchall():
             matches_by_run[str(run_id)].append({
                 "num": patent_id,
                 "title": title,
@@ -212,6 +215,7 @@ def list_history(conn: psycopg.Connection, limit: int = 50) -> list[dict[str, ob
                 "url": url,
                 "family_id": family_id or "",
                 "family_size": int(family_size or 0),
+                **(snapshot or {}),
             })
 
     return [
@@ -223,6 +227,7 @@ def list_history(conn: psycopg.Connection, limit: int = 50) -> list[dict[str, ob
             "query_count": query_count,
             "recommendations": recommendations,
             "patents": matches_by_run[str(run_id)],
+            **({key: meta[key] for key in ("analysis_basis", "analysis_version", "coverage", "elements")} if meta else {"analysis_basis": "full_text"}),
         }
-        for run_id, description, concepts, query_count, recommendations, created_at in runs
+        for run_id, description, concepts, query_count, recommendations, created_at, meta in runs
     ]

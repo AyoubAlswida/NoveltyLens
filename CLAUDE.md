@@ -14,6 +14,128 @@ event contract, reflect it here before you finish the task, not as an afterthoug
 against the code more than once (see the SSE contract note below for one that survived a
 full cycle). Where this file and the code disagree, the code wins and this file is the bug.
 
+## Current EPO abstract search architecture (2026-11-02)
+
+New searches in the MAIN application use EPO OPS abstracts only. This section
+supersedes later historical descriptions of Lens discovery, full-text enrichment,
+20/30-candidate filtering, eight final matches and similarity-based novelty risk.
+The independent `aramco_portable/` application is unchanged.
+
+`graph/abstract_search.py` supplies the shared live Quick/Advanced discovery,
+ranking and analysis nodes. Quick extracts technical elements; Advanced retains
+both invention reviews and plans only from approved summary/requirements. The
+Quick extractor treats a bare absence as context rather than a searchable
+element, and combines any nonempty `claims` input with the description for
+planning and screening. Quick has no editable summary or requirements review
+stage; changes to the description require a new search.
+The
+planner builds 6-12 complementary CQL queries and checks every element is targeted.
+At least two initial queries have at most two AND groups for recall. Expansion
+receives actual per-query result counts and the number of unique publications;
+when fewer than 100 were retrieved it must add at least two single-group
+recall queries instead of adding more mandatory conditions.
+`search/epo_abstracts.py` retrieves abstract,biblio pages of 50. Each initial query
+gets one page, one expansion adds 0-4 queries, then second pages are retrieved in
+query order. There are at most 20 successful pages / 1000 raw records and two
+pages per query. Repeated publications merge with query provenance. Both modes
+also use up to three EPO family lookups, prioritizing the ranked discovery sample
+and admitting up to 12 new publications per lookup. The extended family response
+preserves each publication's provider-backed simple family ID. Added abstracts
+undergo the same screening, and report metadata records the family lookup audit.
+Missing abstracts are counted, not rated. No full-text retrieval or corpus indexing runs.
+
+All unique nonempty abstracts are screened in groups of up to 3 (smaller for
+large texts), with up to four concurrent model calls. GPT-oss sometimes returned
+only relevant publications from larger groups, so the prompt explicitly requires
+one row per publication, including negative rows. A completed batch frees
+its slot immediately even if an earlier batch is still running. Exact source quotes and element
+ids are validated. Invalid output is re-asked once and then fails.
+Evidence is selected by per-abstract source-span ids; the server extracts exact
+quotes and character offsets from the original abstract, rather than asking the
+model to copy or paraphrase quotations. Unknown span ids fail validation.
+The same screening request grades evidence as full or partial per invention
+element. Only full evidence counts toward risk thresholds. The server renders the
+overlap explanation from these grades and the invention element texts, keeping
+partially supported elements separate from elements not identified in the abstract.
+Historical reports keep their stored explanation.
+Embeddings order processing but exclude nothing. Both search modes rank
+model-marked related publications first and fill the remaining slots with
+screened publications in embedding order when available. The report keeps
+the evidence-based explanation for each and its coverage metadata distinguishes
+related from additional results. Every screened publication retains its own
+evidence and may be returned even when another publication in its provider-backed
+family is also close. The report returns up to 100 publications, and its existing
+UI groups shared family ids. Unknown family identity is never inferred. Ratings mean proximity based on abstracts: High
+requires >=75% explicit element support, the central mechanism and a relationship;
+Medium requires >=40% support or two related elements; other supported overlaps
+are Low. Unrelated records are omitted. Missing abstract details never establish
+absence from the patent. Both modes provide practical distinction suggestions
+that collectively address every invention element. Each cites a related
+publication and explains what to compare in its claims or description.
+
+Credentials are EPO_CONSUMER_KEY / EPO_CONSUMER_SECRET. OAuth tokens are reused
+until expiry. PostgreSQL epo_request_clock serializes search attempts across API
+and workers at eight/minute, adapting to provider delay headers. Execution has a
+30-minute deadline after review, kept in checkpoint state. Exhaustion/errors fail
+without alternate providers or partial-success reports.
+
+Migration 0027 adds this shared clock, report JSONB metadata, per-match snapshots
+and verification_runs.retrieval_version. Existing durable runs are legacy and
+must restart; new runs pin epo-abstract-v1 independently of review flow version.
+Historical reports retain their original analysis basis. reports.py remains the
+only report SQL writer; both completion callbacks store snapshots atomically.
+Metadata retains the plan, page audit, query origins, source abstracts and all
+analyses. Never write abstract evidence into the withdrawn verifier's tables.
+
+The terminal SSE shape keeps existing fields and adds analysis_basis,
+analysis_version, coverage and elements. Patent matches add abstract, language,
+publication date, evidence and covered/not-mentioned element ids. Quick phases:
+understand, queries, search, expand, compare, validate, analyze. Advanced phases:
+decompose, gate_a, strategy, search, expand, compare, validate, analyze. Legacy
+phase vocabulary remains for replay. Per the user's UI freeze (2026-11-02),
+the report screen and PDF/Word layouts are restored to their pre-migration design:
+no coverage banner, abstract/evidence panel, added pagination, date labels or
+renamed headings. Up to 100 results use the existing list and card design.
+Source abstracts, evidence and coverage remain stored internally and in the API;
+JSON exports retain the underlying data. No numeric similarity or overall verdict.
+Do not change user-visible layout or copy as part of backend/provider work.
+
+### Current inference provider selection (2026-11-04)
+
+The owner selected Fuse for both inference services, superseding the HF configuration
+below. DEPLOYMENT_PROFILE=fuse uses openai/gpt-oss-120b at
+https://api.fuse.humainaic.com/v1/chat/completions and FUSE_API_KEY only.
+Embeddings use Qwen/Qwen3-Embedding-8B at the same host's /v1/embeddings,
+with EMBEDDING_API_FORMAT=openai and EMBEDDING_API_KEY=${FUSE_API_KEY}.
+Both direct live calls returned HTTP 200 on 2026-11-04; embeddings have 4096
+components. This validates connectivity, not end-to-end retrieval quality.
+The embedding cache isolates model/endpoint/protocol identities automatically.
+Fuse uses the compatible chat payload and ignores OpenAI-specific reasoning
+settings. The prior DeepSeek configuration needed a hidden-reasoning allowance;
+that historical behavior is not applied to gpt-oss-120b. The approved-summary
+requirement generator now has no fixed count: it proposes every distinct,
+checkable technical constraint supported by that summary, merges semantic
+duplicates, and preserves causal relationships. No provider fallback; UI unchanged.
+
+### Historical inference provider selection (2026-11-02)
+
+The user selected Hugging Face for BOTH chat and embeddings. The main local
+.env now declares DEPLOYMENT_PROFILE=huggingface, chat model
+Qwen/Qwen3-235B-A22B-Instruct-2507:deepinfra at the HF Router, and embeddings
+BAAI/bge-large-en-v1.5 through hf-inference. Both use HF_TOKEN; no OpenAI key
+is selected. The explicit huggingface profile has its own Provider identity,
+requires the HF Router host and an explicit :provider model suffix, and never
+inherits OPENAI_REASONING_EFFORT or falls back to GPT. Other deployment profiles
+and the independent portable app remain available and unchanged.
+
+Provider inventory listed both chosen models as live and the token passed HF
+account authentication. Actual chat and embedding calls returned HTTP 402:
+HF billing/credits must be resolved before either service can be exercised.
+Do not claim a successful HF end-to-end search until live inference succeeds.
+Nontransient chat/embedding 4xx errors fail immediately rather than retrying a
+billing/auth failure. The earlier successful live search used GPT-5.4 mini and
+OpenAI text-embedding-3-large; its measurements remain historical evidence.
+
 ## What this project is
 
 A patent novelty-search tool: a user describes an invention in natural language, the

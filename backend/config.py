@@ -48,6 +48,7 @@ class Settings:
     asserts it.
     """
 
+    fuse_api_key: str = field(default=os.getenv("FUSE_API_KEY", ""), repr=False)
     hf_token: str = field(default=os.getenv("HF_TOKEN", ""), repr=False)
     serpapi_key: str = field(default=os.getenv("SERPAPI_KEY", ""), repr=False)
     epo_key: str = field(

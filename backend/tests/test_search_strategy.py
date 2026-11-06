@@ -126,93 +126,37 @@ def test_generated_queries_are_validated_and_released_without_human_approval():
     assert "approved_search_strategy" not in written
 
 
-def test_advanced_strategy_adds_lexical_requirement_anchors_without_another_llm_call():
-    """A novel added subsystem cannot consume every retrieval angle.
-
-    The anchors are built from the approved requirements and original description,
-    so they are equally available to the automatic current flow and a legacy
-    strategy reviewer.
-    """
+def test_advanced_strategy_uses_shared_planner_after_approved_understanding():
     from graph.strategy import propose_strategy_node
-
-    features = [{
-        "feature_id": "F1",
-        "elements": [
-            {"element_id": "E1", "text": "rotating body with equal-sized food compartments"},
-            {"element_id": "E2", "text": "spring-loaded trap door released by a support bar"},
-            {"element_id": "E3", "text": "bowl-integrated load cell tracks uneaten food"},
-        ],
-    }]
-    generated = [
-        _query("Q1", "automatic dry-pet food rotating body equal-sized compartments spring-loaded trap door"),
-        _query("Q2", "automatic dry-pet food drive withdraws support bar spring-loaded trap door trough bowl"),
-        _query("Q3", "automatic dry-pet bowl load cell weighs eaten versus dispensed food"),
-        _query("Q4", "automatic dry-pet food uneaten feedings reduces portions phone alert"),
-        _query("Q5", "automatic dry-pet food scheduled measured portion gravity trough"),
-    ]
-    state = {
-        "description": "An automatic dry-pet-food dispenser with rotating compartments and trap doors.",
-        "approved_summary": "An automatic dry-pet-food dispenser.",
-        "approved_decomposition": {"version": 1, "features": features},
-        "decomposition_version": 1,
-        "advanced_search_flow_version": 2,
-    }
-
-    with patch("graph.strategy.llm.propose_search_strategy", return_value=generated) as planned, patch(
-        "graph.strategy.emit_progress"
-    ):
-        result = propose_strategy_node(state)
-
-    assert planned.call_args.kwargs["max_queries"] == 5
-    proposed = result["candidate_search_strategy"]["queries"]
-    assert len(proposed) == 8
-    anchor_texts = [item["query_text"] for item in proposed[5:]]
-    assert any("equal-sized compartments" in text for text in anchor_texts)
-    assert any("support bar" in text for text in anchor_texts)
-    assert any("load cell" in text for text in anchor_texts)
-    assert all(item["covered_element_ids"] == [] for item in proposed[5:])
-    assert all(len(item["query_text"].split()) <= 7 for item in proposed[5:])
-
-
-def test_advanced_core_anchor_is_not_the_tail_of_an_over_combined_query():
-    """A dense combined strategy query can be too restrictive for the source
-    patent. Its tail must not replace a short approved core requirement anchor.
-    """
-    from graph.strategy import propose_strategy_node
-
-    features = [{
-        "feature_id": "F1",
-        "elements": [
-            {"element_id": "E1", "text": "pet food dispenser rotating body having equal-sized compartments, each closed by a spring-loaded trap door"},
-            {"element_id": "E2", "text": "pet food dispenser drive mechanism withdraws a support bar so a trap door releases food through a directional trough on a schedule"},
-            {"element_id": "E3", "text": "pet food dispenser bowl load cell measures eaten food"},
-            {"element_id": "E4", "text": "pet food dispenser reduces portions after uneaten feedings and sends an alert"},
-        ],
-    }]
-    generated = [
-        _query("Q1", "automatic dry-pet food rotating body spring-loaded trap door periodic support bar gravity trough"),
-        _query("Q2", "automatic dry-pet food scheduled measured portion bowl load cell compares eaten"),
-        _query("Q3", "automatic dry-pet food bowl load cell consecutive uneaten feedings reduce portions phone alert"),
-    ]
-    state = {
-        "description": "An automatic dry-pet-food dispenser with rotating compartments.",
-        "approved_summary": "An automatic dry-pet-food dispenser.",
-        "approved_decomposition": {"version": 1, "features": features},
-        "decomposition_version": 1,
-        "advanced_search_flow_version": 2,
-    }
-
-    with patch("graph.strategy.llm.propose_search_strategy", return_value=generated) as planned, \
-         patch("graph.strategy.emit_progress"):
-        result = propose_strategy_node(state)
-
-    anchors = [item["query_text"] for item in result["candidate_search_strategy"]["queries"][3:]]
-    assert len(anchors) == 3
-    assert anchors[0].startswith("pet food dispenser ")
-    assert "spring-loaded trap door" in anchors[0]
-    assert "load cell" not in anchors[0]
-    assert "support bar gravity trough" not in anchors[0]
+    units = ['rotating food compartments', 'support bar withdrawal releases a spring-loaded trap door']
+    features = [{'feature_id':'F1','elements':[{'element_id':f'E{i+1}','text':text} for i,text in enumerate(units)]}]
+    state = {'description':'unreviewed text', 'approved_summary':'An automatic food dispenser.',
+        'approved_decomposition':{'version':3,'features':features}, 'decomposition_version':3,
+        'advanced_search_flow_version':2}
+    generated = [_query('Q1','ta="food" and ta="compartments"')]
+    with patch('graph.abstract_search.plan',return_value=generated) as planned, patch('graph.strategy.emit_progress'):
+        result=propose_strategy_node(state)
     planned.assert_called_once()
+    assert planned.call_args.args[:2]==(state['approved_summary'],units)
+    assert result['candidate_search_strategy']['queries']==generated
+    assert result['retrieval_plan']==generated
+    assert result['analysis_version']=='epo-abstract-v1'
+    assert result['candidate_search_strategy']['understanding_version']==3
+    assert 'approved_search_strategy' not in result
+
+
+def test_advanced_planner_keeps_compound_mechanism_units_and_excludes_raw_edits():
+    from graph.strategy import propose_strategy_node
+    mechanism='withdrawing a support bar opens a trap door and releases food through a trough'
+    state={'description':'unapproved load cell and phone alerts',
+        'approved_summary':'A mechanical food dispenser.',
+        'approved_decomposition':{'version':1,'features':[{'elements':[{'text':mechanism}]}]},
+        'decomposition_version':1,'advanced_search_flow_version':2}
+    with patch('graph.abstract_search.plan',return_value=[_query('Q1','ta="food"')]) as planned, patch('graph.strategy.emit_progress'):
+        propose_strategy_node(state)
+    assert planned.call_args.args[0]==state['approved_summary']
+    assert planned.call_args.args[1]==[mechanism]
+    assert 'load cell' not in str(planned.call_args)
 
 
 @pytest.mark.parametrize(

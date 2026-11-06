@@ -1789,12 +1789,11 @@ button {
 .recommendation-list {
   margin: 0;
   padding: 20px 24px 24px;
-  list-style: none;
+  padding-inline-start: 44px;
+  list-style: disc;
 }
 
 .recommendation-list li {
-  display: flex;
-  gap: 13px;
   margin-bottom: 13px;
 }
 
@@ -1802,18 +1801,8 @@ button {
   margin-bottom: 0;
 }
 
-.recommendation-list li > span {
-  width: 25px;
-  height: 25px;
-  flex: 0 0 25px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  color: #fff;
-  background: var(--teal-ink);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
+.recommendation-list li::marker {
+  color: var(--teal-ink);
 }
 
 .recommendation-list p {

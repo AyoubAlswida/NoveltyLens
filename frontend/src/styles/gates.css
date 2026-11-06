@@ -734,6 +734,15 @@ mark.quote-hit { background: rgba(38, 168, 171, 0.28); padding: 0 0.125rem; }
   box-shadow: 0 0 0 4px rgba(38, 168, 171, 0.16);
 }
 
+.requirement-input {
+  min-width: 0;
+  min-height: 2.75rem;
+  field-sizing: content;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  resize: none;
+}
+
 .draft-remove {
   flex: none;
   display: inline-flex;

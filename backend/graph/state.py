@@ -31,6 +31,18 @@ class GraphState(TypedDict, total=False):
     its own group; everything else it treats as read-only.
     """
 
+    analysis_version: str
+    execution_deadline: float
+    retrieval_plan: list[dict]
+    coverage: dict
+    retrieval_audit: list[dict]
+    family_retrieval_audit: list[dict]
+    query_origins: dict
+    abstract_snapshots: list[dict]
+    abstract_analyses: list[dict]
+    abstract_matches: list[dict]
+    abstract_recommendations: list[str]
+
     # --- Request input.  Set once by the caller, never written by a node. ---
     description: str
     claims: str | None

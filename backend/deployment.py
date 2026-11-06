@@ -15,6 +15,7 @@ gateway" is exactly the internal inconsistency this module has to refuse.
 | Profile | Provider | Settings it reads | Status |
 |---|---|---|---|
 | `local` | `openai` | `OPENAI_*` | development (amendment 2026-08-28) |
+| `huggingface` | `huggingface` | `LLM_API_URL`, `LLM_MODEL`, `HF_TOKEN` | HF Router; explicit inference provider |
 | `aramco` | `openai_compatible` | `LLM_API_*`, `LLM_MODEL` | **deferred and blocked** |
 | `test` | `stub` | none | fixtures only |
 
@@ -522,11 +523,15 @@ class ConfigError(RuntimeError):
 
 class Profile(StrEnum):
     LOCAL = "local"
+    FUSE = "fuse"
+    HUGGINGFACE = "huggingface"
     ARAMCO = "aramco"
     TEST = "test"
 
 
 class Provider(StrEnum):
+    FUSE = "fuse"
+    HUGGINGFACE = "huggingface"
     OPENAI = "openai"
     """The official OpenAI API, through the official `openai` SDK."""
 
@@ -541,6 +546,8 @@ class Provider(StrEnum):
 
 PROFILE_PROVIDER: dict[Profile, Provider] = {
     Profile.LOCAL: Provider.OPENAI,
+    Profile.FUSE: Provider.FUSE,
+    Profile.HUGGINGFACE: Provider.HUGGINGFACE,
     Profile.ARAMCO: Provider.OPENAI_COMPATIBLE,
     Profile.TEST: Provider.STUB,
 }
@@ -591,6 +598,14 @@ class LLMTarget:
         """
         if self.provider is Provider.OPENAI:
             return dialect_for(self.model)
+        if (self.provider is Provider.FUSE
+                and self.model == "deepseek-ai/DeepSeek-V4.1-Flash"):
+            # Fuse counts hidden reasoning against max_tokens. A live 2026-11-04
+            # probe exhausted 894/1000 tokens on reasoning; a real screening
+            # batch exhausted 10000 before returning its JSON. Keep the caller's
+            # answer budget and add a separate reasoning allowance.
+            return ChatDialect(reasoning_token_allowance=32000,
+                               minimum_timeout_seconds=300)
         # The gateway path speaks the classic shape; `aramco` is deferred and its
         # model has never been probed, so nothing here claims otherwise.
         return CLASSIC_DIALECT
@@ -658,7 +673,7 @@ def resolve_target(settings_obj, environ: Optional[dict] = None) -> LLMTarget:
             )
         return LLMTarget(profile, provider, base_url, model)
 
-    if provider is Provider.OPENAI_COMPATIBLE:
+    if provider in (Provider.OPENAI_COMPATIBLE, Provider.HUGGINGFACE, Provider.FUSE):
         base_url = (getattr(settings_obj, "llm_api_url", "") or "").strip()
         model = (getattr(settings_obj, "llm_model", "") or "").strip()
         missing = [
@@ -672,6 +687,19 @@ def resolve_target(settings_obj, environ: Optional[dict] = None) -> LLMTarget:
                 + " and ".join(missing)
                 + ". The profile selects the provider; it cannot supply its address."
             )
+        if provider is Provider.FUSE:
+            parsed = urlparse(base_url)
+            if (parsed.scheme != "https" or parsed.netloc != "api.fuse.humainaic.com"
+                    or parsed.path != "/v1/chat/completions" or parsed.query or parsed.fragment):
+                raise ConfigError("The fuse profile requires https://api.fuse.humainaic.com/v1/chat/completions")
+        if provider is Provider.HUGGINGFACE:
+            parsed = urlparse(base_url)
+            if (parsed.scheme != 'https' or parsed.hostname != 'router.huggingface.co'
+                    or parsed.username or parsed.password or parsed.query or parsed.fragment
+                    or parsed.path != '/v1/chat/completions'):
+                raise ConfigError('The huggingface profile requires https://router.huggingface.co/v1/chat/completions')
+            if ':' not in model:
+                raise ConfigError('The huggingface model must explicitly name its inference provider with a :provider suffix')
         return LLMTarget(profile, provider, base_url, model)
 
     # test / stub: no address, no model, nothing reachable.
@@ -694,6 +722,16 @@ def require_llm_credentials(target: LLMTarget, settings_obj) -> str:
     a request authenticated with the wrong credential is a request to the wrong
     place, and the error it produces is far harder to read than this one.
     """
+    if target.provider is Provider.FUSE:
+        key = (getattr(settings_obj, "fuse_api_key", "") or "").strip()
+        if not key:
+            raise MissingCredential("FUSE_API_KEY is required for DEPLOYMENT_PROFILE=fuse")
+        return key
+    if target.provider is Provider.HUGGINGFACE:
+        key = (getattr(settings_obj, 'hf_token', '') or '').strip()
+        if not key:
+            raise MissingCredential('HF_TOKEN is required for DEPLOYMENT_PROFILE=huggingface; no other provider credential is used')
+        return key
     if target.provider is Provider.OPENAI:
         key = (os.environ.get("OPENAI_API_KEY") or "").strip()
         if not key:

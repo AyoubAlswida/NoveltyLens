@@ -8,9 +8,9 @@ const EXECUTION_STAGES: readonly {
   phases: readonly Phase[];
 }[] = [
   { label: 'Planning the search', icon: 'Search', phases: ['understand', 'queries', 'strategy'] },
-  { label: 'Searching patent databases', icon: 'Database', phases: ['search'] },
+  { label: 'Searching patents and families', icon: 'Database', phases: ['search', 'expand'] },
   { label: 'Evaluating prior art', icon: 'Radar', phases: ['filter', 'enrich', 'validate', 'compare'] },
-  { label: 'Preparing your analysis', icon: 'PenLine', phases: ['analyze'] },
+  { label: 'Preparing your report', icon: 'PenLine', phases: ['analyze'] },
 ];
 
 @Component({
@@ -58,8 +58,9 @@ export class RunningScreen {
   readonly phaseMessages = input.required<Partial<Record<Phase, string>>>();
   readonly phaseOrder = input.required<readonly Phase[]>();
   readonly mode = input<SearchMode>('quick');
+  readonly searchApproved = input(false);
   readonly supportingText = computed(() =>
-    this.mode() === 'advanced'
+    this.mode() === 'advanced' && !this.searchApproved()
       ? 'We’ll pause when your input is needed.'
       : 'This usually takes a couple of minutes.',
   );

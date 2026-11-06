@@ -98,7 +98,7 @@ def test_json_endpoint_returns_the_result_payload(langgraph_client):
     body = response.json()
     assert set(body) == {
         "title", "date", "concepts", "patents",
-        "query_count", "recommendations",
+        "query_count", "recommendations", "analysis_basis", "analysis_version", "coverage", "elements",
     }
     assert body["patents"], "no matches in the result payload"
 
