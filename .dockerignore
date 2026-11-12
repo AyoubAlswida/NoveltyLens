@@ -1,0 +1,26 @@
+# Allow only source needed by the single-image build into the build context.
+**
+!backend/
+!backend/**
+!frontend/
+!frontend/**
+!docker-single/
+!docker-single/**
+!docker-datarobot/
+!docker-datarobot/**
+backend/.env*
+backend/**/.env*
+backend/.venv/
+backend/**/__pycache__/
+backend/**/*.pyc
+backend/.pytest_cache/
+backend/tests/
+backend/acceptance/
+backend/*.log
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+frontend/.env*
+docker-single/*.zip
+docker-single/*.tar
+docker-single/runtime.env

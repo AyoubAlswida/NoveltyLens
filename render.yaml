@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: noveltylens
+    runtime: docker
+    repo: https://github.com/AyoubAlswida/NoveltyLens.git
+    branch: codex/render-deploy
+    dockerfilePath: ./docker-single/Dockerfile
+    dockerContext: .
+    plan: standard
+    healthCheckPath: /readyz
+    autoDeploy: false
+    disk:
+      name: noveltylens-data
+      mountPath: /data
+      sizeGB: 10
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: DEPLOYMENT_PROFILE
+        value: fuse
+      - key: LLM_API_URL
+        value: https://api.fuse.humainaic.com/v1/chat/completions
+      - key: LLM_MODEL
+        value: openai/gpt-oss-120b
+      - key: EMBEDDING_API_URL
+        value: https://api.fuse.humainaic.com/v1/embeddings
+      - key: EMBEDDING_MODEL
+        value: Qwen/Qwen3-Embedding-8B
+      - key: EMBEDDING_API_FORMAT
+        value: openai
+      - key: TRACE
+        value: "0"
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: FUSE_API_KEY
+        sync: false
+      - key: EMBEDDING_API_KEY
+        sync: false
+      - key: EPO_CONSUMER_KEY
+        sync: false
+      - key: EPO_CONSUMER_SECRET
+        sync: false

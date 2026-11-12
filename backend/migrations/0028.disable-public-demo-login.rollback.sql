@@ -1,0 +1,2 @@
+-- This migration intentionally has no rollback. Restoring a public credential
+-- during rollback would make a public deployment insecure.
