@@ -213,6 +213,12 @@ def main():
     wait_ready('qdrant', lambda: http_ready('http://127.0.0.1:6333/readyz'))
     run_checked(as_user('novelty', ['python', 'migrate.py']))
     run_checked(as_user('novelty', ['python', 'checkpointer.py', 'setup']))
+    if os.environ.get('NOVELTY_RENDER_FREE') == '1':
+        account_env = dict(os.environ)
+        for key in ('NOVELTY_LOGIN_EMAIL', 'NOVELTY_LOGIN_PASSWORD_HASH'):
+            account_env[key] = os.environ.pop(key, '')
+        run_checked(as_user('novelty', ['python', 'provision_render_account.py']),
+                    env=account_env)
     start('api', as_user('novelty', ['python', '-m', 'uvicorn', 'server:app',
                   '--host', '127.0.0.1', '--port', '8001']))
     wait_ready('api', lambda: http_ready('http://127.0.0.1:8001/readyz'))

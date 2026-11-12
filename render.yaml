@@ -6,13 +6,9 @@ services:
     branch: codex/render-deploy
     dockerfilePath: ./docker-single/Dockerfile
     dockerContext: .
-    plan: standard
+    plan: free
     healthCheckPath: /readyz
     autoDeploy: false
-    disk:
-      name: noveltylens-data
-      mountPath: /data
-      sizeGB: 10
     envVars:
       - key: PORT
         value: "8080"
@@ -32,6 +28,12 @@ services:
         value: "0"
       - key: AUTH_SECRET
         generateValue: true
+      - key: NOVELTY_RENDER_FREE
+        value: "1"
+      - key: NOVELTY_LOGIN_EMAIL
+        sync: false
+      - key: NOVELTY_LOGIN_PASSWORD_HASH
+        sync: false
       - key: FUSE_API_KEY
         sync: false
       - key: EMBEDDING_API_KEY
